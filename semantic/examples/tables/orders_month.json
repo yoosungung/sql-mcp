@@ -15,5 +15,6 @@
   "fk": [],
   "permission_filters": [],
   "scope_filter": null,
-  "default_filter": null
+  "default_filter": null,
+  "role": "all"
 }

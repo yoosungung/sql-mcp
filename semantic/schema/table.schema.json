@@ -64,7 +64,8 @@
     "default_filter": {
       "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/nullableFilter",
       "description": "항상 붙는 기본 필터. 물리 컬럼을 쓴다. 없으면 null."
-    }
+    },
+    "role": { "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/role" }
   },
   "$defs": {
     "column": {

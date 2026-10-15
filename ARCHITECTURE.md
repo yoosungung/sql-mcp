@@ -21,7 +21,7 @@ SQL 실행은 한 개의 SELECT만 받는다. AST로 SELECT가 아닌 문을 거
 5. 질의에 쓰인 metric의 `filter`
 6. 질의에 쓰인 segment의 `filter`
 
-dimension, fact, metric, segment의 `role`을 생략하거나 `all`이면 모든 role이 볼 수 있다. role 이름 배열이면 호출자는 그 중 하나의 role을 가져야 한다. `encryption`이 true인 컬럼은 원문으로 반환하지 않는다.
+table, dimension, fact, metric, segment의 `role`을 생략하거나 `all`이면 모든 role이 볼 수 있다. table `permission_filters`의 `role`은 그 행 필터가 적용되는 역할이다. role 이름 배열이면 호출자는 그 중 하나의 role을 가져야 한다. `encryption`이 true인 컬럼은 원문으로 반환하지 않는다.
 
 view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은 컬럼은 하나의 view 컬럼로 묶는다. `mappings`가 둘 이상이면 `same_name`, `same_data`, `same_code`가 모두 true이고, 가리키는 컬럼 이름이 같아야 한다.
 
@@ -58,7 +58,7 @@ semantic/examples/
 | metric | `kind`, `name`, `cube`, `expression`, `aggregation`, `filter` |
 | segment | `kind`, `name`, `cube`, `filter` |
 
-table `columns`는 `name`, `type`, `nullable`이다. `pk`는 그 컬럼 이름이다. `fk.columns`는 이 테이블 컬럼이고 `fk.references`는 다른 논리 테이블과 그 컬럼이다.
+table `role`의 기본값은 `all`이다. `columns`는 `name`, `type`, `nullable`이다. `pk`는 그 컬럼 이름이다. `fk.columns`는 이 테이블 컬럼이고 `fk.references`는 다른 논리 테이블과 그 컬럼이다.
 
 view `combine`은 `from`, `join`, `union`, `minus`, `select`다. `from`은 테이블 하나를 cube에 올릴 때 쓴다. `join`, `union`, `minus`의 source는 테이블이고, `select`의 source는 view다. union과 minus는 첫 source가 기준이고 각 view 컬럼이 모든 source를 가리킨다. join의 `type`은 `inner`, `left`, `right`, `full`이다.
 

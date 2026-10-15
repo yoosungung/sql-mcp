@@ -13,5 +13,6 @@
   "fk": [],
   "permission_filters": [],
   "scope_filter": null,
-  "default_filter": { "expression": "status_code = 'ACTIVE'" }
+  "default_filter": { "expression": "status_code = 'ACTIVE'" },
+  "role": "all"
 }

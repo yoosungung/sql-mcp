@@ -24,5 +24,6 @@
     { "role": "branch", "expression": "region_code = :caller_region" }
   ],
   "scope_filter": { "expression": "order_date >= :scope_from AND order_date < :scope_to" },
-  "default_filter": { "expression": "status_code <> 'CANCELLED'" }
+  "default_filter": { "expression": "status_code <> 'CANCELLED'" },
+  "role": "all"
 }
