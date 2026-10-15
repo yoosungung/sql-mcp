@@ -3,7 +3,7 @@
 임베디드 시맨틱 DB를 품은 Rust **MCP** 서버(`rmcp`, **stdio**).
 
 - **타깃 DB** (DW, **복수**): 테이블/컬럼 탐색, 샘플(+code), **SELECT만**
-- **시맨틱 저장소** (프로세스 내): **메타데이터 CRUD(JSON)** 통로. **시맨틱 레이어 모델은 향후 정의**
+- **시맨틱 저장소** (프로세스 내 **libSQL**): **메타데이터 CRUD(JSON)** 통로. **시맨틱 레이어 모델은 향후 정의**
 - Frontend / Streamable HTTP: **없음(취소)**
 
 계약: [ARCHITECTURE.md](ARCHITECTURE.md) · 계획: [ROADMAP.md](ROADMAP.md) · 워크플로: [AGENTS.md](AGENTS.md)
