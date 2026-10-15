@@ -5,6 +5,10 @@ __pycache__/
 /data/
 **/*.db
 target_db/**/*.sqlite
-target_db/**/*.sqlite.partial
 target_db/**/*.partial
+target_db/**/*.sqlite-shm
+target_db/**/*.sqlite-wal
+target_db/**/*.json
 target_db/.cache/
+
+
