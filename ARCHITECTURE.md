@@ -27,6 +27,12 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 
 `combine`이 `select`인 view는 view만 묶는다. 사용자 SQL이 참조한 컬럼을 모두 가진 source 중에서 `summary`가 true인 view를 우선 선택한다. 요약 view로 풀 수 없으면 나머지 source를 쓴다. 어느 source도 컬럼을 덮지 못하면 질의를 거절한다.
 
+메타 CRUD는 코딩 에이전트용 MCP 도구 `meta_create`, `meta_read`, `meta_update`, `meta_delete`, `meta_list`만 수행한다. DW 에이전트에게 이 도구를 주지 않는다.
+
+`meta_create`와 `meta_update`는 문서 하나의 JSON Schema 검증을 통과한 뒤에, 그 문서를 반영한 등록 집합 전체의 연결을 검증한다. `meta_delete`는 그 문서를 뺀 집합의 연결을 검증한다. 검증이 실패하면 파일을 바꾸지 않는다. `meta_read`와 `meta_list`는 저장된 문서를 반환한다.
+
+연결은 `fk.references`, view `sources`와 `mappings`, cube `view`와 dimension·fact `column`, metric·segment `cube`다. 저장 위치는 `SQL_MCP_META_ROOT` 아래의 `tables|views|cubes|metrics|segments/{name}.json`이다.
+
 ## 2. 등록 문서
 
 디렉터리 이름이 문서 종류다. 파일명(확장자 제외)은 `name`과 같다.

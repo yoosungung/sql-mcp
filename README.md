@@ -4,6 +4,8 @@
 
 계약과 등록 문서 필드는 [ARCHITECTURE.md](ARCHITECTURE.md), 컴포넌트 사용법은 [semantic/DESIGN.md](semantic/DESIGN.md), 순서는 [ROADMAP.md](ROADMAP.md)에 있다.
 
+메타 CRUD 도구는 `meta_create`, `meta_read`, `meta_update`, `meta_delete`, `meta_list`다. 저장 전에 JSON 검증과 연결 검증을 한다.
+
 등록 예시 검증:
 
 ```bash

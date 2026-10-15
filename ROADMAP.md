@@ -2,11 +2,10 @@
 
 ## 현재
 
-코딩 에이전트가 등록하는 table, view, cube, metric, segment JSON 스키마와 등록 검증.
+코딩 에이전트가 등록하는 table, view, cube, metric, segment JSON 스키마, 등록 검증, 메타 CRUD MCP 도구.
 
 ## 다음
 
-- 메타데이터 등록 MCP 도구
 - DW MCP 도구: 컬럼 검색, 큐브 목록, 큐브 조회, 샘플, SQL 실행
 - SELECT AST 검사와 물리 SQL 컴파일
 

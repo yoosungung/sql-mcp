@@ -11,4 +11,7 @@ python3 -m venv .venv
 .venv/bin/pip install -r semantic/requirements.txt -r semantic/requirements-dev.txt
 PYTHONPATH=semantic .venv/bin/pytest semantic/tests
 PYTHONPATH=semantic .venv/bin/python -m sql_mcp_semantic.validate semantic/examples
+SQL_MCP_META_ROOT=semantic/meta PYTHONPATH=semantic .venv/bin/python -m sql_mcp_semantic.server
 ```
+
+`meta_create`, `meta_read`, `meta_update`, `meta_delete`, `meta_list`는 `SQL_MCP_META_ROOT`의 JSON을 읽고 쓴다. create, update, delete는 JSON 검증과 연결 검증이 통과한 뒤에만 파일을 바꾼다.

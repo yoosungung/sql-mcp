@@ -35,4 +35,4 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
  
 ## 3. Status
  
-등록용 시멘틱 JSON 스키마와 검증이 있다. MCP 도구와 SQL 컴파일은 아직 없다.
+등록용 시멘틱 JSON 스키마, 검증, 메타 CRUD MCP 도구가 있다. DW 도구와 SQL 컴파일은 아직 없다.
