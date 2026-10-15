@@ -210,16 +210,8 @@ def _column_bundle_errors(combine: str, column: dict, source_names: set[str]) ->
     for item in mappings:
         if item["source"] not in source_names:
             errors.append(f"컬럼 {column['name']} 의 source {item['source']} 가 sources 에 없다")
-    bundled = column["same_name"] and column["same_data"] and column["same_code"]
-    if len(mappings) >= 2:
-        if not bundled:
-            errors.append(
-                f"컬럼 {column['name']} 을 묶으려면 same_name, same_data, same_code 가 모두 true 여야 한다"
-            )
-        if len({item["column"] for item in mappings}) != 1:
-            errors.append(f"컬럼 {column['name']} 은 같은 이름의 컬럼만 묶을 수 있다")
-    elif bundled:
-        errors.append(f"컬럼 {column['name']} 은 묶음이 아닌데 same_name, same_data, same_code 가 true 다")
+    if len(mappings) >= 2 and len({item["column"] for item in mappings}) != 1:
+        errors.append(f"컬럼 {column['name']} 은 같은 이름의 컬럼만 묶을 수 있다")
     if combine in ("union", "minus") and set(mapped_sources) != source_names:
         errors.append(f"{combine} 컬럼 {column['name']} 이 모든 source 를 가리켜야 한다")
     return errors

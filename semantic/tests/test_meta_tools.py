@@ -73,9 +73,6 @@ def _view(table_name: str) -> dict:
             {
                 "name": "order_id",
                 "mappings": [{"source": table_name, "column": "order_id"}],
-                "same_name": False,
-                "same_data": False,
-                "same_code": False,
             }
         ],
     }

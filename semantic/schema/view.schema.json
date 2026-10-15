@@ -161,7 +161,7 @@
     "column": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "mappings", "same_name", "same_data", "same_code"],
+      "required": ["name", "mappings"],
       "properties": {
         "name": { "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/name" },
         "mappings": {
@@ -176,18 +176,6 @@
               "column": { "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/name" }
             }
           }
-        },
-        "same_name": {
-          "type": "boolean",
-          "description": "묶인 컬럼의 물리 이름이 같다."
-        },
-        "same_data": {
-          "type": "boolean",
-          "description": "묶인 컬럼의 데이터가 같다."
-        },
-        "same_code": {
-          "type": "boolean",
-          "description": "묶인 컬럼의 코드 체계가 같다."
         }
       }
     }

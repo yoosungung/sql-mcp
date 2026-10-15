@@ -46,12 +46,20 @@ def test_pk_column_must_exist():
     assert any("pk" in error for error in raised.value.errors)
 
 
-def test_bundled_columns_require_same_name_data_and_code():
+def test_view_column_rejects_same_flags():
     document = _join_view()
-    document["columns"][0]["same_data"] = False
+    document["columns"][0]["same_name"] = True
     with pytest.raises(SchemaError) as raised:
         validate_document(document)
-    assert any("same_data" in error for error in raised.value.errors)
+    assert any("same_name" in error for error in raised.value.errors)
+
+
+def test_bundled_columns_use_the_same_column_name():
+    document = _join_view()
+    document["columns"][0]["mappings"][1]["column"] = "other_id"
+    with pytest.raises(SchemaError) as raised:
+        validate_document(document)
+    assert any("같은 이름" in error for error in raised.value.errors)
 
 
 def test_select_requires_a_summary_source():
@@ -68,9 +76,6 @@ def test_union_column_maps_every_source():
     document["combine"] = "union"
     document.pop("joins")
     document["columns"][0]["mappings"] = [document["columns"][0]["mappings"][0]]
-    document["columns"][0]["same_name"] = False
-    document["columns"][0]["same_data"] = False
-    document["columns"][0]["same_code"] = False
     with pytest.raises(SchemaError) as raised:
         validate_document(document)
     assert any("union" in error for error in raised.value.errors)
@@ -303,16 +308,10 @@ def _from_view() -> dict:
             {
                 "name": "order_id",
                 "mappings": [{"source": "orders", "column": "order_id"}],
-                "same_name": False,
-                "same_data": False,
-                "same_code": False,
             },
             {
                 "name": "amount",
                 "mappings": [{"source": "orders", "column": "amount"}],
-                "same_name": False,
-                "same_data": False,
-                "same_code": False,
             },
         ],
     }
@@ -372,9 +371,6 @@ def _join_view() -> dict:
                     {"source": "orders", "column": "customer_id"},
                     {"source": "customer", "column": "customer_id"},
                 ],
-                "same_name": True,
-                "same_data": True,
-                "same_code": True,
             }
         ],
     }
@@ -397,9 +393,6 @@ def _select_view() -> dict:
                     {"source": "monthly_orders", "column": "amount"},
                     {"source": "orders_customer", "column": "amount"},
                 ],
-                "same_name": True,
-                "same_data": True,
-                "same_code": True,
             }
         ],
     }

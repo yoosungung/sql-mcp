@@ -23,7 +23,7 @@ SQL 실행은 한 개의 SELECT만 받는다. AST로 SELECT가 아닌 문을 거
 
 table, dimension, fact, metric, segment의 `role`을 생략하거나 `all`이면 모든 role이 볼 수 있다. table `permission_filters`의 `role`은 그 행 필터가 적용되는 역할이다. role 이름 배열이면 호출자는 그 중 하나의 role을 가져야 한다. `encryption`이 true인 컬럼은 원문으로 반환하지 않는다.
 
-view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은 컬럼은 하나의 view 컬럼로 묶는다. `mappings`가 둘 이상이면 `same_name`, `same_data`, `same_code`가 모두 true이고, 가리키는 컬럼 이름이 같아야 한다.
+view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은 컬럼은 하나의 view 컬럼로 묶는다. `mappings`가 둘 이상이면 가리키는 컬럼 이름이 같다.
 
 `combine`이 `select`인 view는 view만 묶는다. 사용자 SQL이 참조한 컬럼을 모두 가진 source 중에서 `summary`가 true인 view를 우선 선택한다. 요약 view로 풀 수 없으면 나머지 source를 쓴다. 어느 source도 컬럼을 덮지 못하면 질의를 거절한다.
 

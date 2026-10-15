@@ -4,84 +4,114 @@
   "combine": "select",
   "prefer": "summary",
   "sources": [
-    { "kind": "view", "name": "monthly_orders", "summary": true },
-    { "kind": "view", "name": "orders_customer", "summary": false }
+    {
+      "kind": "view",
+      "name": "monthly_orders",
+      "summary": true
+    },
+    {
+      "kind": "view",
+      "name": "orders_customer",
+      "summary": false
+    }
   ],
   "columns": [
     {
       "name": "order_month",
-      "mappings": [{ "source": "monthly_orders", "column": "order_month" }],
-      "same_name": false,
-      "same_data": false,
-      "same_code": false
+      "mappings": [
+        {
+          "source": "monthly_orders",
+          "column": "order_month"
+        }
+      ]
     },
     {
       "name": "region_code",
       "mappings": [
-        { "source": "monthly_orders", "column": "region_code" },
-        { "source": "orders_customer", "column": "region_code" }
-      ],
-      "same_name": true,
-      "same_data": true,
-      "same_code": true
+        {
+          "source": "monthly_orders",
+          "column": "region_code"
+        },
+        {
+          "source": "orders_customer",
+          "column": "region_code"
+        }
+      ]
     },
     {
       "name": "status_code",
       "mappings": [
-        { "source": "monthly_orders", "column": "status_code" },
-        { "source": "orders_customer", "column": "status_code" }
-      ],
-      "same_name": true,
-      "same_data": true,
-      "same_code": true
+        {
+          "source": "monthly_orders",
+          "column": "status_code"
+        },
+        {
+          "source": "orders_customer",
+          "column": "status_code"
+        }
+      ]
     },
     {
       "name": "sale_amount",
       "mappings": [
-        { "source": "monthly_orders", "column": "sale_amount" },
-        { "source": "orders_customer", "column": "sale_amount" }
-      ],
-      "same_name": true,
-      "same_data": true,
-      "same_code": true
+        {
+          "source": "monthly_orders",
+          "column": "sale_amount"
+        },
+        {
+          "source": "orders_customer",
+          "column": "sale_amount"
+        }
+      ]
     },
     {
       "name": "fx_rate",
       "mappings": [
-        { "source": "monthly_orders", "column": "fx_rate" },
-        { "source": "orders_customer", "column": "fx_rate" }
-      ],
-      "same_name": true,
-      "same_data": true,
-      "same_code": true
+        {
+          "source": "monthly_orders",
+          "column": "fx_rate"
+        },
+        {
+          "source": "orders_customer",
+          "column": "fx_rate"
+        }
+      ]
     },
     {
       "name": "customer_id",
-      "mappings": [{ "source": "orders_customer", "column": "customer_id" }],
-      "same_name": false,
-      "same_data": false,
-      "same_code": false
+      "mappings": [
+        {
+          "source": "orders_customer",
+          "column": "customer_id"
+        }
+      ]
     },
     {
       "name": "order_id",
-      "mappings": [{ "source": "orders_customer", "column": "order_id" }],
-      "same_name": false,
-      "same_data": false,
-      "same_code": false
+      "mappings": [
+        {
+          "source": "orders_customer",
+          "column": "order_id"
+        }
+      ]
     },
     {
       "name": "order_date",
-      "mappings": [{ "source": "orders_customer", "column": "order_date" }],
-      "same_name": false,
-      "same_data": false,
-      "same_code": false
+      "mappings": [
+        {
+          "source": "orders_customer",
+          "column": "order_date"
+        }
+      ]
     },
     {
       "name": "customer_status_code",
-      "mappings": [{ "source": "orders_customer", "column": "customer_status_code" }],
-      "same_name": false,
-      "same_data": false,
-      "same_code": false
+      "mappings": [
+        {
+          "source": "orders_customer",
+          "column": "customer_status_code"
+        }
+      ]
     }
   ]
 }
