@@ -3,7 +3,8 @@
 AI 클라이언트(Cursor, Claude Desktop 등)가 SQL 데이터베이스를 안전하게 탐색·질의할 수 있게 하는 **Model Context Protocol (MCP)** 서버.
 
 - 서버 언어: **Rust** (`rmcp`)
-- 기본: **read-only**, 행 상한·타임아웃, 자격 증명은 기동 설정으로만 주입
+- MCP 능력: **테이블 목록/상세**, **컬럼 샘플(+code)**, **SELECT SQL만**
+- 자격 증명은 기동 설정으로만 주입 · 행/샘플 상한·타임아웃
 
 계약·인터페이스: [ARCHITECTURE.md](ARCHITECTURE.md)  
 계획·미결정: [ROADMAP.md](ROADMAP.md)  

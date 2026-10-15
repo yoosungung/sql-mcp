@@ -35,4 +35,4 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
  
 ## 3. Status
  
-기획 단계. 확정: **Rust MCP 서버** (`rmcp`), read-only-first. 상세 계약은 [ARCHITECTURE.md](ARCHITECTURE.md), 마일스톤·미결정은 [ROADMAP.md](ROADMAP.md). 다음: D1(첫 엔진)·D2(sqlx 여부) 확정 후 M1 `server/` 스켈레톤.
+기획 단계. 확정: **Rust** (`rmcp`) · 툴=`list_tables`/`describe_table`/`sample_column`/`execute_sql`(SELECT만). 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md). 다음: D1·D2 확정 후 M1.
