@@ -267,10 +267,21 @@ impl SqlMcp {
             Ok(v) => v,
             Err(e) => return tool_err(e),
         };
+        let docs = match self.store.list(None).await {
+            Ok(d) => d,
+            Err(e) => return tool_err(e),
+        };
+        let encrypted = crate::mask::is_encrypted_column(&docs, &args.column);
+        let values = if encrypted {
+            crate::mask::mask_sample_values(values)
+        } else {
+            values
+        };
         let (is_code, language) = crate::code_detect::detect_code(&args.column, &values);
         let mut out = json!({
             "values": values,
             "is_code": is_code,
+            "masked": encrypted,
         });
         if let Some(lang) = language {
             out["language"] = json!(lang);
@@ -291,9 +302,15 @@ impl SqlMcp {
             Ok(r) => r,
             Err(e) => return tool_err(e),
         };
+        let docs = match self.store.list(None).await {
+            Ok(d) => d,
+            Err(e) => return tool_err(e),
+        };
+        let encrypted = crate::mask::encrypted_names(&docs);
+        let rows = crate::mask::mask_result_rows(&result.columns, result.rows, &encrypted);
         ok_json(json!({
             "columns": result.columns,
-            "rows": result.rows,
+            "rows": rows,
         }))
     }
 }

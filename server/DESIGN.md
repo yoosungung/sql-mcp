@@ -13,7 +13,9 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | 모듈 | 책임 |
 |------|------|
 | `select_guard` | SQL 단일 SELECT(읽기 CTE 허용) AST 검사 |
-| `compile` | table 등록 → 물리 FROM + 필터 AND 컴파일 |
+| `expr_guard` | D16 식 AST 제한 · D18 컴파일 시 식별자 검사 |
+| `mask` | D17 `encryption` 응답 마스킹(null) |
+| `compile` | table/metric 등록 → 물리 SQL · 식 검증 후 컴파일 |
 | `semantic` | 스키마·연결 검증 · libSQL CRUD · 검색 인덱스 재구축 |
 | `search` | BM25(FTS5) · 벡터 · hybrid(RRF) |
 | `embed` | D14: OpenAI-호환 HTTP만. 없으면 None → BM25만. `HashEmbedder`는 테스트 전용 |
@@ -33,7 +35,8 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 
 - `list_tables` / `describe_table`: 타깃 카탈로그(`information_schema`) 우선. `target` 생략 시 시맨틱 `table` 등록분.
 - `search_columns`: `keyword` | `vector` | `hybrid`(기본). 임베더 없으면 vector/hybrid→keyword.
-- `sample_column`: D9 휴리스틱으로 `is_code`(+선택 `language`). 등록 `as_code`는 에이전트 기입·CRUD 저장만
+- `sample_column`: D9 휴리스틱으로 `is_code`(+선택 `language`). 등록 `as_code`는 에이전트 기입·CRUD 저장만. `encryption` 컬럼은 값 마스킹(D17, `masked: true`)
+- `execute_sql`: 결과 컬럼명이 암호화 dimension/fact와 일치하면 셀을 null로 마스킹(D17)
 
 ## 설정
 

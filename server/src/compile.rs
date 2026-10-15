@@ -1,6 +1,9 @@
+use std::collections::HashSet;
+
 use serde_json::Value;
 
 use crate::error::AppError;
+use crate::expr_guard::{assert_filter_expr, assert_idents_known, assert_metric_expr};
 use crate::select_guard::assert_select_only;
 
 /// Quote a simple SQL identifier.
@@ -51,11 +54,14 @@ pub fn compile_table_select(
             .collect::<Result<Vec<_>, _>>()?
             .join(", ")
     };
+    let known = table_column_names(table_doc);
     let mut filters = Vec::new();
     if let Some(expr) = filter_expr(table_doc.get("scope_filter")) {
+        validate_table_filter(expr, &known)?;
         filters.push(format!("({expr})"));
     }
     if let Some(expr) = filter_expr(table_doc.get("default_filter")) {
+        validate_table_filter(expr, &known)?;
         filters.push(format!("({expr})"));
     }
     if let Some(role) = role {
@@ -63,6 +69,7 @@ pub fn compile_table_select(
             for pf in pfs {
                 if pf.get("role").and_then(|v| v.as_str()) == Some(role) {
                     if let Some(expr) = pf.get("expression").and_then(|v| v.as_str()) {
+                        validate_table_filter(expr, &known)?;
                         filters.push(format!("({expr})"));
                     }
                 }
@@ -76,6 +83,48 @@ pub fn compile_table_select(
     }
     assert_select_only(&sql)?;
     Ok(sql)
+}
+
+fn table_column_names(table_doc: &Value) -> HashSet<String> {
+    table_doc
+        .get("columns")
+        .and_then(|v| v.as_array())
+        .map(|cols| {
+            cols.iter()
+                .filter_map(|c| c.get("name").and_then(|n| n.as_str()).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn cube_member_names(cube: &Value) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for key in ["dimensions", "facts"] {
+        if let Some(items) = cube.get(key).and_then(|v| v.as_array()) {
+            for item in items {
+                if let Some(n) = item.get("name").and_then(|v| v.as_str()) {
+                    out.insert(n.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+fn view_column_name_set(view: &Value) -> HashSet<String> {
+    view.get("columns")
+        .and_then(|v| v.as_array())
+        .map(|cols| {
+            cols.iter()
+                .filter_map(|c| c.get("name").and_then(|n| n.as_str()).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn validate_table_filter(expr: &str, known: &HashSet<String>) -> Result<(), AppError> {
+    assert_filter_expr(expr)?;
+    assert_idents_known(expr, known)
 }
 
 fn filter_expr(v: Option<&Value>) -> Option<&str> {
@@ -251,10 +300,16 @@ pub fn compile_metric_select(
         let expr = view_physical_expr(view, gname)?;
         select_parts.push(format!("{expr} AS {}", quote_ident(gname)?));
     }
+    let members = cube_member_names(cube);
+    let view_cols = view_column_name_set(view);
+    validate_cube_member_expressions(cube, &view_cols)?;
+
     let metric_expr = metric
         .get("expression")
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("metric.expression required".into()))?;
+    assert_metric_expr(metric_expr)?;
+    assert_idents_known(metric_expr, &members)?;
     // Rewrite simple fact names inside metric expression via cube_field_sql when possible.
     let rewritten = rewrite_metric_expression(metric_expr, cube, view)?;
     select_parts.push(format!("{rewritten} AS {}", quote_ident(metric_name)?));
@@ -265,10 +320,13 @@ pub fn compile_metric_select(
         for src in sources {
             let tname = source_name(src)?;
             let table = find_doc(docs, "table", tname)?;
+            let known = table_column_names(table);
             if let Some(expr) = filter_expr(table.get("scope_filter")) {
+                validate_table_filter(expr, &known)?;
                 filters.push(qualify_filter(expr, tname)?);
             }
             if let Some(expr) = filter_expr(table.get("default_filter")) {
+                validate_table_filter(expr, &known)?;
                 filters.push(qualify_filter(expr, tname)?);
             }
             if let Some(role) = role {
@@ -276,6 +334,7 @@ pub fn compile_metric_select(
                     for pf in pfs {
                         if pf.get("role").and_then(|v| v.as_str()) == Some(role) {
                             if let Some(expr) = pf.get("expression").and_then(|v| v.as_str()) {
+                                validate_table_filter(expr, &known)?;
                                 filters.push(qualify_filter(expr, tname)?);
                             }
                         }
@@ -285,6 +344,8 @@ pub fn compile_metric_select(
         }
     }
     if let Some(expr) = filter_expr(metric.get("filter")) {
+        assert_filter_expr(expr)?;
+        assert_idents_known(expr, &members)?;
         filters.push(format!("({expr})"));
     }
     for seg_name in segment_names {
@@ -295,6 +356,8 @@ pub fn compile_metric_select(
             )));
         }
         if let Some(expr) = filter_expr(seg.get("filter")) {
+            assert_filter_expr(expr)?;
+            assert_idents_known(expr, &members)?;
             // segment filters use cube/view column names — map via view_physical when simple ident
             filters.push(format!("({})", rewrite_view_idents(expr, view)?));
         }
@@ -316,6 +379,23 @@ pub fn compile_metric_select(
     }
     assert_select_only(&sql)?;
     Ok(sql)
+}
+
+fn validate_cube_member_expressions(
+    cube: &Value,
+    view_cols: &HashSet<String>,
+) -> Result<(), AppError> {
+    for key in ["dimensions", "facts"] {
+        if let Some(items) = cube.get(key).and_then(|v| v.as_array()) {
+            for item in items {
+                if let Some(expr) = item.get("expression").and_then(|v| v.as_str()) {
+                    assert_metric_expr(expr)?;
+                    assert_idents_known(expr, view_cols)?;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn rewrite_metric_expression(expr: &str, cube: &Value, view: &Value) -> Result<String, AppError> {
@@ -488,5 +568,18 @@ mod tests {
         assert!(sql.contains("GROUP BY"));
         assert!(sql.contains("PAID"));
         assert_select_only(&sql).unwrap();
+    }
+
+    #[test]
+    fn rejects_unknown_metric_ident() {
+        let mut docs = example_docs();
+        for d in &mut docs {
+            if d.get("kind").and_then(|v| v.as_str()) == Some("metric")
+                && d.get("name").and_then(|v| v.as_str()) == Some("revenue")
+            {
+                d["expression"] = json!("sum(not_a_fact)");
+            }
+        }
+        assert!(compile_metric_select(&docs, "revenue", &[], None).is_err());
     }
 }

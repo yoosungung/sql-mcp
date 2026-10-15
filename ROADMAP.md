@@ -82,13 +82,15 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 - [x] CI (`.github/workflows/ci.yml`)
 - [x] OpenAI-호환 임베딩 HTTP 클라이언트 배선 (`SQL_MCP_EMBEDDING_*`, 미설정 시 BM25만 · D14)
 - [x] cube/metric/segment → 물리 SQL 컴파일 (`compile_metric_select`)
+- [x] D16 식 AST 제한 · D18 컴파일 식별자 검사 · D17 encryption 마스킹
 - [ ] 타깃 엔진 확장 — 후속(현재 Postgres만)
 
 ### M3 — 배포·하드닝
 
 - [x] (D7) release 바이너리 + 컨테이너 · `deploy/SETUP.md` · `deploy/k8s/base/`
 - [x] `/health` 프로브 · tracing 로그
-- [ ] 타깃 엔진 확장·추가 하드닝은 필요 시 후속
+- [x] D16–D18 본구현 (`expr_guard` · `mask`)
+- [ ] 타깃 엔진 확장·운영 하드닝(인증·rate limit 등)은 필요 시 후속
 
 ## 구현 시 작업 규칙
 
