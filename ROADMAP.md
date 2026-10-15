@@ -4,80 +4,82 @@
 
 ## 목표
 
-Rust(`rmcp`)로 **안전한 SQL MCP 서버**를 만든다. 제공 능력은 **테이블 목록/상세**, **컬럼 검색**, **컬럼 샘플(+code)**, **SELECT SQL** 뿐이다.
+**시맨틱 레이어 DB**를 진실 원천으로 두고, (1) Rust MCP가 그 DB를 **SELECT·탐색**하고 (2) **Frontend**가 그 DB를 **관리**하는 시스템을 만든다.
 
-참고한 외부 패턴(구현 수단): Rust+sqlx+가드 사례, 공식 SDK [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk). 툴 이름은 우리 계약(§ ARCHITECTURE 3.2)을 따른다.
+MCP 능력: **테이블 목록/상세**, **컬럼 검색**, **컬럼 샘플(+code)**, **SELECT SQL**.  
+참고 구현 수단: [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk), sqlx류 가드. 시맨틱 레이어+MCP 선행 사례(OrionBelt, warehouse-mcp 등)는 모델 설계(D12) 참고용.
 
 ## 확정된 결정
 
 | 항목 | 결정 |
 |------|------|
-| 서버 언어 | Rust |
-| MCP SDK | `rmcp` (spec `2026-07-28`) |
-| MCP 능력 | `list_tables`, `describe_table`, `search_columns`, `sample_column`(code 처리), `execute_sql`(**SELECT만**) |
-| 쓰기 | 제공하지 않음 (영구 SELECT-only) |
+| 데이터 원천 | **시맨틱 레이어 DB** (MCP는 여기만 사용) |
+| MCP 언어·SDK | Rust / `rmcp` (`2026-07-28`) |
+| MCP 능력 | `list_tables`, `describe_table`, `search_columns`, `sample_column`, `execute_sql`(**SELECT만**) |
+| MCP 쓰기 | 없음 |
+| Frontend | **필수** — 시맨틱 레이어 DB 관리 UI (`frontend/`) |
 | Resources | M1에서 없음 (툴만) |
-| 기본 transport | stdio |
+| MCP transport | stdio (M1) |
 | 개발 방식 | TDD, 문서 우선 ([AGENTS.md](AGENTS.md)) |
 
-## 미결정 (다음 대화에서 고를 것)
+## 미결정
 
 | ID | 질문 | 옵션 / 비고 |
 |----|------|-------------|
-| D1 | 첫 엔진 | **A)** SQLite만 → **B)** PostgreSQL → **C)** Postgres+SQLite. 권장: A로 가드·툴 고정 후 B |
-| D2 | SQL 크레이트 | **A)** sqlx **B)** 엔진별 네이티브. 권장: A |
-| D3 | 다중 연결 | M1은 단일 `DATABASE_URL`만? 다중은 M2? |
-| D5 | Streamable HTTP | M2에 넣을지, 로컬 stdio만 유지할지 |
-| D7 | 배포 형태 | cargo install 바이너리 / 컨테이너 / k8s (`deploy/`) — 빈 stub 금지이므로 실제 필요 시만 |
-| D8 | 프론트엔드 | 없음(권장) vs 최소 상태/설정 UI |
-| D9 | code 판정 | 자동 휴리스틱만 vs `as_code` 강제 플래그 추가 |
+| D1 | 시맨틱 DB 엔진 | **A)** SQLite **B)** PostgreSQL **C)** 둘 다. 권장: 로컬은 A, 공유/프로드는 B |
+| D2 | SQL 크레이트 (MCP) | **A)** sqlx **B)** 네이티브. 권장: A |
+| D5 | Streamable HTTP | M2+ 여부 |
+| D7 | 배포 | 바이너리 / 컨테이너 / k8s — 필요 시만 |
+| D9 | code 판정 | 휴리스틱만 vs `as_code` 플래그 |
+| D10 | Admin API 위치 | **A)** 별도 `api/`(Rust) **B)** `server`에 MCP+HTTP 공존 **C)** Frontend BFF만. 권장: A(쓰기와 MCP 분리) |
+| D11 | Frontend 스택 | 예: React/Vite, Next 등 — 팀 선호 확인 |
+| D12 | 시맨틱 모델 | DB 테이블 스키마 vs YAML/파일+DB 하이브리드 · 메트릭/디멘션/조인 포함 범위 |
+| D13 | 물리 웨어하우스 | 시맨틱만 질의 vs 레이어가 물리 SQL 컴파일·실행까지 하는지 |
 
 ## 마일스톤
 
-### M0 — 문서·저장소 골격
+### M0 — 문서·계약
 
-- [x] `AGENTS.md` 문서 레이아웃
-- [x] `ARCHITECTURE.md` 계약·인터페이스 초안
-- [x] 이 로드맵
-- [x] `README.md` 소개(구현 전 quickstart는 “아직 없음” 명시)
-- [x] MCP 능력 확정 (테이블/컬럼검색/샘플/SELECT)
-- [ ] 미결정 D1–D2 확정
+- [x] 문서 레이아웃 · ARCHITECTURE · ROADMAP · README
+- [x] MCP 툴 표면 · SELECT-only
+- [x] 시맨틱 레이어 DB + Frontend 관리 역할 분리
+- [ ] D1·D2·D10·D11·D12 합의 (스키마·스택 없이 코드 금지에 가깝게)
 
-**완료 기준:** 계약·계획이 저장소에 있고, 첫 엔진·sqlx 여부가 합의됨.
+**완료 기준:** 공유 DB·역할 분리·첫 엔진·Frontend/API 방향이 문서에 고정됨.
 
-### M1 — 최소 동작 MCP (stdio)
+### M1 — 시맨틱 DB + MCP 읽기 (stdio)
 
-순서: `server/` 스켈레톤 → `server/DESIGN.md` + `## Commands` → 실패하는 테스트 → 구현.
+의존: D1·D2 (최소). D12가 비어 있으면 **최소 스키마**(테이블/컬럼 메타를 담을 수 있는 수준)를 ARCHITECTURE에 한 절 추가한 뒤 진행.
 
-1. Cargo 워크스페이스/`server` 바이너리, `rmcp` stdio 서버
-2. 설정: URL + max_rows/sample_limit/timeout
-3. 가드: SQL 파서로 **SELECT-only** + LIMIT/상한 (`not_select` 에러)
-4. 툴 5개: `list_tables`, `describe_table`, `search_columns`, `sample_column`(code), `execute_sql`
-5. 엔진: D1에서 고른 것 1개
-6. 테스트: 가드 유닛 + 샘플/code 판정 + 통합
-7. Cursor/Inspector로 stdio 스모크
+1. 시맨틱 DB 마이그레이션/시드 (최소)
+2. `server/` + `DESIGN.md` + Commands — `rmcp` stdio
+3. SELECT 가드 + 툴 5개 (대상 = 시맨틱 DB)
+4. 테스트: 가드 · 검색 · 샘플/code · 통합
+5. Inspector/Cursor 스모크
 
-**완료 기준:** 테이블 목록·상세·컬럼 검색·컬럼 샘플·SELECT가 동작하고, 비-SELECT는 거부된다.
+**완료 기준:** 시맨틱 DB에 대해 다섯 툴이 동작하고 비-SELECT는 거부.
 
-### M2 — 엔진·운영 확장
+### M2 — Frontend 관리 UI
 
-- 추가 엔진(Postgres/MySQL 등, D1 후속)
-- (D3) 다중 연결
-- (D5) Streamable HTTP
-- (D9) code 판정 고도화
-- CI: `.github/workflows/ci.yml` (fmt, clippy, test) — 추가 시 실제 통과 가능하게
+의존: D10·D11·D12.
 
-**완료 기준:** 최소 2엔진, CI green, 원격 transport는 결정대로 on/off.
+1. Admin API (D10) + `DESIGN.md`
+2. `frontend/` 스켈레톤 + 시맨틱 객체 CRUD·브라우저
+3. MCP와 동일 DB를 본다는 통합 스모크 (UI로 넣은 정의 → MCP `list_tables`/`search_columns`에 보임)
+4. (D5) Streamable HTTP 선택적
+5. CI: fmt/clippy/test(+ frontend test)
 
-### M3 — 배포·하드닝
+**완료 기준:** UI로 시맨틱 객체를 관리하면 MCP 읽기에 반영된다.
 
-- (D7) 실제 배포 산출물만 추가 (`deploy/SETUP.md` 등)
-- 관측: tracing, 구조화 로그(시크릿 필터)
-- 릴리스: 버전 태그, 변경 로그
+### M3 — 모델 확장·배포·하드닝
+
+- (D12/D13) 메트릭·조인·물리 실행 등 확장
+- (D7) 실제 배포 산출물만
+- 관측·시크릿 필터·릴리스
 
 ## 구현 시 작업 규칙 (요약)
 
 1. 계획 변경 → 이 파일
 2. 계약/인터페이스 변경 → `ARCHITECTURE.md`
-3. 서버 내부 → `server/DESIGN.md`
+3. 컴포넌트 내부 → `server/DESIGN.md` / `frontend/DESIGN.md` / (있으면) `api/DESIGN.md`
 4. 코드: 스켈레톤 → 테스트 → 구현
