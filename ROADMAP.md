@@ -30,21 +30,24 @@ MCP 능력: **테이블 목록/상세**, **컬럼 검색(BM25·벡터·hybrid)**
 
 | 순위 | 조합 | 쉬운 점 | 아쉬운 점 |
 |------|------|---------|-----------|
-| **1 (제일 쉬움·MVP)** | **SQLite + FTS5(BM25) + sqlite-vec** | 파일 하나, 확장만 얹으면 hybrid 가능, 얇은 메타와 잘 맞음 | Frontend·MCP 동시 쓰기 시 잠금; sqlx보다 rusqlite가 확장에 편함 |
-| **2 (프로덕트·동시성)** | **Postgres + ParadeDB `pg_search` + pgvector** | SQL 한곳에서 BM25·벡터·hybrid(RRF) 문서화됨, Frontend와 공유 수월 | 확장/이미지 운영 비용, 로컬 기동이 무거움 |
-| 3 | Postgres + pgvector만 | 벡터는 쉬움(Neon/Supabase 등) | 진짜 BM25는 별도(ParadeDB 또는 앱 측 FTS) |
-| 비권장(초기) | DuckDB FTS+VSS | 분석엔 좋음 | VSS 실험적, 다중 작성자 UI와 궁합 약함 |
+| **1′ (추천 후보)** | **libSQL / Turso** (네이티브 벡터 + FTS/`fts_score`) | 확장 없이 벡터·키워드, SQLite 호환, replica/sync로 Frontend·MCP 분리에 유리 | sqlx 대신 `libsql`/`turso` 클라이언트; hybrid는 앱 RRF; FTS 경로·버전 확인; 브랜드 libSQL→Turso 이동 |
+| **1 (로컬 최소)** | **SQLite + FTS5 + sqlite-vec** | 파일 하나·익숙한 스택 | 확장 로딩·잠금 |
+| **2 (프로덕트 SQL)** | **Postgres + ParadeDB + pgvector** | SQL 원샷 BM25·벡터·RRF | 운영 무거움 |
+| 3 | Postgres + pgvector만 | 벡터만 쉬움 | BM25 부족 |
+| 비권장(초기) | DuckDB FTS+VSS | 분석용 | 다중 작성자 UI와 약함 |
 
-**임베딩:** DB 선택이 아니라 별축. **당장 제일 쉬운 건 API 임베딩(D14-A)** 이고, 벡터 컬럼만 시맨틱 DB에 두면 된다. 나중에 로컬 ONNX로 바꿔도 스키마는 동일하다.
+**libSQL 평가:** “SQLite 쉬운 맛 + 벡터 내장”이라 얇은 시맨틱 메타와 잘 맞음. ParadeDB 전에 고를 만한 후보. hybrid는 DB 원샷보다 앱 융합이 일반적.
 
-**종합 추천:** 지금은 **A(SQLite FTS5+vec)로 `search_columns` hybrid를 먼저 증명**하고, Frontend·다중 접속이 필요해지면 **B(Postgres+ParadeDB)** 로 옮기거나, 처음부터 공유 DB가 필요하면 B로 시작.
+**임베딩:** 별축 — **API(D14-A)가 제일 쉬움**.
+
+**종합 추천:** 동기화·공유까지 보면 **D1=D(libSQL/Turso)**. 확장만 감수하면 A(SQLite). 엔터프라이즈 SQL이면 B(ParadeDB).
 
 ## 미결정
 
 | ID | 질문 | 옵션 / 비고 |
 |----|------|-------------|
 | D1 | 시맨틱 DB 엔진 (검색 포함) | **A)** SQLite+FTS5+sqlite-vec **B)** Postgres+ParadeDB+pgvector **C)** Postgres+pgvector만 **D)** libSQL/Turso(네이티브 벡터+FTS) — 권장 후보 |
-| D2 | SQL 크레이트 (MCP) | **A)** sqlx **B)** 네이티브(rusqlite 등). SQLite 확장이면 B가 수월 |
+| D2 | SQL 크레이트 (MCP) | **A)** sqlx **B)** rusqlite(+확장) **C)** libsql/turso 클라이언트 (D1=D일 때) |
 | D14 | 임베딩 공급 | **A)** 외부 API(가장 쉬움) **B)** 로컬 ONNX **C)** 둘 다 |
 | D5 | Streamable HTTP | M2+ 여부 |
 | D7 | 배포 | 바이너리 / 컨테이너 / k8s — 필요 시만 |
