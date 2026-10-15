@@ -1,17 +1,8 @@
 # semantic
 
-코딩 에이전트가 git에 두고 MCP 메타로 등록하는 JSON 문서의 스키마와 등록 검증.
+코딩 에이전트가 등록하는 JSON의 스키마 정의와 예시다. 이 디렉터리에는 실행 코드를 두지 않는다.
 
-필드 의미와 에이전트 계약은 [ARCHITECTURE.md](../ARCHITECTURE.md)에 있다. 기계가 읽는 정본은 `schema/` 다.
+필드 의미와 연결 규칙은 [ARCHITECTURE.md](../ARCHITECTURE.md)에 있다.
 
-## Commands
-
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -r semantic/requirements.txt -r semantic/requirements-dev.txt
-PYTHONPATH=semantic .venv/bin/pytest semantic/tests
-PYTHONPATH=semantic .venv/bin/python -m sql_mcp_semantic.validate semantic/examples
-SQL_MCP_META_ROOT=semantic/meta PYTHONPATH=semantic .venv/bin/python -m sql_mcp_semantic.server
-```
-
-`meta_create`, `meta_read`, `meta_update`, `meta_delete`, `meta_list`는 `SQL_MCP_META_ROOT`의 JSON을 읽고 쓴다. create, update, delete는 JSON 검증과 연결 검증이 통과한 뒤에만 파일을 바꾼다.
+- `schema/` — JSON Schema. 문서 하나의 정본이다.
+- `examples/` — 종류별 예시. 파일명(확장자 제외)은 `name`과 같다.

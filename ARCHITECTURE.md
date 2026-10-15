@@ -4,7 +4,7 @@
 
 이 서버는 두 에이전트가 쓴다.
 
-코딩 에이전트(Claude, Cursor, Antigravity)는 git에서 JSON을 소스로 작성하고 MCP 메타로 등록한다. 등록 문서는 `semantic/schema/`의 JSON Schema와 `sql_mcp_semantic.validate`를 통과해야 한다.
+코딩 에이전트(Claude, Cursor, Antigravity)는 git에서 JSON을 소스로 작성하고 MCP 메타로 등록한다. 등록 문서는 `semantic/schema/`의 JSON Schema를 통과해야 한다. 코딩 에이전트는 그 스키마 정의와 이 계약의 연결 규칙을 보고 검증한다. MCP 메타도 같은 스키마 정의로 검증한다.
 
 DW 에이전트는 메타 등록 도구를 쓰지 않는다. 자연어로 컬럼을 찾고, 테이블 목록을 보고, 테이블과 샘플을 본 뒤 SELECT를 작성한다. 이 에이전트에게 테이블은 cube이고 컬럼은 dimension, fact, metric이다.
 
@@ -31,7 +31,7 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 
 `meta_create`와 `meta_update`는 문서 하나의 JSON Schema 검증을 통과한 뒤에, 그 문서를 반영한 등록 집합 전체의 연결을 검증한다. `meta_delete`는 그 문서를 뺀 집합의 연결을 검증한다. 검증이 실패하면 파일을 바꾸지 않는다. `meta_read`와 `meta_list`는 저장된 문서를 반환한다.
 
-연결은 `fk.references`, view `sources`와 `mappings`, cube `view`, dimension·fact의 `column`, metric·segment `cube`, metric `group_by`다. `expression`으로 만든 dimension·fact는 view 컬럼 연결 검사를 하지 않는다. `aggregation`이 `group`이면 `group_by`의 각 이름이 연결된 view 컬럼에 있어야 한다. 저장 위치는 `SQL_MCP_META_ROOT` 아래의 `tables|views|cubes|metrics|segments/{name}.json`이다.
+연결은 `fk.references`, view `sources`와 `mappings`, cube `view`, dimension·fact의 `column`, metric·segment `cube`, metric `group_by`다. `expression`으로 만든 dimension·fact는 view 컬럼 연결 검사를 하지 않는다. `aggregation`이 `group`이면 `group_by`의 각 이름이 연결된 view 컬럼에 있어야 한다. 등록 집합의 디렉터리는 `tables`, `views`, `cubes`, `metrics`, `segments`이고 파일명(확장자 제외)은 `name`이다.
 
 ## 2. 등록 문서
 

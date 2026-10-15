@@ -2,10 +2,11 @@
 
 ## 현재
 
-코딩 에이전트가 등록하는 table, view, cube, metric, segment JSON 스키마, 등록 검증, 메타 CRUD MCP 도구.
+코딩 에이전트가 등록하는 table, view, cube, metric, segment의 JSON Schema와 예시. `semantic/`에는 정의와 예시만 있다.
 
 ## 다음
 
+- MCP 메타 CRUD. 검증은 `semantic/schema`의 JSON Schema로 한다.
 - DW MCP 도구: 컬럼 검색, 큐브 목록, 큐브 조회, 샘플, SQL 실행
 - SELECT AST 검사와 물리 SQL 컴파일
 
