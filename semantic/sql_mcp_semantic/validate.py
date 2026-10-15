@@ -163,7 +163,7 @@ def _view_errors(document: dict) -> list[str]:
     errors.extend(_duplicates("sources", sources))
     source_names = set(sources)
     errors.extend(_duplicates("columns", _names(document["columns"])))
-    combine = document.get("combine")
+    combine = document["combine"]
     if combine != "select":
         for source in document["sources"]:
             if "summary" in source:

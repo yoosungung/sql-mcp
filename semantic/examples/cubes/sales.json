@@ -1,13 +1,13 @@
 {
   "kind": "cube",
   "name": "sales",
-  "view": "sales",
-  "description": "주문 매출. 월 요약으로 풀 수 있으면 요약 view 를 쓴다.",
+  "view": "orders_customer",
+  "description": "주문과 고객을 묶은 매출.",
   "dimensions": [
     {
-      "name": "order_month",
+      "name": "order_date",
       "type": "date",
-      "column": "order_month",
+      "column": "order_date",
       "default_filter": null,
       "encryption": false,
       "role": "all"
@@ -15,7 +15,7 @@
     {
       "name": "order_year",
       "type": "date",
-      "expression": "date_trunc('year', order_month)",
+      "expression": "date_trunc('year', order_date)",
       "default_filter": null,
       "encryption": false,
       "role": "all"

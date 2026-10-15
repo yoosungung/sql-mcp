@@ -27,6 +27,9 @@ def test_meta_tools_validate_json_and_links(tmp_path):
             assert created.structured_content["ok"] is True
             assert created.is_error is False
 
+            customer = await client.call_tool("meta_create", {"document": _customer()})
+            assert customer.structured_content["ok"] is True
+
             missing = await client.call_tool("meta_create", {"document": json.dumps(_view("missing"))})
             assert missing.structured_content["ok"] is False
             assert any("missing" in error for error in missing.structured_content["errors"])
@@ -63,15 +66,48 @@ def _table() -> dict:
     }
 
 
+def _customer() -> dict:
+    return {
+        "kind": "table",
+        "name": "customer",
+        "db": "dw",
+        "schema": "sales",
+        "table": "customer",
+        "columns": [
+            {"name": "order_id", "type": "bigint", "nullable": False},
+        ],
+        "pk": ["order_id"],
+        "fk": [],
+        "permission_filters": [],
+        "scope_filter": None,
+        "default_filter": None,
+    }
+
+
 def _view(table_name: str) -> dict:
     return {
         "kind": "view",
         "name": "orders_view",
-        "sources": [{"kind": "table", "name": table_name}],
+        "combine": "join",
+        "sources": [
+            {"kind": "table", "name": table_name},
+            {"kind": "table", "name": "customer"},
+        ],
+        "joins": [
+            {
+                "left": table_name,
+                "right": "customer",
+                "type": "inner",
+                "on": [{"left_column": "order_id", "right_column": "order_id"}],
+            }
+        ],
         "columns": [
             {
                 "name": "order_id",
-                "mappings": [{"source": table_name, "column": "order_id"}],
+                "mappings": [
+                    {"source": table_name, "column": "order_id"},
+                    {"source": "customer", "column": "order_id"},
+                ],
             }
         ],
     }

@@ -2,10 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://sql-mcp.local/semantic/view.schema.json",
   "title": "View",
-  "description": "테이블 또는 view 를 묶는다. combine 은 join, union, minus, select 다. 테이블 하나면 combine 이 없다.",
+  "description": "테이블 또는 view 를 묶는다. combine 은 join, union, minus, select 중 하나다.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["kind", "name", "sources", "columns"],
+  "required": ["kind", "name", "combine", "sources", "columns"],
   "properties": {
     "kind": { "const": "view" },
     "name": { "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/name" },
@@ -20,7 +20,7 @@
     },
     "sources": {
       "type": "array",
-      "minItems": 1,
+      "minItems": 2,
       "items": { "$ref": "#/$defs/source" }
     },
     "joins": {
@@ -35,26 +35,6 @@
     }
   },
   "allOf": [
-    {
-      "if": { "not": { "required": ["combine"] } },
-      "then": {
-        "properties": {
-          "sources": {
-            "minItems": 1,
-            "maxItems": 1,
-            "items": {
-              "properties": { "kind": { "const": "table" } }
-            }
-          }
-        },
-        "not": {
-          "anyOf": [
-            { "required": ["joins"] },
-            { "required": ["prefer"] }
-          ]
-        }
-      }
-    },
     {
       "if": {
         "properties": { "combine": { "const": "join" } },

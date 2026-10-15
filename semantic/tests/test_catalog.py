@@ -36,6 +36,7 @@ def test_create_rejects_missing_connection_without_writing(tmp_path: Path):
 def test_update_rejects_broken_link_and_keeps_file(tmp_path: Path):
     catalog = Catalog.open(tmp_path)
     catalog.create(_table())
+    catalog.create(_customer())
     catalog.create(_view("orders"))
     catalog.create(_cube())
     broken = _view("orders")
@@ -49,6 +50,7 @@ def test_update_rejects_broken_link_and_keeps_file(tmp_path: Path):
 def test_delete_rejects_when_still_referenced(tmp_path: Path):
     catalog = Catalog.open(tmp_path)
     catalog.create(_table())
+    catalog.create(_customer())
     catalog.create(_view("orders"))
     with pytest.raises(SchemaError) as raised:
         catalog.delete("table", "orders")
@@ -56,6 +58,7 @@ def test_delete_rejects_when_still_referenced(tmp_path: Path):
     assert (tmp_path / "tables" / "orders.json").exists()
     catalog.delete("view", "orders_view")
     catalog.delete("table", "orders")
+    catalog.delete("table", "customer")
     assert catalog.list() == []
 
 
@@ -89,15 +92,48 @@ def _table() -> dict:
     }
 
 
+def _customer() -> dict:
+    return {
+        "kind": "table",
+        "name": "customer",
+        "db": "dw",
+        "schema": "sales",
+        "table": "customer",
+        "columns": [
+            {"name": "order_id", "type": "bigint", "nullable": False},
+        ],
+        "pk": ["order_id"],
+        "fk": [],
+        "permission_filters": [],
+        "scope_filter": None,
+        "default_filter": None,
+    }
+
+
 def _view(table_name: str) -> dict:
     return {
         "kind": "view",
         "name": "orders_view",
-        "sources": [{"kind": "table", "name": table_name}],
+        "combine": "join",
+        "sources": [
+            {"kind": "table", "name": table_name},
+            {"kind": "table", "name": "customer"},
+        ],
+        "joins": [
+            {
+                "left": table_name,
+                "right": "customer",
+                "type": "inner",
+                "on": [{"left_column": "order_id", "right_column": "order_id"}],
+            }
+        ],
         "columns": [
             {
                 "name": "order_id",
-                "mappings": [{"source": table_name, "column": "order_id"}],
+                "mappings": [
+                    {"source": table_name, "column": "order_id"},
+                    {"source": "customer", "column": "order_id"},
+                ],
             }
         ],
     }

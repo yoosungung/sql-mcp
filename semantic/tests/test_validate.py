@@ -19,8 +19,6 @@ def test_example_tree_registers():
         "table",
         "table",
         "view",
-        "view",
-        "view",
     ]
 
 
@@ -44,6 +42,14 @@ def test_pk_column_must_exist():
     with pytest.raises(SchemaError) as raised:
         validate_document(document)
     assert any("pk" in error for error in raised.value.errors)
+
+
+def test_view_requires_combine():
+    document = _join_view()
+    del document["combine"]
+    with pytest.raises(SchemaError) as raised:
+        validate_document(document)
+    assert any("combine" in error for error in raised.value.errors)
 
 
 def test_combine_rejects_from():
@@ -101,11 +107,13 @@ def test_filename_must_match_name(tmp_path: Path):
 def test_registry_rejects_unknown_table_reference():
     view = _from_view()
     view["sources"][0]["name"] = "missing"
+    view["joins"][0]["left"] = "missing"
     for column in view["columns"]:
         for mapping in column["mappings"]:
-            mapping["source"] = "missing"
+            if mapping["source"] == "orders":
+                mapping["source"] = "missing"
     with pytest.raises(SchemaError) as raised:
-        validate_tree_documents([_table(), view])
+        validate_tree_documents([_customer(), view])
     assert any("missing" in error for error in raised.value.errors)
 
 
@@ -238,7 +246,7 @@ def test_expression_member_skips_view_column_check():
             "role": "all",
         }
     ]
-    validate_registry([_table(), _from_view(), cube])
+    validate_registry([_table(), _customer(), _from_view(), cube])
 
 
 def test_group_by_requires_view_columns():
@@ -258,7 +266,7 @@ def test_group_by_requires_view_columns():
     from sql_mcp_semantic.validate import validate_registry
 
     with pytest.raises(SchemaError) as raised:
-        validate_registry([_table(), _from_view(), _cube(), document])
+        validate_registry([_table(), _customer(), _from_view(), _cube(), document])
     assert any("missing" in error for error in raised.value.errors)
 
 
@@ -290,6 +298,7 @@ def test_metric_name_must_not_match_cube_column():
         validate_registry(
             [
                 _table(),
+                _customer(),
                 _from_view(),
                 _cube(),
                 {
@@ -333,15 +342,48 @@ def _table() -> dict:
     }
 
 
+def _customer() -> dict:
+    return {
+        "kind": "table",
+        "name": "customer",
+        "db": "dw",
+        "schema": "sales",
+        "table": "customer",
+        "columns": [
+            {"name": "order_id", "type": "bigint", "nullable": False},
+        ],
+        "pk": ["order_id"],
+        "fk": [],
+        "permission_filters": [],
+        "scope_filter": None,
+        "default_filter": None,
+    }
+
+
 def _from_view() -> dict:
     return {
         "kind": "view",
         "name": "orders_view",
-        "sources": [{"kind": "table", "name": "orders"}],
+        "combine": "join",
+        "sources": [
+            {"kind": "table", "name": "orders"},
+            {"kind": "table", "name": "customer"},
+        ],
+        "joins": [
+            {
+                "left": "orders",
+                "right": "customer",
+                "type": "inner",
+                "on": [{"left_column": "order_id", "right_column": "order_id"}],
+            }
+        ],
         "columns": [
             {
                 "name": "order_id",
-                "mappings": [{"source": "orders", "column": "order_id"}],
+                "mappings": [
+                    {"source": "orders", "column": "order_id"},
+                    {"source": "customer", "column": "order_id"},
+                ],
             },
             {
                 "name": "amount",
