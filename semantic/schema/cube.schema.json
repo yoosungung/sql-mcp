@@ -27,34 +27,52 @@
     "dimension": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "column", "code", "date", "time", "default_filter", "encryption", "role"],
+      "required": ["name", "type", "default_filter", "encryption", "role"],
       "properties": {
         "name": {
           "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/name",
           "description": "DW 에이전트에게 보이는 컬럼 이름."
         },
+        "type": {
+          "enum": ["code", "date", "time", "datetime", "string"],
+          "description": "dimension 타입."
+        },
         "column": {
           "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/name",
-          "description": "연결된 view 컬럼 이름."
+          "description": "연결된 view 컬럼 이름. expression 과 함께 두지 않는다."
         },
-        "code": { "type": "boolean", "description": "코드 컬럼이면 true." },
-        "date": { "type": "boolean", "description": "Date 이면 true." },
-        "time": { "type": "boolean", "description": "Time 이면 true." },
+        "expression": {
+          "type": "string",
+          "minLength": 1,
+          "description": "view 컬럼 이름으로 만든 스칼라 식. column 과 함께 두지 않는다."
+        },
         "default_filter": {
           "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/nullableFilter",
           "description": "이 dimension 을 쓸 때 붙는 필터. 시멘틱 컬럼 이름을 쓴다."
         },
         "encryption": { "type": "boolean", "description": "true 이면 원문을 반환하지 않는다." },
         "role": { "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/role" }
-      }
+      },
+      "oneOf": [
+        { "$ref": "#/$defs/fromColumn" },
+        { "$ref": "#/$defs/fromExpression" }
+      ]
     },
     "fact": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "column", "amount", "fx", "default_filter", "encryption", "role"],
+      "required": ["name", "amount", "fx", "default_filter", "encryption", "role"],
       "properties": {
         "name": { "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/name" },
-        "column": { "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/name" },
+        "column": {
+          "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/name",
+          "description": "연결된 view 컬럼 이름. expression 과 함께 두지 않는다."
+        },
+        "expression": {
+          "type": "string",
+          "minLength": 1,
+          "description": "view 컬럼 이름으로 만든 스칼라 식. column 과 함께 두지 않는다."
+        },
         "amount": { "type": "boolean", "description": "금액이면 true." },
         "fx": { "type": "boolean", "description": "외환이면 true." },
         "default_filter": {
@@ -62,7 +80,19 @@
         },
         "encryption": { "type": "boolean" },
         "role": { "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/role" }
-      }
+      },
+      "oneOf": [
+        { "$ref": "#/$defs/fromColumn" },
+        { "$ref": "#/$defs/fromExpression" }
+      ]
+    },
+    "fromColumn": {
+      "required": ["column"],
+      "not": { "required": ["expression"] }
+    },
+    "fromExpression": {
+      "required": ["expression"],
+      "not": { "required": ["column"] }
     }
   }
 }

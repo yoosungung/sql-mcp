@@ -31,7 +31,7 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 
 `meta_create`와 `meta_update`는 문서 하나의 JSON Schema 검증을 통과한 뒤에, 그 문서를 반영한 등록 집합 전체의 연결을 검증한다. `meta_delete`는 그 문서를 뺀 집합의 연결을 검증한다. 검증이 실패하면 파일을 바꾸지 않는다. `meta_read`와 `meta_list`는 저장된 문서를 반환한다.
 
-연결은 `fk.references`, view `sources`와 `mappings`, cube `view`와 dimension·fact `column`, metric·segment `cube`다. 저장 위치는 `SQL_MCP_META_ROOT` 아래의 `tables|views|cubes|metrics|segments/{name}.json`이다.
+연결은 `fk.references`, view `sources`와 `mappings`, cube `view`, dimension·fact의 `column`, metric·segment `cube`다. `expression`으로 만든 dimension·fact는 view 컬럼 연결 검사를 하지 않는다. 저장 위치는 `SQL_MCP_META_ROOT` 아래의 `tables|views|cubes|metrics|segments/{name}.json`이다.
 
 ## 2. 등록 문서
 
@@ -62,7 +62,7 @@ table `columns`는 `name`, `type`, `nullable`이다. `pk`는 그 컬럼 이름�
 
 view `combine`은 `from`, `join`, `union`, `minus`, `select`다. `from`은 테이블 하나를 cube에 올릴 때 쓴다. `join`, `union`, `minus`의 source는 테이블이고, `select`의 source는 view다. union과 minus는 첫 source가 기준이고 각 view 컬럼이 모든 source를 가리킨다. join의 `type`은 `inner`, `left`, `right`, `full`이다.
 
-dimension은 `code`, `date`, `time`을 가진다. fact는 `amount`, `fx`를 가진다. 둘 다 `default_filter`, `encryption`, `role`을 가진다. `column`은 연결된 view 컬럼이다.
+dimension `type`은 `code`, `date`, `time`, `datetime`, `string` 중 하나다. fact는 `amount`, `fx`를 가진다. 둘 다 `default_filter`, `encryption`, `role`을 가진다. 값은 view 컬럼 `column`이거나, view 컬럼 이름을 쓰는 스칼라 `expression`이다. 둘 중 하나만 둔다.
 
 metric `expression`은 집계 전의 스칼라 식이고 `aggregation`은 `sum`, `avg`, `min`, `max`, `count`, `count_distinct` 중 하나다. segment `filter`는 비울 수 없다.
 

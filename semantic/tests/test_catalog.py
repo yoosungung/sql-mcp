@@ -116,10 +116,8 @@ def _cube() -> dict:
         "dimensions": [
             {
                 "name": "order_id",
+                "type": "string",
                 "column": "order_id",
-                "code": False,
-                "date": False,
-                "time": False,
                 "default_filter": None,
                 "encryption": False,
                 "role": [],

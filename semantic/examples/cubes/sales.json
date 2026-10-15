@@ -6,40 +6,40 @@
   "dimensions": [
     {
       "name": "order_month",
+      "type": "date",
       "column": "order_month",
-      "code": false,
-      "date": true,
-      "time": false,
+      "default_filter": null,
+      "encryption": false,
+      "role": []
+    },
+    {
+      "name": "order_year",
+      "type": "date",
+      "expression": "date_trunc('year', order_month)",
       "default_filter": null,
       "encryption": false,
       "role": []
     },
     {
       "name": "region_code",
+      "type": "code",
       "column": "region_code",
-      "code": true,
-      "date": false,
-      "time": false,
       "default_filter": null,
       "encryption": false,
       "role": []
     },
     {
       "name": "status_code",
+      "type": "code",
       "column": "status_code",
-      "code": true,
-      "date": false,
-      "time": false,
       "default_filter": null,
       "encryption": false,
       "role": []
     },
     {
       "name": "customer_id",
+      "type": "string",
       "column": "customer_id",
-      "code": false,
-      "date": false,
-      "time": false,
       "default_filter": null,
       "encryption": false,
       "role": []
@@ -60,6 +60,15 @@
       "column": "fx_rate",
       "amount": false,
       "fx": true,
+      "default_filter": null,
+      "encryption": false,
+      "role": ["finance"]
+    },
+    {
+      "name": "krw_amount",
+      "expression": "sale_amount * fx_rate",
+      "amount": true,
+      "fx": false,
       "default_filter": null,
       "encryption": false,
       "role": ["finance"]

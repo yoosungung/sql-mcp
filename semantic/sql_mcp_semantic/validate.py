@@ -231,7 +231,11 @@ def _cube_errors(document: dict) -> list[str]:
     if not names:
         errors.append("dimension 또는 fact 가 하나 이상 있어야 한다")
     errors.extend(_duplicates("columns", names))
-    columns = [item["column"] for item in document["dimensions"]] + [item["column"] for item in document["facts"]]
+    columns = [
+        item["column"]
+        for item in [*document["dimensions"], *document["facts"]]
+        if "column" in item
+    ]
     errors.extend(_duplicates("view columns", columns))
     return errors
 
@@ -275,9 +279,10 @@ def _registry_errors(documents: list[dict]) -> list[str]:
         view_columns = set(_names(view["columns"]))
         for group in ("dimensions", "facts"):
             for item in cube[group]:
-                if item["column"] not in view_columns:
+                column = item.get("column")
+                if column is not None and column not in view_columns:
                     errors.append(
-                        f"cube {cube['name']} {group} {item['name']} 의 컬럼 {item['column']} 이 view 에 없다"
+                        f"cube {cube['name']} {group} {item['name']} 의 컬럼 {column} 이 view 에 없다"
                     )
 
     for metric in by_kind["metric"].values():

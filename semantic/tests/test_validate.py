@@ -96,6 +96,73 @@ def test_registry_rejects_unknown_table_reference():
     assert any("missing" in error for error in raised.value.errors)
 
 
+def test_dimension_type_is_code_date_time_datetime_or_string():
+    document = _cube()
+    document["dimensions"][0].pop("type")
+    document["dimensions"][0]["code"] = False
+    document["dimensions"][0]["date"] = True
+    document["dimensions"][0]["time"] = False
+    with pytest.raises(SchemaError) as raised:
+        validate_document(document)
+    assert any("type" in error for error in raised.value.errors)
+    document = _cube()
+    for dimension_type in ("code", "date", "time", "datetime", "string"):
+        document["dimensions"][0]["type"] = dimension_type
+        validate_document(document)
+
+
+def test_dimension_and_fact_are_column_or_expression():
+    both = _cube()
+    both["dimensions"][0]["expression"] = "order_id"
+    with pytest.raises(SchemaError):
+        validate_document(both)
+    neither = _cube()
+    del neither["facts"][0]["column"]
+    with pytest.raises(SchemaError):
+        validate_document(neither)
+    calculated = _cube()
+    calculated["dimensions"].append(
+        {
+            "name": "order_label",
+            "type": "string",
+            "expression": "cast(order_id as varchar)",
+            "default_filter": None,
+            "encryption": False,
+            "role": [],
+        }
+    )
+    calculated["facts"].append(
+        {
+            "name": "net_amount",
+            "expression": "amount",
+            "amount": True,
+            "fx": False,
+            "default_filter": None,
+            "encryption": False,
+            "role": [],
+        }
+    )
+    validate_document(calculated)
+
+
+def test_expression_member_skips_view_column_check():
+    from sql_mcp_semantic.validate import validate_registry
+
+    cube = _cube()
+    cube["facts"] = [
+        {
+            "name": "net_amount",
+            "expression": "missing_column * 1",
+            "amount": True,
+            "fx": False,
+            "default_filter": None,
+            "encryption": False,
+            "role": [],
+        }
+    ]
+    validate_registry([_table(), _from_view(), cube])
+
+
 def test_metric_name_must_not_match_cube_column():
     from sql_mcp_semantic.validate import validate_registry
 
@@ -179,10 +246,8 @@ def _cube() -> dict:
         "dimensions": [
             {
                 "name": "order_id",
+                "type": "string",
                 "column": "order_id",
-                "code": False,
-                "date": False,
-                "time": False,
                 "default_filter": None,
                 "encryption": False,
                 "role": [],
