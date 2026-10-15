@@ -1,5 +1,5 @@
 -- MCP 시멘틱 등록 JSON을 담는 카탈로그.
--- 문서 하나의 정본은 body 의 JSON 이다. 필드 검증은 semantic/schema 로 한다.
+-- 문서 하나의 정본은 body 의 JSON 이다. 필드 검증은 semantic/schema/document.schema.json 으로 한다.
 -- 연결 검증은 등록 집합 전체를 읽은 뒤 ARCHITECTURE 규칙으로 한다.
 
 CREATE TABLE document (

@@ -4,10 +4,490 @@
   "title": "Semantic document",
   "description": "코딩 에이전트가 등록하는 JSON 한 건. kind 로 문서를 가른다.",
   "oneOf": [
-    { "$ref": "https://sql-mcp.local/semantic/table.schema.json" },
-    { "$ref": "https://sql-mcp.local/semantic/view.schema.json" },
-    { "$ref": "https://sql-mcp.local/semantic/cube.schema.json" },
-    { "$ref": "https://sql-mcp.local/semantic/metric.schema.json" },
-    { "$ref": "https://sql-mcp.local/semantic/segment.schema.json" }
-  ]
+    { "$ref": "#/$defs/table" },
+    { "$ref": "#/$defs/view" },
+    { "$ref": "#/$defs/cube" },
+    { "$ref": "#/$defs/metric" },
+    { "$ref": "#/$defs/segment" }
+  ],
+  "$defs": {
+    "name": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "description": "SQL 식별자. 문서 name 은 파일명(확장자 제외)과 같다."
+    },
+    "filter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expression"],
+      "properties": {
+        "expression": {
+          "type": "string",
+          "minLength": 1,
+          "description": "신뢰된 SQL 조건식. 컴파일 때 AND로 붙는다."
+        }
+      }
+    },
+    "nullableFilter": {
+      "anyOf": [
+        { "$ref": "#/$defs/filter" },
+        { "type": "null" }
+      ]
+    },
+    "permissionFilter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "expression"],
+      "description": "호출자 role 과 같을 때 붙는 행 필터.",
+      "properties": {
+        "role": { "$ref": "#/$defs/name" },
+        "expression": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "role": {
+      "description": "컬럼을 볼 수 있는 role. 생략하거나 all 이면 모든 role.",
+      "default": "all",
+      "anyOf": [
+        { "const": "all" },
+        {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/name" }
+        }
+      ]
+    },
+    "table": {
+      "title": "Table",
+      "description": "DW에서 고른 물리 테이블. 코딩 에이전트가 tables/{name}.json 으로 등록한다.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "name",
+        "db",
+        "schema",
+        "table",
+        "columns",
+        "pk",
+        "fk",
+        "permission_filters",
+        "scope_filter",
+        "default_filter"
+      ],
+      "properties": {
+        "kind": { "const": "table" },
+        "name": {
+          "$ref": "#/$defs/name",
+          "description": "논리 테이블 이름. view 가 이 이름으로 참조한다."
+        },
+        "description": { "type": "string" },
+        "db": {
+          "$ref": "#/$defs/name",
+          "description": "물리 데이터베이스 이름."
+        },
+        "schema": {
+          "$ref": "#/$defs/name",
+          "description": "물리 스키마 이름."
+        },
+        "table": {
+          "$ref": "#/$defs/name",
+          "description": "물리 테이블 이름."
+        },
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/tableColumn" }
+        },
+        "pk": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/name" },
+          "uniqueItems": true,
+          "description": "기본키 컬럼. 없으면 빈 배열."
+        },
+        "fk": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/foreignKey" }
+        },
+        "permission_filters": {
+          "type": "array",
+          "description": "역할별 행 권한 필터. 물리 컬럼을 쓴다.",
+          "items": { "$ref": "#/$defs/permissionFilter" }
+        },
+        "scope_filter": {
+          "$ref": "#/$defs/nullableFilter",
+          "description": "조회 범위 필터. 물리 컬럼을 쓴다. 없으면 null."
+        },
+        "default_filter": {
+          "$ref": "#/$defs/nullableFilter",
+          "description": "항상 붙는 기본 필터. 물리 컬럼을 쓴다. 없으면 null."
+        },
+        "role": { "$ref": "#/$defs/role" }
+      }
+    },
+    "tableColumn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "nullable"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "DW 물리 타입 이름."
+        },
+        "nullable": { "type": "boolean" }
+      }
+    },
+    "foreignKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["columns", "references"],
+      "properties": {
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/name" }
+        },
+        "references": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["table", "columns"],
+          "properties": {
+            "table": {
+              "$ref": "#/$defs/name",
+              "description": "참조하는 논리 테이블 name."
+            },
+            "columns": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/name" }
+            }
+          }
+        }
+      }
+    },
+    "view": {
+      "title": "View",
+      "description": "테이블 또는 view 를 묶는다. combine 은 join, union, minus, select 중 하나다.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name", "combine", "sources", "columns"],
+      "properties": {
+        "kind": { "const": "view" },
+        "name": { "$ref": "#/$defs/name" },
+        "description": { "type": "string" },
+        "combine": {
+          "enum": ["join", "union", "minus", "select"],
+          "description": "join, union, minus 는 테이블을 묶는다. select 는 view 를 묶어 요약 view 를 우선 고른다."
+        },
+        "prefer": {
+          "const": "summary",
+          "description": "select 전용. 사용자 SQL을 풀 수 있는 source 중 summary 를 우선한다."
+        },
+        "sources": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/viewSource" }
+        },
+        "joins": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/viewJoin" }
+        },
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/viewColumn" }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "combine": { "const": "join" } },
+            "required": ["combine"]
+          },
+          "then": {
+            "required": ["joins"],
+            "properties": {
+              "sources": {
+                "minItems": 2,
+                "items": {
+                  "properties": { "kind": { "const": "table" } }
+                }
+              }
+            },
+            "not": { "required": ["prefer"] }
+          }
+        },
+        {
+          "if": {
+            "properties": { "combine": { "enum": ["union", "minus"] } },
+            "required": ["combine"]
+          },
+          "then": {
+            "properties": {
+              "sources": {
+                "minItems": 2,
+                "items": {
+                  "properties": { "kind": { "const": "table" } }
+                }
+              }
+            },
+            "not": {
+              "anyOf": [
+                { "required": ["joins"] },
+                { "required": ["prefer"] }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "combine": { "const": "select" } },
+            "required": ["combine"]
+          },
+          "then": {
+            "required": ["prefer"],
+            "properties": {
+              "sources": {
+                "minItems": 2,
+                "contains": {
+                  "required": ["summary"],
+                  "properties": { "summary": { "const": true } }
+                },
+                "items": {
+                  "required": ["summary"],
+                  "properties": { "kind": { "const": "view" } }
+                }
+              }
+            },
+            "not": { "required": ["joins"] }
+          }
+        }
+      ]
+    },
+    "viewSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": { "enum": ["table", "view"] },
+        "name": { "$ref": "#/$defs/name" },
+        "summary": {
+          "type": "boolean",
+          "description": "select 전용. true 이면 요약 view."
+        }
+      }
+    },
+    "viewJoin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["left", "right", "type", "on"],
+      "properties": {
+        "left": { "$ref": "#/$defs/name" },
+        "right": { "$ref": "#/$defs/name" },
+        "type": { "enum": ["inner", "left", "right", "full"] },
+        "on": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["left_column", "right_column"],
+            "properties": {
+              "left_column": { "$ref": "#/$defs/name" },
+              "right_column": { "$ref": "#/$defs/name" }
+            }
+          }
+        }
+      }
+    },
+    "viewColumn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "mappings"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "mappings": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "column"],
+            "properties": {
+              "source": { "$ref": "#/$defs/name" },
+              "column": { "$ref": "#/$defs/name" }
+            }
+          }
+        }
+      }
+    },
+    "cube": {
+      "title": "Cube",
+      "description": "DW 에이전트에게 테이블로 보이는 문서. view 하나와 설명이 있고 컬럼은 dimension 또는 fact 다.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name", "view", "description", "dimensions", "facts"],
+      "properties": {
+        "kind": { "const": "cube" },
+        "name": { "$ref": "#/$defs/name" },
+        "view": {
+          "$ref": "#/$defs/name",
+          "description": "연결된 view name."
+        },
+        "description": { "type": "string", "minLength": 1 },
+        "dimensions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/dimension" }
+        },
+        "facts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/fact" }
+        }
+      }
+    },
+    "dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "default_filter", "encryption"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name",
+          "description": "DW 에이전트에게 보이는 컬럼 이름."
+        },
+        "type": {
+          "enum": ["code", "date", "time", "datetime", "string"],
+          "description": "dimension 타입."
+        },
+        "column": {
+          "$ref": "#/$defs/name",
+          "description": "연결된 view 컬럼 이름. expression 과 함께 두지 않는다."
+        },
+        "expression": {
+          "type": "string",
+          "minLength": 1,
+          "description": "view 컬럼 이름으로 만든 스칼라 식. column 과 함께 두지 않는다."
+        },
+        "default_filter": {
+          "$ref": "#/$defs/nullableFilter",
+          "description": "이 dimension 을 쓸 때 붙는 필터. 시멘틱 컬럼 이름을 쓴다."
+        },
+        "encryption": { "type": "boolean", "description": "true 이면 원문을 반환하지 않는다." },
+        "role": { "$ref": "#/$defs/role" }
+      },
+      "oneOf": [
+        { "$ref": "#/$defs/fromColumn" },
+        { "$ref": "#/$defs/fromExpression" }
+      ]
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "amount", "fx", "default_filter", "encryption"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "column": {
+          "$ref": "#/$defs/name",
+          "description": "연결된 view 컬럼 이름. expression 과 함께 두지 않는다."
+        },
+        "expression": {
+          "type": "string",
+          "minLength": 1,
+          "description": "view 컬럼 이름으로 만든 스칼라 식. column 과 함께 두지 않는다."
+        },
+        "amount": { "type": "boolean", "description": "금액이면 true." },
+        "fx": { "type": "boolean", "description": "외환이면 true." },
+        "default_filter": {
+          "$ref": "#/$defs/nullableFilter"
+        },
+        "encryption": { "type": "boolean" },
+        "role": { "$ref": "#/$defs/role" }
+      },
+      "oneOf": [
+        { "$ref": "#/$defs/fromColumn" },
+        { "$ref": "#/$defs/fromExpression" }
+      ]
+    },
+    "fromColumn": {
+      "required": ["column"],
+      "not": { "required": ["expression"] }
+    },
+    "fromExpression": {
+      "required": ["expression"],
+      "not": { "required": ["column"] }
+    },
+    "metric": {
+      "title": "Metric",
+      "description": "cube 에 연결되는 지표. DW 에이전트에게는 그 cube 의 컬럼으로 보인다.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name", "cube", "expression", "aggregation", "filter"],
+      "properties": {
+        "kind": { "const": "metric" },
+        "name": { "$ref": "#/$defs/name" },
+        "description": { "type": "string" },
+        "cube": { "$ref": "#/$defs/name" },
+        "expression": {
+          "type": "string",
+          "minLength": 1,
+          "description": "연결된 cube 의 view 컬럼 연산. 예: sum(sale_amount), sale_amount * fx_rate."
+        },
+        "aggregation": {
+          "enum": ["group", "rollup", "cube", "grouping_sets"],
+          "description": "그룹 기준에 대한 집계. group, rollup, cube, grouping_sets."
+        },
+        "group_by": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "aggregation이 group일 때 GROUP BY에 쓰는 view 컬럼.",
+          "items": { "$ref": "#/$defs/name" }
+        },
+        "filter": {
+          "$ref": "#/$defs/nullableFilter",
+          "description": "이 지표에만 붙는 필터. 시멘틱 컬럼 이름을 쓴다. 없으면 null."
+        },
+        "role": { "$ref": "#/$defs/role" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "aggregation": { "const": "group" } },
+            "required": ["aggregation"]
+          },
+          "then": { "required": ["group_by"] }
+        },
+        {
+          "if": {
+            "properties": { "aggregation": { "enum": ["rollup", "cube", "grouping_sets"] } },
+            "required": ["aggregation"]
+          },
+          "then": { "not": { "required": ["group_by"] } }
+        }
+      ]
+    },
+    "segment": {
+      "title": "Segment",
+      "description": "cube 에 연결되는 이름 있는 필터.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name", "cube", "filter"],
+      "properties": {
+        "kind": { "const": "segment" },
+        "name": { "$ref": "#/$defs/name" },
+        "description": { "type": "string" },
+        "cube": { "$ref": "#/$defs/name" },
+        "filter": {
+          "$ref": "#/$defs/filter",
+          "description": "시멘틱 컬럼 이름을 쓰는 조건식."
+        },
+        "role": { "$ref": "#/$defs/role" }
+      }
+    }
+  }
 }

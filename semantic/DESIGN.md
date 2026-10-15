@@ -4,7 +4,7 @@
 
 필드 의미와 연결 규칙은 [ARCHITECTURE.md](../ARCHITECTURE.md)에 있다.
 
-- `schema/` — JSON Schema. 문서 하나의 정본이다.
+- `schema/document.schema.json` — 등록 JSON Schema 정본. 한 파일이다.
 - `examples/` — 종류별 예시. 파일명(확장자 제외)은 `name`과 같다.
 - `libsql/` — MCP가 등록 JSON을 저장하는 시맨틱 DB(libSQL) 테이블 제안.
 

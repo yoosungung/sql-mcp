@@ -1,11 +1,11 @@
 # ARCHITECTURE.md
 
-컴포넌트 *간* 계약과 인터페이스 형태. 내부 구현은 `server/DESIGN.md`(코드 도입 시)에 둔다. 등록 JSON 필드 정본은 `semantic/schema/`다.
+컴포넌트 *간* 계약과 인터페이스 형태. 내부 구현은 `server/DESIGN.md`(코드 도입 시)에 둔다. 등록 JSON 필드 정본은 `semantic/schema/document.schema.json`이다.
 
 ## 1. 계약사항 (불변 규칙)
 
 1. **임베디드 시맨틱 DB (libSQL).** 시맨틱 저장소는 **MCP 서버(`rmcp`/process) 안에 libSQL로 임베드**한다(별도 원격 시맨틱 서버 없음). 파일 경로 등은 기동 설정. (장차) BM25/벡터 인덱스는 이 DB에 둔다.
-2. **시맨틱 등록 문서.** 코딩 에이전트가 등록하는 JSON은 `table`, `view`, `cube`, `metric`, `segment`다. 문서 하나의 정본은 `semantic/schema/`의 JSON Schema다. 코딩 에이전트는 그 스키마와 이 계약의 연결 규칙을 보고 검증한다. MCP `metadata_*`도 같은 스키마로 검증한다.
+2. **시맨틱 등록 문서.** 코딩 에이전트가 등록하는 JSON은 `table`, `view`, `cube`, `metric`, `segment`다. 문서 하나의 정본은 `semantic/schema/document.schema.json`이다. 코딩 에이전트는 그 스키마와 이 계약의 연결 규칙을 보고 검증한다. MCP `metadata_*`도 같은 스키마로 검증한다.
 3. **타깃 DB (복수).** 실제 DW/조회 대상은 **타깃 DB**라 부른다. **복수 등록**을 허용한다. `execute_sql`·샘플 등 데이터 조회는 타깃 DB로 간다.
 4. **언어.** MCP 서버는 **Rust** + [`rmcp`](https://crates.io/crates/rmcp) (MCP spec `2026-07-28`).
 5. **범위.** **MCP 서버만.** Frontend·Admin UI·Admin API·**stdio**·**Streamable HTTP**는 **취소(범위 밖)**. Transport는 **일반 HTTP**만(요청/응답 JSON — 스트리밍 세션 없음).
@@ -75,7 +75,7 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 
 ### 3.3 Tools — 메타데이터 CRUD (JSON)
 
-임베디드 시맨틱 저장소만. **JSON 바디**로 주고받는다. 페이로드는 `semantic/schema/`의 등록 문서다.
+임베디드 시맨틱 저장소만. **JSON 바디**로 주고받는다. 페이로드는 `semantic/schema/document.schema.json`의 등록 문서다.
 
 | Tool | 동작 | 입력 | 출력 |
 |------|------|------|------|
@@ -121,7 +121,7 @@ semantic/examples/
 
 참조는 `table → view → cube → metric|segment` 방향이다. cube는 view 하나에 연결된다. metric과 segment는 cube 하나에 연결된다. metric 이름은 같은 cube의 dimension, fact 이름과 겹칠 수 없다.
 
-필드 타입의 정본은 `semantic/schema/*.schema.json`이다. `$id`는 `https://sql-mcp.local/semantic/` 아래의 문서 식별자이며 다운로드 주소가 아니다.
+필드 타입의 정본은 `semantic/schema/document.schema.json` 하나다. `$id`는 `https://sql-mcp.local/semantic/document.schema.json`이며 다운로드 주소가 아니다.
 
 | 문서 | 필수 필드 |
 | --- | --- |

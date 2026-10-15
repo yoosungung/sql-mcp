@@ -16,7 +16,7 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 | 시맨틱 등록 문서 | `table` · `view` · `cube` · `metric` · `segment`. 스키마·예시는 `semantic/` |
 | 조회 대상 | **타깃 DB**, **복수** 허용 |
 | 타깃 SQL | SELECT only |
-| 메타 | MCP `metadata_*` CRUD, **JSON 바디**. 검증은 `semantic/schema` |
+| 메타 | MCP `metadata_*` CRUD, **JSON 바디**. 검증은 `semantic/schema/document.schema.json` |
 | 컬럼 검색 | BM25/벡터/hybrid **목표** — 인덱스 설계는 등록 문서와 함께 |
 | MCP 툴 | `list_targets`, `list_tables`, `describe_table`, `search_columns`, `sample_column`, `execute_sql`, `metadata_{create,get,list,update,delete}` |
 | Transport | **일반 HTTP만** (stdio·Streamable HTTP 취소) |
@@ -64,7 +64,7 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 ### M1 — 타깃 조회 + 메타 CRUD (일반 HTTP)
 
 1. `server/` + **libSQL** 임베디드 + HTTP 리스너 + `DESIGN.md` / Commands
-2. `metadata_*` CRUD — `semantic/schema` 검증 + `document` 테이블 저장
+2. `metadata_*` CRUD — `document.schema.json` 검증 + `document` 테이블 저장
 3. `list_targets` · 타깃 SELECT 가드 · `list_tables` / `describe_table` / `execute_sql` / `sample_column`
 4. `search_columns`는 스텁 또는 no-op 허용 — 인덱스 본구현은 M2
 5. HTTP 클라이언트로 스모크
