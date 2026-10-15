@@ -29,9 +29,9 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 
 메타 CRUD는 코딩 에이전트용 MCP 도구 `meta_create`, `meta_read`, `meta_update`, `meta_delete`, `meta_list`만 수행한다. DW 에이전트에게 이 도구를 주지 않는다.
 
-`meta_create`와 `meta_update`는 문서 하나의 JSON Schema 검증을 통과한 뒤에, 그 문서를 반영한 등록 집합 전체의 연결을 검증한다. `meta_delete`는 그 문서를 뺀 집합의 연결을 검증한다. 검증이 실패하면 파일을 바꾸지 않는다. `meta_read`와 `meta_list`는 저장된 문서를 반환한다.
+`meta_create`와 `meta_update`는 문서 하나의 JSON Schema 검증을 통과한 뒤에, 그 문서를 반영한 등록 집합 전체의 연결을 검증한다. `meta_delete`는 그 문서를 뺀 집합의 연결을 검증한다. 검증이 실패하면 시멘틱 DB를 바꾸지 않는다. `meta_read`와 `meta_list`는 저장된 문서를 반환한다.
 
-연결은 `fk.references`, view `sources`와 `mappings`, cube `view`, dimension·fact의 `column`, metric·segment `cube`, metric `group_by`다. `expression`으로 만든 dimension·fact는 view 컬럼 연결 검사를 하지 않는다. `aggregation`이 `group`이면 `group_by`의 각 이름이 연결된 view 컬럼에 있어야 한다. 등록 집합의 디렉터리는 `tables`, `views`, `cubes`, `metrics`, `segments`이고 파일명(확장자 제외)은 `name`이다.
+연결은 `fk.references`, view `sources`와 `mappings`, cube `view`, dimension·fact의 `column`, metric·segment `cube`, metric `group_by`다. `expression`으로 만든 dimension·fact는 view 컬럼 연결 검사를 하지 않는다. `aggregation`이 `group`이면 `group_by`의 각 이름이 연결된 view 컬럼에 있어야 한다. MCP가 저장하는 등록 집합은 시멘틱 DB(libSQL)의 `document` 테이블이다. 한 행은 `kind`, `name`, `body`이고 `body`가 등록 JSON이다. 제안 DDL은 `semantic/libsql/catalog.sql`이다.
 
 ## 2. 등록 문서
 
