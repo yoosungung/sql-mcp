@@ -58,9 +58,9 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 
 | Transport | 상태 |
 |-----------|------|
-| **일반 HTTP** | **유일하게 지원** — MCP 메시지를 HTTP 요청/응답(JSON)으로 주고받음. 장수 스트림·세션형 Streamable HTTP 아님 |
+| **일반 HTTP** | **유일하게 지원** — MCP 메시지를 HTTP POST 요청/응답(JSON)으로 주고받음. 세션 ID·장수 SSE 스트림 없음 |
 | stdio | **취소** |
-| Streamable HTTP | **취소** |
+| Streamable HTTP (세션형) | **취소** — 장수 세션·SSE 중심 모드 제외. 구현체는 `server/DESIGN.md` |
 
 ### 3.2 Tools — 조회 (타깃 / 시맨틱 검색)
 
@@ -82,7 +82,7 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 | `metadata_create` | 생성 | JSON `body` (+ 선택 `kind`) | 생성된 객체 JSON |
 | `metadata_get` | 단건 조회 | `kind` + `name` | 객체 JSON / not_found |
 | `metadata_list` | 목록 | 필터 JSON (`kind?`) | `{ "items": [ ... ] }` |
-| `metadata_update` | 수정 | `kind` + `name` + JSON `body` | 갱신된 객체 JSON |
+| `metadata_update` | 수정(전체 replace) | `kind` + `name` + JSON `body`(문서 전체) | 갱신된 객체 JSON |
 | `metadata_delete` | 삭제 | `kind` + `name` | `{ "deleted": true }` |
 
 JSON에 DSN/password 금지 — 타깃 연결 비밀은 설정 쪽 id 참조만.

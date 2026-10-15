@@ -10,19 +10,17 @@
 
 ## Status
 
-시맨틱 저장소=**libSQL**, transport=**일반 HTTP**. 등록 JSON Schema와 카탈로그 DDL 제안이 `semantic/`에 있다. D2/D13 확정 후 M1 가능.
+M1: 시맨틱=**libSQL**, 타깃=**Postgres**, transport=**일반 HTTP**. 빌드·실행은 [server/DESIGN.md](server/DESIGN.md) `## Commands`.
 
 ## Quickstart
 
-구현 후 `server/DESIGN.md`의 `## Commands`와 이 절을 채운다.
-
 ```text
-# (예정)
 export SQL_MCP_SEMANTIC_PATH=./data/semantic.db
-# targets: config (복수)
-# listen: e.g. http://127.0.0.1:8080
+export SQL_MCP_CONFIG=./server/examples/config.example.toml
+# config의 url_env 가 가리키는 타깃 DSN을 환경에 넣는다.
 
 cargo run -p sql-mcp
+# MCP: POST http://127.0.0.1:8080/mcp  (JSON 요청/응답)
 ```
 
 ## 문서 맵

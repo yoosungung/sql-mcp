@@ -35,4 +35,4 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
  
 ## 3. Status
  
-기획·스키마 단계. 확정: 임베디드 **libSQL** · 복수 **타깃 DB** · 메타 **CRUD(JSON)** · 타깃 SELECT · transport=**일반 HTTP**(stdio·Streamable HTTP 취소) · Frontend 취소. 등록 JSON 스키마·예시·카탈로그 DDL은 `semantic/`에 있다. 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md). 다음: D2·D13 후 M1.
+M1 진행. 확정: 임베디드 **libSQL**(`libsql` 0.9) · 첫 타깃 **Postgres**(`sqlx`) · 메타 **CRUD(JSON)** · update=전체 replace · transport=**일반 HTTP**(stdio·세션형 Streamable HTTP 취소) · Frontend 취소. 등록 스키마·카탈로그는 `semantic/`. 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 서버 [server/DESIGN.md](server/DESIGN.md).

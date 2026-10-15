@@ -1,0 +1,11 @@
+# 예시 설정. DSN은 url_env 환경 변수로만 주입한다.
+listen = "127.0.0.1:8080"
+max_rows = 1000
+sample_limit = 20
+timeout_ms = 30000
+
+[[targets]]
+id = "dw"
+name = "Data Warehouse"
+engine = "postgres"
+url_env = "SQL_MCP_TARGET_DW_URL"
