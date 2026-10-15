@@ -249,6 +249,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn open_file_twice_applies_catalog_idempotently() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("semantic.db");
+        {
+            let store = SemanticStore::open(&path).await.unwrap();
+            let customer: Value = serde_json::from_str(include_str!(
+                "../../../semantic/examples/tables/customer.json"
+            ))
+            .unwrap();
+            store.create(customer).await.unwrap();
+        }
+        let store = SemanticStore::open(&path).await.unwrap();
+        let got = store.get("table", "customer").await.unwrap();
+        assert_eq!(got["name"], "customer");
+    }
+
+    #[tokio::test]
     async fn create_get_list_update_delete() {
         let store = mem().await;
         let customer: Value =

@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug sql-mcp (BIRD)",
+      "cargo": {
+        "args": ["run", "--package=sql-mcp", "--bin=sql-mcp"],
+        "cwd": "${workspaceFolder}"
+      },
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "RUST_LOG": "info,sql_mcp=debug",
+        "SQL_MCP_SEMANTIC_PATH": "${workspaceFolder}/data/semantic.db",
+        "SQL_MCP_CONFIG": "${workspaceFolder}/server/examples/config.bird.toml",
+        "SQL_MCP_LISTEN": "127.0.0.1:8090",
+        "SQL_MCP_TARGET_SUPERHERO_URL": "sqlite:${workspaceFolder}/target_db/superhero/superhero.sqlite?mode=ro",
+        "SQL_MCP_TARGET_STUDENT_CLUB_URL": "sqlite:${workspaceFolder}/target_db/student_club/student_club.sqlite?mode=ro",
+        "SQL_MCP_TARGET_TOXICOLOGY_URL": "sqlite:${workspaceFolder}/target_db/toxicology/toxicology.sqlite?mode=ro",
+        "SQL_MCP_TARGET_THROMBOSIS_URL": "sqlite:${workspaceFolder}/target_db/thrombosis_prediction/thrombosis_prediction.sqlite?mode=ro",
+        "SQL_MCP_TARGET_CALIFORNIA_SCHOOLS_URL": "sqlite:${workspaceFolder}/target_db/california_schools/california_schools.sqlite?mode=ro",
+        "SQL_MCP_TARGET_FORMULA_1_URL": "sqlite:${workspaceFolder}/target_db/formula_1/formula_1.sqlite?mode=ro"
+      },
+      "sourceLanguages": ["rust"],
+      "gracefulShutdown": "SIGTERM"
+    }
+  ]
+}

@@ -3,7 +3,7 @@
 -- 연결 검증은 등록 집합 전체를 읽은 뒤 ARCHITECTURE 규칙으로 한다.
 -- description 은 검색용으로 body 바깥에 둔다. body.$.description 과 같아야 한다.
 
-CREATE TABLE document (
+CREATE TABLE IF NOT EXISTS document (
   kind TEXT NOT NULL CHECK (
     kind IN ('table', 'view', 'cube', 'metric', 'segment')
   ),
@@ -26,7 +26,7 @@ CREATE TABLE document (
 
 -- search_columns 인덱스. 문서 단위가 아니라 검색 가능한 필드(컬럼/dimension/fact/metric) 한 행.
 -- text 는 BM25(FTS5)용, embedding 은 벡터(리틀엔디안 f32 blob)용.
-CREATE TABLE column_index (
+CREATE TABLE IF NOT EXISTS column_index (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   doc_kind TEXT NOT NULL CHECK (
     doc_kind IN ('table', 'view', 'cube', 'metric', 'segment')
@@ -42,7 +42,7 @@ CREATE TABLE column_index (
 ) STRICT;
 
 -- FTS는 content 테이블과 수동 동기화(트리거 없음). MCP가 CRUD 때 함께 갱신한다.
-CREATE VIRTUAL TABLE column_index_fts USING fts5(
+CREATE VIRTUAL TABLE IF NOT EXISTS column_index_fts USING fts5(
   text,
   row_id UNINDEXED
 );

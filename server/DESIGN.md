@@ -70,5 +70,7 @@ cargo test -p sql-mcp --test http_smoke -- --ignored
 export SQL_MCP_CONFIG=./server/examples/config.bird.toml
 cargo run -p sql-mcp
 
+# Cursor/VS Code 디버그: Run and Debug → Debug sql-mcp (BIRD) (.vscode/launch.json, CodeLLDB)
+
 # 컨테이너·K8s: ../deploy/SETUP.md
 ```

@@ -10,7 +10,7 @@
 
 ## libSQL 카탈로그
 
-`libsql/catalog.sql`은 MCP 메타 CRUD가 쓰는 시맨틱 DB다. 타깃 DW 물리 테이블이 아니다.
+`libsql/catalog.sql`은 MCP 메타 CRUD가 쓰는 시맨틱 DB다. 타깃 DW 물리 테이블이 아니다. `SemanticStore::open`이 매번 적용하므로 DDL은 `IF NOT EXISTS`로 멱등하다.
 
 문서 한 건은 `document` 한 행이다. `kind`와 `name`이 기본키이고, `body`에 등록 JSON 전체를 둔다. `description`은 검색용으로 바깥 컬럼에 둔다. `body.kind`·`body.name`·`body.description`은 행의 `kind`, `name`, `description`과 같아야 한다. description이 없으면 행과 `body` 모두 null이다.
 
