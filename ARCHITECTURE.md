@@ -71,9 +71,10 @@
 
 #### 3.2.2 `search_columns` — 컬럼 검색
 
-- `query` 부분 일치(대소문자 무시 기본). `table`/`schema`로 범위 제한.
-- 메타만 반환. 값은 `sample_column`.
-- 결과 `limit`으로 토큰 폭주 방지.
+- 검색 대상은 시맨틱 메타(컬럼명·설명·테이블명 등 인덱싱한 텍스트). 값은 `sample_column`.
+- **모드:** `keyword`(BM25) · `vector`(임베딩 유사도) · `hybrid`(RRF 등 융합). 기본은 `hybrid` 권장.
+- `table`/`schema`로 범위 제한. 결과 `limit`으로 토큰 폭주 방지.
+- 임베딩 **생성**은 DB 밖(앱/API). DB는 벡터 저장·KNN만. 엔진은 ROADMAP D1/D14.
 
 ### 3.3 Resources
 
