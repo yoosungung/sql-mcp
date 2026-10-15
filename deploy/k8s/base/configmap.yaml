@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sql-mcp-config
+data:
+  config.toml: |
+    listen = "0.0.0.0:8080"
+    max_rows = 1000
+    sample_limit = 20
+    timeout_ms = 30000
+
+    [[targets]]
+    id = "dw"
+    name = "Data Warehouse"
+    engine = "postgres"
+    url_env = "SQL_MCP_TARGET_DW_URL"

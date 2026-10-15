@@ -1,15 +1,22 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use axum::Json;
 use axum::Router;
+use axum::routing::get;
 use rmcp::transport::streamable_http_server::session::never::NeverSessionManager;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService,
 };
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
 use crate::tools::SqlMcp;
+
+async fn health() -> Json<Value> {
+    Json(json!({ "ok": true }))
+}
 
 pub async fn serve(
     addr: SocketAddr,
@@ -46,7 +53,9 @@ pub async fn serve_listener(
             ]),
     );
 
-    let router = Router::new().nest_service("/mcp", service);
+    let router = Router::new()
+        .route("/health", get(health))
+        .nest_service("/mcp", service);
     tracing::info!(%addr, "sql-mcp listening (stateless JSON HTTP)");
     let _ = cfg;
     axum::serve(listener, router)

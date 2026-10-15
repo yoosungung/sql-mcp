@@ -15,6 +15,8 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
 | `README.md` | 저장소 방문자용 소개 + 로컬 quickstart | 루트 |
 | `ROADMAP.md` | 수행 계획(마일스톤·순서·미결정 항목) | 루트 |
 | `<comp>/DESIGN.md` | 컴포넌트 *내부* 설계 + `## Commands` (빌드/실행/테스트) | `server/` (M1+), `semantic/`. Frontend/`api/`는 범위 취소 |
+| `deploy/SETUP.md` | 배포 런북 | `deploy/` |
+| `deploy/k8s/base/` | Kustomize 베이스 | `deploy/k8s/base/` |
  
 규칙:
  
@@ -35,4 +37,4 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
  
 ## 3. Status
  
-M2 거의 완료(타깃 엔진 확장만 후속). M3 대기. 확정: libSQL · Postgres · 메타 CRUD · BM25/벡터/hybrid · OpenAI-호환 임베딩 env · cube metric 컴파일 · CI · 일반 HTTP. 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 서버 [server/DESIGN.md](server/DESIGN.md).
+M0–M3 기본 골격 완료. 확정: libSQL · Postgres · 메타 CRUD · BM25/벡터/hybrid · 임베딩 env · cube metric 컴파일 · CI · `/health` · 배포 런북(`deploy/`). 후속: 타깃 엔진 확장 등. 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 서버 [server/DESIGN.md](server/DESIGN.md).

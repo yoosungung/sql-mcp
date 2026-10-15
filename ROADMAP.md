@@ -42,7 +42,7 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 | D1 | 임베디드 시맨틱 엔진 | **결정: libSQL** |
 | D2 | 클라이언트 | **결정:** 시맨틱=`libsql` 0.9 (`core`만) · 타깃=`sqlx` 0.9(+postgres). **크레이트 분리**. Rust **1.94+** (`rust-toolchain.toml`) |
 | D14 | 임베딩 | **결정(M2): OpenAI-호환 HTTP API** (`SQL_MCP_EMBEDDING_*`). 미설정 시 vector/hybrid는 keyword로 폴백. 로컬 ONNX는 후속 |
-| D7 | 배포 | 바이너리 등 — 필요 시만 |
+| D7 | 배포 | **결정(M3): release 바이너리 + 컨테이너 이미지**. Kustomize 베이스는 `deploy/k8s/base/` |
 | D9 | code 판정 | **결정(M2): 휴리스틱** (컬럼명·샘플 값). `as_code` 메타는 후속 |
 | D12 | 시맨틱 등록 스키마 | **초안 있음** (`semantic/`). 검색 인덱스·스키마 단일화 등은 후속 |
 | D13 | 타깃 엔진 | **결정: 첫 타깃 = Postgres** (`sqlx`). 확장은 M2+ |
@@ -83,7 +83,9 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 
 ### M3 — 배포·하드닝
 
-- [ ] (D7) 배포 형태 확정 · 관측 · 릴리스 런북
+- [x] (D7) release 바이너리 + 컨테이너 · `deploy/SETUP.md` · `deploy/k8s/base/`
+- [x] `/health` 프로브 · tracing 로그
+- [ ] 타깃 엔진 확장·추가 하드닝은 필요 시 후속
 
 ## 구현 시 작업 규칙
 

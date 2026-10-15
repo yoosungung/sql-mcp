@@ -60,6 +60,22 @@ async fn post_rpc(url: &str, body: serde_json::Value) -> (u16, String) {
 }
 
 #[tokio::test]
+async fn health_endpoint_ok() {
+    let (mcp_url, handle) = spawn_server().await;
+    let base = mcp_url.trim_end_matches("/mcp");
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{base}/health"))
+        .send()
+        .await
+        .expect("health");
+    assert_eq!(resp.status().as_u16(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ok"], true);
+    handle.abort();
+}
+
+#[tokio::test]
 async fn initialize_and_metadata_roundtrip() {
     let (url, handle) = spawn_server().await;
 

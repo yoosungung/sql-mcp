@@ -53,11 +53,15 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 
 ```text
 cargo test -p sql-mcp
+cargo build -p sql-mcp --release
 
 export SQL_MCP_SEMANTIC_PATH=./data/semantic.db
 export SQL_MCP_CONFIG=./server/examples/config.example.toml
 cargo run -p sql-mcp
+# GET /health · POST /mcp
 
 # Postgres 연동 스모크(선택)
 cargo test -p sql-mcp --test http_smoke -- --ignored
+
+# 컨테이너·K8s: ../deploy/SETUP.md
 ```
