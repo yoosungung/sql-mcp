@@ -6,8 +6,8 @@
 
 **시맨틱 레이어 DB**를 진실 원천으로 두고, (1) Rust MCP가 그 DB를 **SELECT·탐색**하고 (2) **Frontend**가 그 DB를 **관리**하는 시스템을 만든다.
 
-MCP 능력: **테이블 목록/상세**, **컬럼 검색**, **컬럼 샘플(+code)**, **SELECT SQL**.  
-참고 구현 수단: [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk), sqlx류 가드. 시맨틱 레이어+MCP 선행 사례(OrionBelt, warehouse-mcp 등)는 모델 설계(D12) 참고용.
+MCP 능력: **테이블 목록/상세**, **컬럼 검색(BM25·벡터·hybrid)**, **컬럼 샘플(+code)**, **SELECT SQL**.  
+참고 구현 수단: [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk), sqlx/rusqlite. 시맨틱 레이어 선행 사례는 모델 설계(D12) 참고용.
 
 ## 확정된 결정
 
@@ -15,6 +15,7 @@ MCP 능력: **테이블 목록/상세**, **컬럼 검색**, **컬럼 샘플(+cod
 |------|------|
 | 데이터 원천 | **시맨틱 레이어 DB** (MCP는 여기만 사용) |
 | 메타 스키마 | **얇게** — 원천 엔터프라이즈 스키마를 통째 미러하지 않음 ([ARCHITECTURE §1a](ARCHITECTURE.md)) |
+| 컬럼 검색 | BM25 + 벡터(+임베딩) + hybrid(RRF) 지원 목표 ([ARCHITECTURE §3.2.2](ARCHITECTURE.md)) |
 | MCP 언어·SDK | Rust / `rmcp` (`2026-07-28`) |
 | MCP 능력 | `list_tables`, `describe_table`, `search_columns`, `sample_column`, `execute_sql`(**SELECT만**) |
 | MCP 쓰기 | 없음 |
@@ -23,19 +24,35 @@ MCP 능력: **테이블 목록/상세**, **컬럼 검색**, **컬럼 샘플(+cod
 | MCP transport | stdio (M1) |
 | 개발 방식 | TDD, 문서 우선 ([AGENTS.md](AGENTS.md)) |
 
+## 검색 DB 권장 (의견)
+
+메타가 작다는 전제에서:
+
+| 순위 | 조합 | 쉬운 점 | 아쉬운 점 |
+|------|------|---------|-----------|
+| **1 (제일 쉬움·MVP)** | **SQLite + FTS5(BM25) + sqlite-vec** | 파일 하나, 확장만 얹으면 hybrid 가능, 얇은 메타와 잘 맞음 | Frontend·MCP 동시 쓰기 시 잠금; sqlx보다 rusqlite가 확장에 편함 |
+| **2 (프로덕트·동시성)** | **Postgres + ParadeDB `pg_search` + pgvector** | SQL 한곳에서 BM25·벡터·hybrid(RRF) 문서화됨, Frontend와 공유 수월 | 확장/이미지 운영 비용, 로컬 기동이 무거움 |
+| 3 | Postgres + pgvector만 | 벡터는 쉬움(Neon/Supabase 등) | 진짜 BM25는 별도(ParadeDB 또는 앱 측 FTS) |
+| 비권장(초기) | DuckDB FTS+VSS | 분석엔 좋음 | VSS 실험적, 다중 작성자 UI와 궁합 약함 |
+
+**임베딩:** DB 선택이 아니라 별축. **당장 제일 쉬운 건 API 임베딩(D14-A)** 이고, 벡터 컬럼만 시맨틱 DB에 두면 된다. 나중에 로컬 ONNX로 바꿔도 스키마는 동일하다.
+
+**종합 추천:** 지금은 **A(SQLite FTS5+vec)로 `search_columns` hybrid를 먼저 증명**하고, Frontend·다중 접속이 필요해지면 **B(Postgres+ParadeDB)** 로 옮기거나, 처음부터 공유 DB가 필요하면 B로 시작.
+
 ## 미결정
 
 | ID | 질문 | 옵션 / 비고 |
 |----|------|-------------|
-| D1 | 시맨틱 DB 엔진 | **A)** SQLite **B)** PostgreSQL **C)** 둘 다. 권장: 로컬은 A, 공유/프로드는 B |
-| D2 | SQL 크레이트 (MCP) | **A)** sqlx **B)** 네이티브. 권장: A |
+| D1 | 시맨틱 DB 엔진 (검색 포함) | **A)** SQLite+FTS5+sqlite-vec **B)** Postgres+pgvector+ParadeDB **C)** Postgres+pgvector만 |
+| D2 | SQL 크레이트 (MCP) | **A)** sqlx **B)** 네이티브(rusqlite 등). SQLite 확장이면 B가 수월 |
+| D14 | 임베딩 공급 | **A)** 외부 API(가장 쉬움) **B)** 로컬 ONNX **C)** 둘 다 |
 | D5 | Streamable HTTP | M2+ 여부 |
 | D7 | 배포 | 바이너리 / 컨테이너 / k8s — 필요 시만 |
 | D9 | code 판정 | 휴리스틱만 vs `as_code` 플래그 |
-| D10 | Admin API 위치 | **A)** 별도 `api/`(Rust) **B)** `server`에 MCP+HTTP 공존 **C)** Frontend BFF만. 권장: A(쓰기와 MCP 분리) |
-| D11 | Frontend 스택 | 예: React/Vite, Next 등 — 팀 선호 확인 |
-| D12 | 시맨틱 모델 필드 | **방향 확정: 얇은 메타.** 남는 선택 — 최소 테이블 집합(연결/테이블/컬럼/매핑)만 vs 메트릭·조인까지. YAML 병행 여부 |
-| D13 | 물리 웨어하우스 | 시맨틱만 질의 vs 레이어가 물리 SQL 컴파일·실행까지 하는지 |
+| D10 | Admin API 위치 | **A)** 별도 `api/` **B)** `server` 공존 **C)** Frontend BFF. 권장: A |
+| D11 | Frontend 스택 | React/Vite, Next 등 |
+| D12 | 시맨틱 모델 필드 | 얇은 메타 방향 확정. 최소 테이블 집합 vs 메트릭·조인 · YAML 병행 |
+| D13 | 물리 웨어하우스 | 시맨틱만 질의 vs 물리 SQL 컴파일·실행 |
 
 ## 마일스톤
 
@@ -44,39 +61,38 @@ MCP 능력: **테이블 목록/상세**, **컬럼 검색**, **컬럼 샘플(+cod
 - [x] 문서 레이아웃 · ARCHITECTURE · ROADMAP · README
 - [x] MCP 툴 표면 · SELECT-only
 - [x] 시맨틱 레이어 DB + Frontend 관리 역할 분리
-- [ ] D1·D2·D10·D11·D12 합의 (스키마·스택 없이 코드 금지에 가깝게)
+- [x] 얇은 메타 · 검색(BM25/벡터) 목표
+- [ ] D1·D2·D10·D11·D12·D14 합의
 
-**완료 기준:** 공유 DB·역할 분리·첫 엔진·Frontend/API 방향이 문서에 고정됨.
+**완료 기준:** 공유 DB·역할 분리·검색 엔진·Frontend/API 방향이 문서에 고정됨.
 
 ### M1 — 시맨틱 DB + MCP 읽기 (stdio)
 
-의존: D1·D2 (최소). D12가 비어 있으면 **최소 스키마**(테이블/컬럼 메타를 담을 수 있는 수준)를 ARCHITECTURE에 한 절 추가한 뒤 진행.
+의존: D1·D2·D14(벡터 쓸 경우). D12 최소 스키마를 ARCHITECTURE에 고정한 뒤 진행.
 
-1. 시맨틱 DB 마이그레이션/시드 (최소)
+1. 시맨틱 DB 마이그레이션/시드 (메타 + FTS/벡터 인덱스)
 2. `server/` + `DESIGN.md` + Commands — `rmcp` stdio
-3. SELECT 가드 + 툴 5개 (대상 = 시맨틱 DB)
-4. 테스트: 가드 · 검색 · 샘플/code · 통합
+3. SELECT 가드 + 툴 5개 (`search_columns`에 keyword/vector/hybrid)
+4. 테스트: 가드 · BM25/벡터/hybrid · 샘플/code · 통합
 5. Inspector/Cursor 스모크
 
-**완료 기준:** 시맨틱 DB에 대해 다섯 툴이 동작하고 비-SELECT는 거부.
+**완료 기준:** 시맨틱 DB에 대해 다섯 툴이 동작하고, 컬럼 검색이 BM25·(설정 시) 벡터로 동작하며 비-SELECT는 거부.
 
 ### M2 — Frontend 관리 UI
 
 의존: D10·D11·D12.
 
 1. Admin API (D10) + `DESIGN.md`
-2. `frontend/` 스켈레톤 + 시맨틱 객체 CRUD·브라우저
-3. MCP와 동일 DB를 본다는 통합 스모크 (UI로 넣은 정의 → MCP `list_tables`/`search_columns`에 보임)
+2. `frontend/` — 시맨틱 CRUD·브라우저 · (가능하면) 검색 미리보기
+3. UI로 넣은 정의 → MCP 검색/목록에 반영되는 통합 스모크
 4. (D5) Streamable HTTP 선택적
-5. CI: fmt/clippy/test(+ frontend test)
+5. CI
 
-**완료 기준:** UI로 시맨틱 객체를 관리하면 MCP 읽기에 반영된다.
+**완료 기준:** UI 관리 결과가 MCP 읽기·검색에 반영된다.
 
 ### M3 — 모델 확장·배포·하드닝
 
-- (D12/D13) 메트릭·조인·물리 실행 등 확장
-- (D7) 실제 배포 산출물만
-- 관측·시크릿 필터·릴리스
+- (D12/D13) 확장 · (D7) 배포 · 관측·릴리스
 
 ## 구현 시 작업 규칙 (요약)
 
