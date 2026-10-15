@@ -14,7 +14,7 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
 | `ARCHITECTURE.md` | **계약사항(불변 규칙)** + 컴포넌트 *간* 인터페이스 형태(스키마·레이아웃·이벤트) | 루트 |
 | `README.md` | 저장소 방문자용 소개 + 로컬 quickstart | 루트 |
 | `ROADMAP.md` | 수행 계획(마일스톤·순서·미결정 항목) | 루트 |
-| `<comp>/DESIGN.md` | 컴포넌트 *내부* 설계 + `## Commands` (빌드/실행/테스트) | `backend/`, `frontend/`, `???/` |
+| `<comp>/DESIGN.md` | 컴포넌트 *내부* 설계 + `## Commands` (빌드/실행/테스트) | `server/` (M1+); 프론트/배포는 보류 |
  
 규칙:
  
@@ -35,4 +35,4 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
  
 ## 3. Status
  
-현재 프로젝트는 기획 단계 (사용자와 요구사항 / 기술 스펙 / 일정 계획을 수립)
+기획 단계. 확정: **Rust MCP 서버** (`rmcp`), read-only-first. 상세 계약은 [ARCHITECTURE.md](ARCHITECTURE.md), 마일스톤·미결정은 [ROADMAP.md](ROADMAP.md). 다음: D1(첫 엔진)·D2(sqlx 여부) 확정 후 M1 `server/` 스켈레톤.
