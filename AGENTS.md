@@ -35,4 +35,4 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
  
 ## 3. Status
  
-기획 단계. 확정: **임베디드 시맨틱 DB** · **복수 타깃 DB** · 메타 **CRUD(JSON)** · 타깃 SELECT · **stdio only**(HTTP 취소) · Frontend 취소. 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md). 다음: D1·D2·D12·D14 후 M1.
+기획 단계. 확정: 임베디드 시맨틱 **저장소** · 복수 **타깃 DB** · 메타 **CRUD(JSON)** · 타깃 SELECT · stdio only · Frontend/HTTP 취소. **시맨틱 레이어 모델은 향후 정의(D12).** 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md). 다음: D1·D2·D13 후 M1.
