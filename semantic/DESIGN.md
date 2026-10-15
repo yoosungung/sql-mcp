@@ -12,7 +12,7 @@
 
 `libsql/catalog.sql`은 MCP 메타 CRUD가 쓰는 시맨틱 DB다. 타깃 DW 물리 테이블이 아니다.
 
-문서 한 건은 `document` 한 행이다. `kind`와 `name`이 기본키이고, `body`에 등록 JSON 전체를 둔다. `body.kind`와 `body.name`은 행의 `kind`, `name`과 같아야 한다.
+문서 한 건은 `document` 한 행이다. `kind`와 `name`이 기본키이고, `body`에 등록 JSON 전체를 둔다. `description`은 검색용으로 바깥 컬럼에 둔다. `body.kind`·`body.name`·`body.description`은 행의 `kind`, `name`, `description`과 같아야 한다. description이 없으면 행과 `body` 모두 null이다.
 
 `metadata_create` / `metadata_update` / `metadata_delete`는 JSON Schema와 연결 검증을 통과한 뒤에만 이 테이블을 바꾼다. `metadata_get`은 `(kind, name)`으로 `body`를 읽고, `metadata_list`는 `kind`로 걸러 `body` 목록을 반환한다.
 
