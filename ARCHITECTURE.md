@@ -31,7 +31,7 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 
 `meta_create`와 `meta_update`는 문서 하나의 JSON Schema 검증을 통과한 뒤에, 그 문서를 반영한 등록 집합 전체의 연결을 검증한다. `meta_delete`는 그 문서를 뺀 집합의 연결을 검증한다. 검증이 실패하면 파일을 바꾸지 않는다. `meta_read`와 `meta_list`는 저장된 문서를 반환한다.
 
-연결은 `fk.references`, view `sources`와 `mappings`, cube `view`, dimension·fact의 `column`, metric·segment `cube`다. `expression`으로 만든 dimension·fact는 view 컬럼 연결 검사를 하지 않는다. 저장 위치는 `SQL_MCP_META_ROOT` 아래의 `tables|views|cubes|metrics|segments/{name}.json`이다.
+연결은 `fk.references`, view `sources`와 `mappings`, cube `view`, dimension·fact의 `column`, metric·segment `cube`, metric `group_by`다. `expression`으로 만든 dimension·fact는 view 컬럼 연결 검사를 하지 않는다. `aggregation`이 `group`이면 `group_by`의 각 이름이 연결된 view 컬럼에 있어야 한다. 저장 위치는 `SQL_MCP_META_ROOT` 아래의 `tables|views|cubes|metrics|segments/{name}.json`이다.
 
 ## 2. 등록 문서
 
@@ -64,6 +64,6 @@ view `combine`은 `join`, `union`, `minus`, `select`다. 테이블 하나만 올
 
 dimension `type`은 `code`, `date`, `time`, `datetime`, `string` 중 하나다. fact는 `amount`, `fx`를 가진다. 둘 다 `default_filter`, `encryption`을 가진다. `role`의 기본값은 `all`이다. 값은 view 컬럼 `column`이거나, view 컬럼 이름을 쓰는 스칼라 `expression`이다. 둘 중 하나만 둔다.
 
-metric `expression`은 연결된 cube의 view 컬럼 연산이다. `aggregation`은 `group`, `rollup`, `cube`, `grouping_sets` 중 하나이고, 질의의 그룹 기준을 그 방식으로 묶는다. metric과 segment `role`의 기본값은 `all`이다. segment `filter`는 비울 수 없다.
+metric `expression`은 연결된 cube의 view 컬럼 연산이다. `aggregation`은 `group`, `rollup`, `cube`, `grouping_sets` 중 하나이고, 질의의 그룹 기준을 그 방식으로 묶는다. `group`이면 `group_by`에 GROUP BY로 쓰는 view 컬럼을 둔다. metric과 segment `role`의 기본값은 `all`이다. segment `filter`는 비울 수 없다.
 
 예시는 `semantic/examples/`에 있다.

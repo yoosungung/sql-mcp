@@ -284,6 +284,15 @@ def _registry_errors(documents: list[dict]) -> list[str]:
             continue
         if metric["name"] in set(_names(cube["dimensions"]) + _names(cube["facts"])):
             errors.append(f"metric {metric['name']} 이 cube {cube['name']} 의 컬럼 이름과 겹친다")
+        if metric.get("aggregation") == "group":
+            view = by_kind["view"].get(cube["view"])
+            if view is not None:
+                view_columns = set(_names(view["columns"]))
+                for column in metric["group_by"]:
+                    if column not in view_columns:
+                        errors.append(
+                            f"metric {metric['name']} group_by {column} 이 view {view['name']} 에 없다"
+                        )
 
     for segment in by_kind["segment"].values():
         if segment["cube"] not in by_kind["cube"]:

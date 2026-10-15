@@ -4,6 +4,7 @@
   "cube": "sales",
   "expression": "sum(sale_amount)",
   "aggregation": "group",
+  "group_by": ["region_code", "order_month"],
   "filter": null,
   "role": "all"
 }

@@ -147,6 +147,7 @@ def test_metric_role_defaults_to_all():
         "cube": "sales",
         "expression": "sum(sale_amount)",
         "aggregation": "group",
+        "group_by": ["order_id"],
         "filter": None,
     }
     validate_document(document)
@@ -240,6 +241,27 @@ def test_expression_member_skips_view_column_check():
     validate_registry([_table(), _from_view(), cube])
 
 
+def test_group_by_requires_view_columns():
+    document = {
+        "kind": "metric",
+        "name": "revenue",
+        "cube": "sales",
+        "expression": "sum(amount)",
+        "aggregation": "group",
+        "filter": None,
+    }
+    with pytest.raises(SchemaError) as raised:
+        validate_document(document)
+    assert any("group_by" in error for error in raised.value.errors)
+    document["group_by"] = ["missing"]
+    validate_document(document)
+    from sql_mcp_semantic.validate import validate_registry
+
+    with pytest.raises(SchemaError) as raised:
+        validate_registry([_table(), _from_view(), _cube(), document])
+    assert any("missing" in error for error in raised.value.errors)
+
+
 def test_metric_aggregation_is_group_or_rollup():
     document = {
         "kind": "metric",
@@ -254,6 +276,10 @@ def test_metric_aggregation_is_group_or_rollup():
     assert any("aggregation" in error for error in raised.value.errors)
     for aggregation in ("group", "rollup", "cube", "grouping_sets"):
         document["aggregation"] = aggregation
+        if aggregation == "group":
+            document["group_by"] = ["order_id"]
+        else:
+            document.pop("group_by", None)
         validate_document(document)
 
 
@@ -272,6 +298,7 @@ def test_metric_name_must_not_match_cube_column():
                     "cube": "sales",
                     "expression": "sum(amount)",
                     "aggregation": "group",
+                    "group_by": ["order_id"],
                     "filter": None,
                 },
             ]
