@@ -46,6 +46,14 @@ def test_pk_column_must_exist():
     assert any("pk" in error for error in raised.value.errors)
 
 
+def test_combine_rejects_from():
+    document = _from_view()
+    document["combine"] = "from"
+    with pytest.raises(SchemaError) as raised:
+        validate_document(document)
+    assert any("combine" in error for error in raised.value.errors)
+
+
 def test_view_column_rejects_same_flags():
     document = _join_view()
     document["columns"][0]["same_name"] = True
@@ -302,7 +310,6 @@ def _from_view() -> dict:
     return {
         "kind": "view",
         "name": "orders_view",
-        "combine": "from",
         "sources": [{"kind": "table", "name": "orders"}],
         "columns": [
             {

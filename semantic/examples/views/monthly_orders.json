@@ -1,7 +1,6 @@
 {
   "kind": "view",
   "name": "monthly_orders",
-  "combine": "from",
   "sources": [
     {
       "kind": "table",

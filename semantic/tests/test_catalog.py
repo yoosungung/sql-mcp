@@ -93,7 +93,6 @@ def _view(table_name: str) -> dict:
     return {
         "kind": "view",
         "name": "orders_view",
-        "combine": "from",
         "sources": [{"kind": "table", "name": table_name}],
         "columns": [
             {

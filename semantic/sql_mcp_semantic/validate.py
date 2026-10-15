@@ -163,7 +163,7 @@ def _view_errors(document: dict) -> list[str]:
     errors.extend(_duplicates("sources", sources))
     source_names = set(sources)
     errors.extend(_duplicates("columns", _names(document["columns"])))
-    combine = document["combine"]
+    combine = document.get("combine")
     if combine != "select":
         for source in document["sources"]:
             if "summary" in source:
@@ -297,7 +297,7 @@ def _view_reference_errors(view: dict, by_kind: dict) -> list[str]:
     views = by_kind["view"]
     source_columns = {}
     for source in view["sources"]:
-        if view["combine"] == "select":
+        if view.get("combine") == "select":
             target = views.get(source["name"])
             if target is None:
                 errors.append(f"view {view['name']} 의 source view {source['name']} 가 없다")
@@ -319,7 +319,7 @@ def _view_reference_errors(view: dict, by_kind: dict) -> list[str]:
                 errors.append(
                     f"view {view['name']} 컬럼 {column['name']} 의 {item['source']}.{item['column']} 이 없다"
                 )
-    if view["combine"] == "join":
+    if view.get("combine") == "join":
         for index, join in enumerate(view["joins"]):
             for side, column_key in (("left", "left_column"), ("right", "right_column")):
                 columns = source_columns.get(join[side])
@@ -344,7 +344,7 @@ def _view_cycles(views: dict) -> list[str]:
             return
         visiting.add(name)
         view = views[name]
-        if view["combine"] == "select":
+        if view.get("combine") == "select":
             for source in view["sources"]:
                 walk(source["name"])
         visiting.remove(name)
