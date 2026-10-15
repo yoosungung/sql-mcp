@@ -1,0 +1,19 @@
+{
+  "kind": "table",
+  "name": "orders_month",
+  "db": "dw",
+  "schema": "sales",
+  "table": "orders_month",
+  "columns": [
+    { "name": "order_month", "type": "date", "nullable": false },
+    { "name": "region_code", "type": "varchar", "nullable": false },
+    { "name": "status_code", "type": "varchar", "nullable": false },
+    { "name": "sale_amount", "type": "numeric", "nullable": false },
+    { "name": "fx_rate", "type": "numeric", "nullable": false }
+  ],
+  "pk": ["order_month", "region_code", "status_code"],
+  "fk": [],
+  "permission_filters": [],
+  "scope_filter": null,
+  "default_filter": null
+}

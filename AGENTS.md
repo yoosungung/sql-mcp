@@ -35,4 +35,4 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
  
 ## 3. Status
  
-현재 프로젝트는 기획 단계 (사용자와 요구사항 / 기술 스펙 / 일정 계획을 수립)
+등록용 시멘틱 JSON 스키마와 검증이 있다. MCP 도구와 SQL 컴파일은 아직 없다.

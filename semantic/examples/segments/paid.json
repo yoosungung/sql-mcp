@@ -1,0 +1,6 @@
+{
+  "kind": "segment",
+  "name": "paid",
+  "cube": "sales",
+  "filter": { "expression": "status_code = 'PAID'" }
+}

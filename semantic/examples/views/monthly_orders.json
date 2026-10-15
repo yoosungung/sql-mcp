@@ -1,0 +1,45 @@
+{
+  "kind": "view",
+  "name": "monthly_orders",
+  "combine": "from",
+  "sources": [
+    { "kind": "table", "name": "orders_month" }
+  ],
+  "columns": [
+    {
+      "name": "order_month",
+      "mappings": [{ "source": "orders_month", "column": "order_month" }],
+      "same_name": false,
+      "same_data": false,
+      "same_code": false
+    },
+    {
+      "name": "region_code",
+      "mappings": [{ "source": "orders_month", "column": "region_code" }],
+      "same_name": false,
+      "same_data": false,
+      "same_code": false
+    },
+    {
+      "name": "status_code",
+      "mappings": [{ "source": "orders_month", "column": "status_code" }],
+      "same_name": false,
+      "same_data": false,
+      "same_code": false
+    },
+    {
+      "name": "sale_amount",
+      "mappings": [{ "source": "orders_month", "column": "sale_amount" }],
+      "same_name": false,
+      "same_data": false,
+      "same_code": false
+    },
+    {
+      "name": "fx_rate",
+      "mappings": [{ "source": "orders_month", "column": "fx_rate" }],
+      "same_name": false,
+      "same_data": false,
+      "same_code": false
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sql-mcp.local/semantic/cube.schema.json",
+  "title": "Cube",
+  "description": "DW 에이전트에게 테이블로 보이는 문서. view 하나와 설명이 있고 컬럼은 dimension 또는 fact 다.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "name", "view", "description", "dimensions", "facts"],
+  "properties": {
+    "kind": { "const": "cube" },
+    "name": { "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/name" },
+    "view": {
+      "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/name",
+      "description": "연결된 view name."
+    },
+    "description": { "type": "string", "minLength": 1 },
+    "dimensions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/dimension" }
+    },
+    "facts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/fact" }
+    }
+  },
+  "$defs": {
+    "dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "column", "code", "date", "time", "default_filter", "encryption", "role"],
+      "properties": {
+        "name": {
+          "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/name",
+          "description": "DW 에이전트에게 보이는 컬럼 이름."
+        },
+        "column": {
+          "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/name",
+          "description": "연결된 view 컬럼 이름."
+        },
+        "code": { "type": "boolean", "description": "코드 컬럼이면 true." },
+        "date": { "type": "boolean", "description": "Date 이면 true." },
+        "time": { "type": "boolean", "description": "Time 이면 true." },
+        "default_filter": {
+          "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/nullableFilter",
+          "description": "이 dimension 을 쓸 때 붙는 필터. 시멘틱 컬럼 이름을 쓴다."
+        },
+        "encryption": { "type": "boolean", "description": "true 이면 원문을 반환하지 않는다." },
+        "role": { "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/role" }
+      }
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "column", "amount", "fx", "default_filter", "encryption", "role"],
+      "properties": {
+        "name": { "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/name" },
+        "column": { "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/name" },
+        "amount": { "type": "boolean", "description": "금액이면 true." },
+        "fx": { "type": "boolean", "description": "외환이면 true." },
+        "default_filter": {
+          "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/nullableFilter"
+        },
+        "encryption": { "type": "boolean" },
+        "role": { "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/role" }
+      }
+    }
+  }
+}

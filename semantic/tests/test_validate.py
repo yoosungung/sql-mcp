@@ -1,0 +1,259 @@
+import json
+from pathlib import Path
+
+import pytest
+
+from sql_mcp_semantic.validate import SchemaError, validate_document, validate_file, validate_tree
+
+EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
+
+
+def test_example_tree_registers():
+    docs = validate_tree(EXAMPLES)
+    kinds = sorted(doc["kind"] for doc in docs)
+    assert kinds == [
+        "cube",
+        "metric",
+        "segment",
+        "table",
+        "table",
+        "table",
+        "view",
+        "view",
+        "view",
+    ]
+
+
+def test_cube_requires_description():
+    with pytest.raises(SchemaError) as raised:
+        validate_document(
+            {
+                "kind": "cube",
+                "name": "sales",
+                "view": "sales",
+                "dimensions": [],
+                "facts": [],
+            }
+        )
+    assert any("description" in error for error in raised.value.errors)
+
+
+def test_pk_column_must_exist():
+    document = _table()
+    document["pk"] = ["missing"]
+    with pytest.raises(SchemaError) as raised:
+        validate_document(document)
+    assert any("pk" in error for error in raised.value.errors)
+
+
+def test_bundled_columns_require_same_name_data_and_code():
+    document = _join_view()
+    document["columns"][0]["same_data"] = False
+    with pytest.raises(SchemaError) as raised:
+        validate_document(document)
+    assert any("same_data" in error for error in raised.value.errors)
+
+
+def test_select_requires_a_summary_source():
+    document = _select_view()
+    for source in document["sources"]:
+        source["summary"] = False
+    with pytest.raises(SchemaError) as raised:
+        validate_document(document)
+    assert any("summary" in error for error in raised.value.errors)
+
+
+def test_union_column_maps_every_source():
+    document = _join_view()
+    document["combine"] = "union"
+    document.pop("joins")
+    document["columns"][0]["mappings"] = [document["columns"][0]["mappings"][0]]
+    document["columns"][0]["same_name"] = False
+    document["columns"][0]["same_data"] = False
+    document["columns"][0]["same_code"] = False
+    with pytest.raises(SchemaError) as raised:
+        validate_document(document)
+    assert any("union" in error for error in raised.value.errors)
+
+
+def test_filename_must_match_name(tmp_path: Path):
+    path = tmp_path / "tables" / "other.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps(_table()), encoding="utf-8")
+    with pytest.raises(SchemaError) as raised:
+        validate_file(path)
+    assert any("파일명" in error for error in raised.value.errors)
+
+
+def test_registry_rejects_unknown_table_reference():
+    view = _from_view()
+    view["sources"][0]["name"] = "missing"
+    for column in view["columns"]:
+        for mapping in column["mappings"]:
+            mapping["source"] = "missing"
+    with pytest.raises(SchemaError) as raised:
+        validate_tree_documents([_table(), view])
+    assert any("missing" in error for error in raised.value.errors)
+
+
+def test_metric_name_must_not_match_cube_column():
+    from sql_mcp_semantic.validate import validate_registry
+
+    with pytest.raises(SchemaError) as raised:
+        validate_registry(
+            [
+                _table(),
+                _from_view(),
+                _cube(),
+                {
+                    "kind": "metric",
+                    "name": "amount",
+                    "cube": "sales",
+                    "expression": "amount",
+                    "aggregation": "sum",
+                    "filter": None,
+                },
+            ]
+        )
+    assert any("amount" in error for error in raised.value.errors)
+
+
+def validate_tree_documents(documents: list[dict]):
+    from sql_mcp_semantic.validate import validate_registry
+
+    for document in documents:
+        validate_document(document)
+    validate_registry(documents)
+
+
+def _table() -> dict:
+    return {
+        "kind": "table",
+        "name": "orders",
+        "db": "dw",
+        "schema": "sales",
+        "table": "orders",
+        "columns": [
+            {"name": "order_id", "type": "bigint", "nullable": False},
+            {"name": "amount", "type": "numeric", "nullable": False},
+        ],
+        "pk": ["order_id"],
+        "fk": [],
+        "permission_filters": [],
+        "scope_filter": None,
+        "default_filter": None,
+    }
+
+
+def _from_view() -> dict:
+    return {
+        "kind": "view",
+        "name": "orders_view",
+        "combine": "from",
+        "sources": [{"kind": "table", "name": "orders"}],
+        "columns": [
+            {
+                "name": "order_id",
+                "mappings": [{"source": "orders", "column": "order_id"}],
+                "same_name": False,
+                "same_data": False,
+                "same_code": False,
+            },
+            {
+                "name": "amount",
+                "mappings": [{"source": "orders", "column": "amount"}],
+                "same_name": False,
+                "same_data": False,
+                "same_code": False,
+            },
+        ],
+    }
+
+
+def _cube() -> dict:
+    return {
+        "kind": "cube",
+        "name": "sales",
+        "view": "orders_view",
+        "description": "주문",
+        "dimensions": [
+            {
+                "name": "order_id",
+                "column": "order_id",
+                "code": False,
+                "date": False,
+                "time": False,
+                "default_filter": None,
+                "encryption": False,
+                "role": [],
+            }
+        ],
+        "facts": [
+            {
+                "name": "amount",
+                "column": "amount",
+                "amount": True,
+                "fx": False,
+                "default_filter": None,
+                "encryption": False,
+                "role": [],
+            }
+        ],
+    }
+
+
+def _join_view() -> dict:
+    return {
+        "kind": "view",
+        "name": "orders_customer",
+        "combine": "join",
+        "sources": [
+            {"kind": "table", "name": "orders"},
+            {"kind": "table", "name": "customer"},
+        ],
+        "joins": [
+            {
+                "left": "orders",
+                "right": "customer",
+                "type": "inner",
+                "on": [{"left_column": "customer_id", "right_column": "customer_id"}],
+            }
+        ],
+        "columns": [
+            {
+                "name": "customer_id",
+                "mappings": [
+                    {"source": "orders", "column": "customer_id"},
+                    {"source": "customer", "column": "customer_id"},
+                ],
+                "same_name": True,
+                "same_data": True,
+                "same_code": True,
+            }
+        ],
+    }
+
+
+def _select_view() -> dict:
+    return {
+        "kind": "view",
+        "name": "sales",
+        "combine": "select",
+        "prefer": "summary",
+        "sources": [
+            {"kind": "view", "name": "monthly_orders", "summary": True},
+            {"kind": "view", "name": "orders_customer", "summary": False},
+        ],
+        "columns": [
+            {
+                "name": "amount",
+                "mappings": [
+                    {"source": "monthly_orders", "column": "amount"},
+                    {"source": "orders_customer", "column": "amount"},
+                ],
+                "same_name": True,
+                "same_data": True,
+                "same_code": True,
+            }
+        ],
+    }

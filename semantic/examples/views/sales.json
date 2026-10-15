@@ -1,0 +1,87 @@
+{
+  "kind": "view",
+  "name": "sales",
+  "combine": "select",
+  "prefer": "summary",
+  "sources": [
+    { "kind": "view", "name": "monthly_orders", "summary": true },
+    { "kind": "view", "name": "orders_customer", "summary": false }
+  ],
+  "columns": [
+    {
+      "name": "order_month",
+      "mappings": [{ "source": "monthly_orders", "column": "order_month" }],
+      "same_name": false,
+      "same_data": false,
+      "same_code": false
+    },
+    {
+      "name": "region_code",
+      "mappings": [
+        { "source": "monthly_orders", "column": "region_code" },
+        { "source": "orders_customer", "column": "region_code" }
+      ],
+      "same_name": true,
+      "same_data": true,
+      "same_code": true
+    },
+    {
+      "name": "status_code",
+      "mappings": [
+        { "source": "monthly_orders", "column": "status_code" },
+        { "source": "orders_customer", "column": "status_code" }
+      ],
+      "same_name": true,
+      "same_data": true,
+      "same_code": true
+    },
+    {
+      "name": "sale_amount",
+      "mappings": [
+        { "source": "monthly_orders", "column": "sale_amount" },
+        { "source": "orders_customer", "column": "sale_amount" }
+      ],
+      "same_name": true,
+      "same_data": true,
+      "same_code": true
+    },
+    {
+      "name": "fx_rate",
+      "mappings": [
+        { "source": "monthly_orders", "column": "fx_rate" },
+        { "source": "orders_customer", "column": "fx_rate" }
+      ],
+      "same_name": true,
+      "same_data": true,
+      "same_code": true
+    },
+    {
+      "name": "customer_id",
+      "mappings": [{ "source": "orders_customer", "column": "customer_id" }],
+      "same_name": false,
+      "same_data": false,
+      "same_code": false
+    },
+    {
+      "name": "order_id",
+      "mappings": [{ "source": "orders_customer", "column": "order_id" }],
+      "same_name": false,
+      "same_data": false,
+      "same_code": false
+    },
+    {
+      "name": "order_date",
+      "mappings": [{ "source": "orders_customer", "column": "order_date" }],
+      "same_name": false,
+      "same_data": false,
+      "same_code": false
+    },
+    {
+      "name": "customer_status_code",
+      "mappings": [{ "source": "orders_customer", "column": "customer_status_code" }],
+      "same_name": false,
+      "same_data": false,
+      "same_code": false
+    }
+  ]
+}

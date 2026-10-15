@@ -1,0 +1,68 @@
+{
+  "kind": "cube",
+  "name": "sales",
+  "view": "sales",
+  "description": "주문 매출. 월 요약으로 풀 수 있으면 요약 view 를 쓴다.",
+  "dimensions": [
+    {
+      "name": "order_month",
+      "column": "order_month",
+      "code": false,
+      "date": true,
+      "time": false,
+      "default_filter": null,
+      "encryption": false,
+      "role": []
+    },
+    {
+      "name": "region_code",
+      "column": "region_code",
+      "code": true,
+      "date": false,
+      "time": false,
+      "default_filter": null,
+      "encryption": false,
+      "role": []
+    },
+    {
+      "name": "status_code",
+      "column": "status_code",
+      "code": true,
+      "date": false,
+      "time": false,
+      "default_filter": null,
+      "encryption": false,
+      "role": []
+    },
+    {
+      "name": "customer_id",
+      "column": "customer_id",
+      "code": false,
+      "date": false,
+      "time": false,
+      "default_filter": null,
+      "encryption": false,
+      "role": []
+    }
+  ],
+  "facts": [
+    {
+      "name": "sale_amount",
+      "column": "sale_amount",
+      "amount": true,
+      "fx": false,
+      "default_filter": null,
+      "encryption": false,
+      "role": ["finance"]
+    },
+    {
+      "name": "fx_rate",
+      "column": "fx_rate",
+      "amount": false,
+      "fx": true,
+      "default_filter": null,
+      "encryption": false,
+      "role": ["finance"]
+    }
+  ]
+}

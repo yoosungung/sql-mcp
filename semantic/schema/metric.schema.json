@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sql-mcp.local/semantic/metric.schema.json",
+  "title": "Metric",
+  "description": "cube 에 연결되는 지표. DW 에이전트에게는 그 cube 의 컬럼으로 보인다.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "name", "cube", "expression", "aggregation", "filter"],
+  "properties": {
+    "kind": { "const": "metric" },
+    "name": { "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/name" },
+    "description": { "type": "string" },
+    "cube": { "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/name" },
+    "expression": {
+      "type": "string",
+      "minLength": 1,
+      "description": "집계 전 스칼라 식. cube 의 dimension, fact 이름을 쓴다."
+    },
+    "aggregation": {
+      "enum": ["sum", "avg", "min", "max", "count", "count_distinct"]
+    },
+    "filter": {
+      "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/nullableFilter",
+      "description": "이 지표에만 붙는 필터. 시멘틱 컬럼 이름을 쓴다. 없으면 null."
+    }
+  }
+}

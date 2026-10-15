@@ -1,0 +1,8 @@
+{
+  "kind": "metric",
+  "name": "revenue",
+  "cube": "sales",
+  "expression": "sale_amount",
+  "aggregation": "sum",
+  "filter": null
+}
