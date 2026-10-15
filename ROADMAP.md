@@ -43,7 +43,7 @@ MCP 능력: **테이블 목록/상세**, **컬럼 검색(BM25·벡터·hybrid)**
 
 | ID | 질문 | 옵션 / 비고 |
 |----|------|-------------|
-| D1 | 시맨틱 DB 엔진 (검색 포함) | **A)** SQLite+FTS5+sqlite-vec **B)** Postgres+pgvector+ParadeDB **C)** Postgres+pgvector만 |
+| D1 | 시맨틱 DB 엔진 (검색 포함) | **A)** SQLite+FTS5+sqlite-vec **B)** Postgres+ParadeDB+pgvector **C)** Postgres+pgvector만 **D)** libSQL/Turso(네이티브 벡터+FTS) — 권장 후보 |
 | D2 | SQL 크레이트 (MCP) | **A)** sqlx **B)** 네이티브(rusqlite 등). SQLite 확장이면 B가 수월 |
 | D14 | 임베딩 공급 | **A)** 외부 API(가장 쉬움) **B)** 로컬 ONNX **C)** 둘 다 |
 | D5 | Streamable HTTP | M2+ 여부 |
