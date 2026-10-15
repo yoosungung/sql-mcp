@@ -96,6 +96,24 @@ def test_registry_rejects_unknown_table_reference():
     assert any("missing" in error for error in raised.value.errors)
 
 
+def test_segment_role_defaults_to_all():
+    document = {
+        "kind": "segment",
+        "name": "paid",
+        "cube": "sales",
+        "filter": {"expression": "status_code = 'PAID'"},
+    }
+    validate_document(document)
+    document["role"] = "all"
+    validate_document(document)
+    document["role"] = ["finance"]
+    validate_document(document)
+    document["role"] = []
+    with pytest.raises(SchemaError) as raised:
+        validate_document(document)
+    assert any("role" in error for error in raised.value.errors)
+
+
 def test_metric_role_defaults_to_all():
     document = {
         "kind": "metric",

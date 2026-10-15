@@ -21,7 +21,7 @@ SQL 실행은 한 개의 SELECT만 받는다. AST로 SELECT가 아닌 문을 거
 5. 질의에 쓰인 metric의 `filter`
 6. 질의에 쓰인 segment의 `filter`
 
-dimension, fact, metric의 `role`을 생략하거나 `all`이면 모든 role이 볼 수 있다. role 이름 배열이면 호출자는 그 중 하나의 role을 가져야 한다. `encryption`이 true인 컬럼은 원문으로 반환하지 않는다.
+dimension, fact, metric, segment의 `role`을 생략하거나 `all`이면 모든 role이 볼 수 있다. role 이름 배열이면 호출자는 그 중 하나의 role을 가져야 한다. `encryption`이 true인 컬럼은 원문으로 반환하지 않는다.
 
 view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은 컬럼은 하나의 view 컬럼로 묶는다. `mappings`가 둘 이상이면 `same_name`, `same_data`, `same_code`가 모두 true이고, 가리키는 컬럼 이름이 같아야 한다.
 
@@ -64,6 +64,6 @@ view `combine`은 `from`, `join`, `union`, `minus`, `select`다. `from`은 테�
 
 dimension `type`은 `code`, `date`, `time`, `datetime`, `string` 중 하나다. fact는 `amount`, `fx`를 가진다. 둘 다 `default_filter`, `encryption`을 가진다. `role`의 기본값은 `all`이다. 값은 view 컬럼 `column`이거나, view 컬럼 이름을 쓰는 스칼라 `expression`이다. 둘 중 하나만 둔다.
 
-metric `expression`은 연결된 cube의 view 컬럼 연산이다. `aggregation`은 `group`, `rollup`, `cube`, `grouping_sets` 중 하나이고, 질의의 그룹 기준을 그 방식으로 묶는다. metric `role`의 기본값은 `all`이다. segment `filter`는 비울 수 없다.
+metric `expression`은 연결된 cube의 view 컬럼 연산이다. `aggregation`은 `group`, `rollup`, `cube`, `grouping_sets` 중 하나이고, 질의의 그룹 기준을 그 방식으로 묶는다. metric과 segment `role`의 기본값은 `all`이다. segment `filter`는 비울 수 없다.
 
 예시는 `semantic/examples/`에 있다.
