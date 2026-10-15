@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sql-mcp.local/semantic/common.schema.json",
+  "title": "Common",
+  "description": "등록 JSON이 공유하는 이름과 필터.",
+  "$defs": {
+    "name": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "description": "SQL 식별자. 문서 name 은 파일명(확장자 제외)과 같다."
+    },
+    "filter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expression"],
+      "properties": {
+        "expression": {
+          "type": "string",
+          "minLength": 1,
+          "description": "신뢰된 SQL 조건식. 컴파일 때 AND로 붙는다."
+        }
+      }
+    },
+    "nullableFilter": {
+      "anyOf": [
+        { "$ref": "#/$defs/filter" },
+        { "type": "null" }
+      ]
+    },
+    "permissionFilter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "expression"],
+      "description": "호출자 role 과 같을 때 붙는 행 필터.",
+      "properties": {
+        "role": { "$ref": "#/$defs/name" },
+        "expression": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "role": {
+      "description": "컬럼을 볼 수 있는 role. 생략하거나 all 이면 모든 role.",
+      "default": "all",
+      "anyOf": [
+        { "const": "all" },
+        {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/name" }
+        }
+      ]
+    }
+  }
+}

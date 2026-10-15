@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sql-mcp.local/semantic/document.schema.json",
+  "title": "Semantic document",
+  "description": "코딩 에이전트가 등록하는 JSON 한 건. kind 로 문서를 가른다.",
+  "oneOf": [
+    { "$ref": "https://sql-mcp.local/semantic/table.schema.json" },
+    { "$ref": "https://sql-mcp.local/semantic/view.schema.json" },
+    { "$ref": "https://sql-mcp.local/semantic/cube.schema.json" },
+    { "$ref": "https://sql-mcp.local/semantic/metric.schema.json" },
+    { "$ref": "https://sql-mcp.local/semantic/segment.schema.json" }
+  ]
+}

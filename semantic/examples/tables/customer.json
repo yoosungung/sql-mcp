@@ -1,0 +1,18 @@
+{
+  "kind": "table",
+  "name": "customer",
+  "db": "dw",
+  "schema": "sales",
+  "table": "customer",
+  "columns": [
+    { "name": "customer_id", "type": "bigint", "nullable": false },
+    { "name": "region_code", "type": "varchar", "nullable": false },
+    { "name": "status_code", "type": "varchar", "nullable": false }
+  ],
+  "pk": ["customer_id"],
+  "fk": [],
+  "permission_filters": [],
+  "scope_filter": null,
+  "default_filter": { "expression": "status_code = 'ACTIVE'" },
+  "role": "all"
+}
