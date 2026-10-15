@@ -6,20 +6,16 @@ use serde::Deserialize;
 
 use crate::error::AppError;
 
-/// D14: embedding provider. API when configured; deterministic for tests/offline.
+/// D14: embedding provider. Production = OpenAI-compatible HTTP only.
 #[async_trait]
 pub trait Embedder: Send + Sync {
     async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, AppError>;
     fn dimensions(&self) -> usize;
 }
 
-/// Build embedder from env: `SQL_MCP_EMBEDDING_URL` + `SQL_MCP_EMBEDDING_API_KEY` → OpenAI-compatible.
-/// Otherwise HashEmbedder(dim from `SQL_MCP_EMBEDDING_DIM`, default 64).
-pub fn from_env() -> Arc<dyn Embedder> {
-    let dim = env::var("SQL_MCP_EMBEDDING_DIM")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(64);
+/// `SQL_MCP_EMBEDDING_URL` + `SQL_MCP_EMBEDDING_API_KEY` → OpenAI-compatible.
+/// Otherwise `None` (search falls back to BM25; HashEmbedder is test-only).
+pub fn from_env() -> Option<Arc<dyn Embedder>> {
     match (
         env::var("SQL_MCP_EMBEDDING_URL").ok(),
         env::var("SQL_MCP_EMBEDDING_API_KEY").ok(),
@@ -27,9 +23,13 @@ pub fn from_env() -> Arc<dyn Embedder> {
         (Some(url), Some(key)) if !url.is_empty() && !key.is_empty() => {
             let model = env::var("SQL_MCP_EMBEDDING_MODEL")
                 .unwrap_or_else(|_| "text-embedding-3-small".into());
-            Arc::new(OpenAiEmbedder::new(url, key, model, dim))
+            let dim = env::var("SQL_MCP_EMBEDDING_DIM")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(64);
+            Some(Arc::new(OpenAiEmbedder::new(url, key, model, dim)))
         }
-        _ => Arc::new(HashEmbedder::new(dim)),
+        _ => None,
     }
 }
 

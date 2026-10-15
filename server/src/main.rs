@@ -17,9 +17,12 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cfg = Config::load(Config::config_path())?;
-    let store = SemanticStore::open(Config::semantic_path())
-        .await?
-        .with_embedder(embed::from_env());
+    let mut store = SemanticStore::open(Config::semantic_path()).await?;
+    if let Some(embedder) = embed::from_env() {
+        store = store.with_embedder(embedder);
+    } else {
+        tracing::info!("no embedding API configured; search_columns uses BM25 only (D14)");
+    }
     let targets = TargetRegistry::from_config(&cfg).await.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "starting with empty target registry");
         TargetRegistry::empty()

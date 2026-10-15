@@ -85,9 +85,10 @@ pub async fn rebuild_index(
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("missing index row")))?
             .get(0)
             .map_err(|e| AppError::Internal(e.into()))?;
+        let fts_text = augment_fts_text(&row.text);
         conn.execute(
             "INSERT INTO column_index_fts (text, row_id) VALUES (?1, ?2)",
-            params![row.text.as_str(), id],
+            params![fts_text.as_str(), id],
         )
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
@@ -124,12 +125,16 @@ fn extract_index_rows(doc: &Value) -> Vec<IndexRow> {
                 for c in cols {
                     let cname = c.get("name").and_then(|v| v.as_str()).unwrap_or("");
                     let ctype = c.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                    let mut text = format!("table {name} column {cname} {ctype}");
+                    if c.get("as_code").and_then(|v| v.as_bool()) == Some(true) {
+                        text.push_str(" as_code");
+                    }
                     rows.push(IndexRow {
                         doc_kind: kind.into(),
                         doc_name: name.into(),
                         field_name: cname.into(),
                         field_role: "column".into(),
-                        text: format!("table {name} column {cname} {ctype}"),
+                        text,
                     });
                 }
             }
@@ -340,18 +345,43 @@ fn hit_key(h: &SearchHit) -> String {
     )
 }
 
+/// Keep ASCII ident chars and Unicode letters (incl. Hangul) for FTS tokens (D14).
 fn sanitize_fts_query(q: &str) -> String {
     q.split_whitespace()
         .map(|t| {
-            let cleaned: String = t
-                .chars()
-                .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
-                .collect();
-            cleaned
+            t.chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || c.is_alphabetic())
+                .collect::<String>()
         })
         .filter(|t| !t.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Append character bigrams over non-ASCII letter runs for better Korean BM25 (D14).
+fn augment_fts_text(text: &str) -> String {
+    let mut out = text.to_string();
+    let mut run = String::new();
+    let flush = |run: &mut String, out: &mut String| {
+        if run.chars().count() >= 2 {
+            let chars: Vec<char> = run.chars().collect();
+            for w in chars.windows(2) {
+                out.push(' ');
+                out.push(w[0]);
+                out.push(w[1]);
+            }
+        }
+        run.clear();
+    };
+    for c in text.chars() {
+        if c.is_alphabetic() && !c.is_ascii() {
+            run.push(c);
+        } else {
+            flush(&mut run, &mut out);
+        }
+    }
+    flush(&mut run, &mut out);
+    out
 }
 
 pub fn hits_to_json(hits: &[SearchHit]) -> Value {
@@ -393,5 +423,35 @@ mod tests {
         );
         let hybrid = store.search_columns("region", "hybrid", 10).await.unwrap();
         assert!(!hybrid.is_empty());
+    }
+
+    #[tokio::test]
+    async fn without_embedder_hybrid_falls_back_to_keyword() {
+        let store = SemanticStore::open(":memory:").await.unwrap();
+        let customer: Value =
+            serde_json::from_str(include_str!("../../semantic/examples/tables/customer.json"))
+                .unwrap();
+        store.create(customer).await.unwrap();
+        let hits = store.search_columns("region", "hybrid", 10).await.unwrap();
+        assert!(
+            hits.iter().any(|h| h.field_name == "region_code"),
+            "hits={hits:?}"
+        );
+        assert!(hits.iter().all(|h| h.mode == "keyword"));
+    }
+
+    #[test]
+    fn sanitize_keeps_hangul() {
+        assert_eq!(sanitize_fts_query("매출 지역"), "매출 지역");
+        assert_eq!(sanitize_fts_query("region_code"), "region_code");
+    }
+
+    #[test]
+    fn augment_adds_hangul_bigrams() {
+        let t = augment_fts_text("주문일자");
+        assert!(t.contains("주문일자"));
+        assert!(t.contains("주문"));
+        assert!(t.contains("문일"));
+        assert!(t.contains("일자"));
     }
 }

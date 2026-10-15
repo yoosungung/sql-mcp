@@ -139,7 +139,11 @@
           "minLength": 1,
           "description": "DW 물리 타입 이름."
         },
-        "nullable": { "type": "boolean" }
+        "nullable": { "type": "boolean" },
+        "as_code": {
+          "type": "boolean",
+          "description": "true이면 이 컬럼 값이 소스/쿼리 등 코드 텍스트다. 코딩 에이전트가 기입. MCP는 저장만(D9)."
+        }
       }
     },
     "foreignKey": {
@@ -377,7 +381,7 @@
           "$ref": "#/$defs/nullableFilter",
           "description": "이 dimension 을 쓸 때 붙는 필터. 시멘틱 컬럼 이름을 쓴다."
         },
-        "encryption": { "type": "boolean", "description": "true 이면 원문을 반환하지 않는다." },
+        "encryption": { "type": "boolean", "description": "true 이면 응답·샘플·로그에서 원문을 마스킹한다(null 또는 ***). 암·복호화 아님(D17)." },
         "role": { "$ref": "#/$defs/role" }
       },
       "oneOf": [
@@ -405,7 +409,10 @@
         "default_filter": {
           "$ref": "#/$defs/nullableFilter"
         },
-        "encryption": { "type": "boolean" },
+        "encryption": {
+          "type": "boolean",
+          "description": "true 이면 응답·샘플·로그에서 원문을 마스킹한다(null 또는 ***). 암·복호화 아님(D17)."
+        },
         "role": { "$ref": "#/$defs/role" }
       },
       "oneOf": [

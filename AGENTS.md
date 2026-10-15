@@ -37,4 +37,4 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
  
 ## 3. Status
  
-M0–M3 기본 골격 완료. 확정: libSQL · Postgres · 메타 CRUD · BM25/벡터/hybrid · 임베딩 env · cube metric 컴파일 · CI · `/health` · 배포 런북(`deploy/`). 후속: 타깃 엔진 확장 등. 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 서버 [server/DESIGN.md](server/DESIGN.md).
+M0–M3 기본 골격 완료. 확정: libSQL · Postgres · 메타 CRUD · BM25/벡터/hybrid · D14(외부 임베딩 API · 없으면 강화 BM25) · cube metric 컴파일 · CI · `/health` · 배포 · D9/D12/D16–D18. 후속: 타깃 엔진 확장 · D16–D18 본구현 보강 등. 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 서버 [server/DESIGN.md](server/DESIGN.md).

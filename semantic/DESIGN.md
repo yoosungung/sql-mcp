@@ -18,15 +18,16 @@
 
 필드별 정규화 테이블은 두지 않는다. 연결 검사는 등록 집합의 `body`를 읽어 한다.
 
-## 검색 인덱스
+## 검색 인덱스 (D12)
 
-`column_index` / `column_index_fts`는 `search_columns`용이다. 등록 JSON을 펼쳐 필드 단위로 인덱싱한다.
+등록 정본은 `schema/document.schema.json`이다. `column_index` / `column_index_fts`는 그 JSON을 펼친 **투영**이며, 아래가 현재 계약이다. 바꾸면 이 표·스키마·서버 `extract_index_rows`를 같이 고친다.
 
-| field_role | 출처 |
-|------------|------|
-| `column` | table `columns[]` |
-| `dimension` / `fact` | cube |
-| `metric` / `segment` | 각 문서 |
-| `document` | 문서 `description`(있을 때) |
+| field_role | 출처 | `text` (현재) |
+|------------|------|----------------|
+| `document` | 아무 kind의 `description`(비어 있지 않을 때) | `{kind} {name} {description}` |
+| `column` | table `columns[]` | `table {name} column {cname} {ctype}` (+ `as_code`이면 `as_code`) |
+| `dimension` / `fact` | cube `dimensions[]` / `facts[]` | `cube {name} {role} {fname} {dtype}` (`dtype` 없으면 role) |
+| `metric` | metric 문서 | `metric {name} {expression}` |
+| `segment` | segment 문서 | `segment {name} {filter.expression}` |
 
-`text` = 이름·타입·description 등을 공백으로 이은 검색 문자열. `embedding`은 D14 API로 채운 f32 blob(미설정이면 NULL).
+FTS에 넣기 전 텍스트에 **한글 등 non-ASCII 구간의 문자 bigram**을 덧붙인다(D14 BM25 강화). `view`는 필드 단위로 인덱싱하지 않는다(description만 있으면 `document` 행). CRUD 성공 후 인덱스를 전량 재구축한다. `embedding`은 D14 API가 있을 때만 채운 f32 blob(없으면 NULL).

@@ -16,8 +16,8 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `compile` | table 등록 → 물리 FROM + 필터 AND 컴파일 |
 | `semantic` | 스키마·연결 검증 · libSQL CRUD · 검색 인덱스 재구축 |
 | `search` | BM25(FTS5) · 벡터 · hybrid(RRF) |
-| `embed` | D14 임베더(기본 HashEmbedder; API 후속) |
-| `code_detect` | D9 `sample_column` 휴리스틱 |
+| `embed` | D14: OpenAI-호환 HTTP만. 없으면 None → BM25만. `HashEmbedder`는 테스트 전용 |
+| `code_detect` | D9 `sample_column` 런타임 `is_code` 휴리스틱(메타 `as_code`와 무관·미기록) |
 | `target` | 타깃 레지스트리 · Postgres 클라이언트 |
 | `tools` | MCP 툴 표면 |
 | `http` | axum 리스너 `/mcp` |
@@ -33,7 +33,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 
 - `list_tables` / `describe_table`: 타깃 카탈로그(`information_schema`) 우선. `target` 생략 시 시맨틱 `table` 등록분.
 - `search_columns`: `keyword` | `vector` | `hybrid`(기본). 임베더 없으면 vector/hybrid→keyword.
-- `sample_column`: D9 휴리스틱으로 `is_code`(+선택 `language`)
+- `sample_column`: D9 휴리스틱으로 `is_code`(+선택 `language`). 등록 `as_code`는 에이전트 기입·CRUD 저장만
 
 ## 설정
 
@@ -43,9 +43,8 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `SQL_MCP_CONFIG` | TOML 설정 경로 |
 | `SQL_MCP_LISTEN` | 바인드 주소(기본 `127.0.0.1:8080`) |
 | `SQL_MCP_MAX_ROWS` / `SQL_MCP_SAMPLE_LIMIT` / `SQL_MCP_TIMEOUT_MS` | 상한 |
-| `SQL_MCP_EMBEDDING_URL` / `SQL_MCP_EMBEDDING_API_KEY` | OpenAI-호환 임베딩(둘 다 있으면 사용) |
+| `SQL_MCP_EMBEDDING_URL` / `SQL_MCP_EMBEDDING_API_KEY` | 둘 다 있으면 임베딩·vector/hybrid. 없으면 keyword(BM25)만(D14) |
 | `SQL_MCP_EMBEDDING_MODEL` | 기본 `text-embedding-3-small` |
-| `SQL_MCP_EMBEDDING_DIM` | HashEmbedder 차원(기본 64) |
 
 타깃 DSN은 설정 `url_env`가 가리키는 환경 변수로만 주입한다.
 

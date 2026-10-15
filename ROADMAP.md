@@ -17,11 +17,14 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 | 조회 대상 | **타깃 DB**, **복수** 허용 |
 | 타깃 SQL | SELECT only |
 | 메타 | MCP `metadata_*` CRUD, **JSON 바디**. 검증은 `semantic/schema/document.schema.json` |
-| 컬럼 검색 | BM25/벡터/hybrid **목표** — 인덱스 설계는 등록 문서와 함께 |
+| 컬럼 검색 | BM25/벡터/hybrid — 인덱스는 등록 JSON 투영(D12). 임베딩=외부 API, 없으면 강화 BM25(D14) |
 | MCP 툴 | `list_targets`, `list_tables`, `describe_table`, `search_columns`, `sample_column`, `execute_sql`, `metadata_{create,get,list,update,delete}` |
 | Transport | **일반 HTTP만** (stdio·Streamable HTTP 취소) |
 | Frontend / Admin API | 취소 |
 | 개발 | TDD, 문서 우선 |
+| metric·segment 식 (D16) | 새 DSL 없음 · `sqlparser` + AST 제한 |
+| `encryption` (D17) | 응답 마스킹(암·복호화 아님) |
+| 식 식별자 검사 (D18) | 저장=연결 그래프 · 컴파일=AST 식별자 |
 
 ## 시맨틱=libSQL 선택 이유
 
@@ -33,7 +36,7 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 - 주의: hybrid는 앱 RRF. Turso 브랜드/API 이동은 있으나 M1 시맨틱은 `libsql` 핀(D2)
 - 타깃 DB는 libSQL일 필요 없음(Postgres 등 별도, D13)
 
-**임베딩 공급(D14):** API가 제일 쉬움. 벡터는 libSQL에 저장. M2에서 확정.
+**임베딩 공급(D14):** 외부 OpenAI-호환 HTTP API. 벡터는 libSQL에 저장. API 없으면 **강화 BM25(keyword)만** — HashEmbedder·로컬 ONNX는 쓰지 않음.
 
 ## 미결정
 
@@ -41,15 +44,15 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 |----|------|-------------|
 | D1 | 임베디드 시맨틱 엔진 | **결정: libSQL** |
 | D2 | 클라이언트 | **결정:** 시맨틱=`libsql` 0.9 (`core`만) · 타깃=`sqlx` 0.9(+postgres). **크레이트 분리**. Rust **1.94+** (`rust-toolchain.toml`) |
-| D14 | 임베딩 | **결정(M2): OpenAI-호환 HTTP API** (`SQL_MCP_EMBEDDING_*`). 미설정 시 vector/hybrid는 keyword로 폴백. 로컬 ONNX는 후속 |
+| D14 | 임베딩·검색 폴백 | **결정: 외부 API만 임베딩.** `SQL_MCP_EMBEDDING_URL`+`API_KEY` → vector/hybrid. **미설정 시 keyword(BM25)만**(vector/hybrid 요청도 keyword로 폴백). 오프라인 품질은 **BM25 강화**(한글 유지·문자 bigram·`as_code` 등 인덱스 텍스트). HashEmbedder=테스트 전용. 로컬 ONNX 비채택 |
 | D7 | 배포 | **결정(M3): release 바이너리 + 컨테이너 이미지**. Kustomize 베이스는 `deploy/k8s/base/` |
-| D9 | code 판정 | **결정(M2): 휴리스틱** (컬럼명·샘플 값). `as_code` 메타는 후속 |
-| D12 | 시맨틱 등록 스키마 | **초안 있음** (`semantic/`). 검색 인덱스·스키마 단일화 등은 후속 |
+| D9 | code 판정 | **결정:** `sample_column`의 `is_code`는 런타임 휴리스틱(컬럼명·샘플). **`as_code` 메타는 코딩 에이전트가 등록 JSON에 기입**하고 MCP는 **준 그대로 저장만**(추론·덮어쓰기 없음) |
+| D12 | 등록 스키마 ↔ 검색 인덱스 | **결정: 현재 구현을 정본으로 문서화.** 등록 정본=`document.schema.json` · 인덱스는 그 투영(`column_index`, 규칙은 `semantic/DESIGN.md`). 나중에 바꾸면 스키마·DESIGN·`extract_index_rows`를 **같이** 고친다 |
 | D13 | 타깃 엔진 | **결정: 첫 타깃 = Postgres** (`sqlx`). 확장은 M2+ |
 | D15 | `metadata_update` | **결정: 전체 replace** (merge-patch 아님). `body`는 문서 JSON 전체 |
-| — | 시맨틱 SQL에서 metric·segment 문법 | |
-| — | `encryption`이 true일 때의 암호 방식 | |
-| — | expression/filter 컬럼 이름 검사 시점 | 컴파일 단계 |
+| D16 | metric·segment 식 문법 | **결정: 새 DSL 없음.** `sqlparser`로 파싱한 **신뢰된 SQL 조각** + AST 제한. metric `expression` = 스칼라/집계식만 · segment·filter = 단일 boolean 식만. 서브쿼리·다중 문장·쓰기·CTE 거부. 식별자: table 필터=물리 컬럼 · cube/metric/segment=dimension·fact 이름 |
+| D17 | `encryption: true` | **결정: 암·복호화 아님 → 응답 마스킹.** SELECT/샘플/로그에서 해당 셀을 `null`(또는 `"***"`)로 치환. AES·토큰화는 타깃 DW 책임 |
+| D18 | expression/filter 컬럼 검사 시점 | **결정: 이중 검사.** `metadata_*` = 연결 그래프만(`column`·`group_by`·cube/view 존재). 식 안 식별자는 **컴파일 직전** AST에서 검증(`validation`). 자유 `execute_sql`은 SELECT 가드만 |
 
 (제거: D5 Streamable HTTP, stdio, D10/D11 Frontend)
 
@@ -73,11 +76,11 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 
 ### M2 — 검색·컴파일
 
-- [x] `search_columns` BM25(FTS5) / 벡터 / hybrid(RRF) · D14(기본 HashEmbedder, API 후속) · D9 휴리스틱
+- [x] `search_columns` BM25(FTS5) / 벡터 / hybrid(RRF) · D14(API 또는 강화 BM25) · D9 휴리스틱
 - [x] 메타 CRUD 시 `column_index` 재구축
 - [x] table→물리 SQL 컴파일(필터 AND) + SELECT AST 가드 유지
 - [x] CI (`.github/workflows/ci.yml`)
-- [x] OpenAI-호환 임베딩 HTTP 클라이언트 배선 (`SQL_MCP_EMBEDDING_*`, 미설정 시 HashEmbedder)
+- [x] OpenAI-호환 임베딩 HTTP 클라이언트 배선 (`SQL_MCP_EMBEDDING_*`, 미설정 시 BM25만 · D14)
 - [x] cube/metric/segment → 물리 SQL 컴파일 (`compile_metric_select`)
 - [ ] 타깃 엔진 확장 — 후속(현재 Postgres만)
 
