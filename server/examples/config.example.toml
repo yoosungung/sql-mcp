@@ -9,3 +9,7 @@ id = "dw"
 name = "Data Warehouse"
 engine = "postgres"
 url_env = "SQL_MCP_TARGET_DW_URL"
+
+# SQLite 예: engine = "sqlite", url_env → sqlite:/path/to.db?mode=ro
+# BIRD Mini-Dev: config.bird.toml + ../target_db/README.md
+

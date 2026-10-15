@@ -17,6 +17,7 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
 | `<comp>/DESIGN.md` | 컴포넌트 *내부* 설계 + `## Commands` (빌드/실행/테스트) | `server/` (M1+), `semantic/`. Frontend/`api/`는 범위 취소 |
 | `deploy/SETUP.md` | 배포 런북 | `deploy/` |
 | `deploy/k8s/base/` | Kustomize 베이스 | `deploy/k8s/base/` |
+| `target_db/README.md` | BIRD Mini-Dev SQLite 로컬 타깃 사용법 | `target_db/` |
  
 규칙:
  
@@ -37,4 +38,4 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
  
 ## 3. Status
  
-M0–M3 기본 골격 완료. 확정·구현: libSQL · Postgres · 메타 CRUD · BM25/벡터/hybrid · D14 · cube metric 컴파일 · D16–D18(`expr_guard`/`mask`) · CI · `/health` · 배포 · D9/D12. 후속: 타깃 엔진 확장 · 운영 하드닝(필요 시). 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 서버 [server/DESIGN.md](server/DESIGN.md).
+M0–M3 기본 골격 완료. 확정·구현: libSQL · Postgres·SQLite 타깃 · BIRD `target_db/` · 메타 CRUD · Resource(`document.schema.json`) · BM25/벡터/hybrid · D14 · cube metric 컴파일 · D16–D18(`expr_guard`/`mask`) · CI · `/health` · 배포 · D9/D12. 후속: 타깃 엔진 추가 확장 · 운영 하드닝(필요 시). 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 서버 [server/DESIGN.md](server/DESIGN.md).

@@ -1,8 +1,10 @@
 mod postgres;
 mod registry;
+mod sqlite;
 
 pub use postgres::PostgresTarget;
 pub use registry::{TargetInfo, TargetRegistry, TargetSql};
+pub use sqlite::SqliteTarget;
 
 use async_trait::async_trait;
 use serde_json::Value;

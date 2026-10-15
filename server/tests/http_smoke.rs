@@ -159,6 +159,85 @@ async fn initialize_and_metadata_roundtrip() {
 }
 
 #[tokio::test]
+async fn document_schema_resource_list_and_read() {
+    let (url, handle) = spawn_server().await;
+
+    let (status, body) = post_rpc(
+        &url,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2026-07-28",
+                "capabilities": {},
+                "clientInfo": {"name": "smoke", "version": "0.0.1"}
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, 200, "initialize status body={body}");
+    let init: serde_json::Value = serde_json::from_str(&body).expect(&format!("init json: {body}"));
+    assert!(
+        init["result"]["capabilities"]["resources"].is_object(),
+        "resources capability missing: {init}"
+    );
+
+    let _ = post_rpc(
+        &url,
+        json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+        }),
+    )
+    .await;
+
+    let schema_uri = "https://sql-mcp.local/semantic/document.schema.json";
+
+    let (status, body) = post_rpc(
+        &url,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "resources/list",
+            "params": {}
+        }),
+    )
+    .await;
+    assert_eq!(status, 200, "resources/list status body={body}");
+    let listed: serde_json::Value =
+        serde_json::from_str(&body).expect(&format!("list json: {body}"));
+    let resources = listed["result"]["resources"]
+        .as_array()
+        .expect("resources array");
+    assert_eq!(resources.len(), 1);
+    assert_eq!(resources[0]["uri"], schema_uri);
+    assert_eq!(resources[0]["name"], "document.schema.json");
+    assert_eq!(resources[0]["mimeType"], "application/schema+json");
+
+    let (status, body) = post_rpc(
+        &url,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "resources/read",
+            "params": {"uri": schema_uri}
+        }),
+    )
+    .await;
+    assert_eq!(status, 200, "resources/read status body={body}");
+    let read: serde_json::Value = serde_json::from_str(&body).expect(&format!("read json: {body}"));
+    let text = read["result"]["contents"][0]["text"]
+        .as_str()
+        .expect("schema text");
+    let schema: serde_json::Value = serde_json::from_str(text).expect("schema json");
+    assert_eq!(schema["$id"], schema_uri);
+    assert!(schema["$defs"]["table"].is_object(), "{schema}");
+
+    handle.abort();
+}
+
+#[tokio::test]
 #[ignore]
 async fn postgres_execute_sql_ignored_without_env() {
     let url = std::env::var("SQL_MCP_TARGET_DW_URL").expect("set SQL_MCP_TARGET_DW_URL");

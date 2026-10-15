@@ -1,13 +1,21 @@
 use std::sync::Arc;
 
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, ContentBlock};
-use rmcp::{ErrorData as McpError, ServerHandler, schemars, tool, tool_handler, tool_router};
+use rmcp::model::{
+    CallToolResult, ContentBlock, ListResourcesResult, PaginatedRequestParams, ReadResourceRequestParams,
+    ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, ServerCapabilities,
+    ServerConfig,
+};
+use rmcp::service::RequestContext;
+use rmcp::{
+    ErrorData as McpError, RoleServer, ServerHandler, schemars, tool, tool_handler, tool_router,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::config::Config;
 use crate::error::AppError;
+use crate::semantic::schema::{DOCUMENT_SCHEMA_JSON, DOCUMENT_SCHEMA_URI};
 use crate::semantic::SemanticStore;
 use crate::target::TargetRegistry;
 
@@ -315,8 +323,54 @@ impl SqlMcp {
     }
 }
 
-#[tool_handler(name = "sql-mcp", version = "0.1.0", instructions = "Embedded libSQL semantic metadata + Postgres target SELECT")]
-impl ServerHandler for SqlMcp {}
+#[tool_handler(name = "sql-mcp", version = "0.1.0", instructions = "Embedded libSQL semantic metadata + Postgres/SQLite target SELECT")]
+impl ServerHandler for SqlMcp {
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build(),
+        )
+        .with_server_info(rmcp::model::Implementation::new("sql-mcp", "0.1.0"))
+        .with_instructions(
+            "Embedded libSQL semantic metadata + Postgres/SQLite target SELECT".to_string(),
+        )
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        Ok(ListResourcesResult::with_all_items(vec![
+            Resource::new(DOCUMENT_SCHEMA_URI, "document.schema.json")
+                .with_description(
+                    "JSON Schema for semantic registration documents (table/view/cube/metric/segment)",
+                )
+                .with_mime_type("application/schema+json")
+                .with_size(DOCUMENT_SCHEMA_JSON.len() as u64),
+        ]))
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, McpError> {
+        if request.uri.as_str() == DOCUMENT_SCHEMA_URI {
+            return Ok(ReadResourceResult::new(vec![
+                ResourceContents::text(DOCUMENT_SCHEMA_JSON, DOCUMENT_SCHEMA_URI)
+                    .with_mime_type("application/schema+json"),
+            ])
+            .into());
+        }
+        Err(McpError::resource_not_found(
+            format!("unknown resource: {}", request.uri),
+            Some(json!({ "uri": request.uri })),
+        ))
+    }
+}
 
 fn ok_json(value: Value) -> Result<CallToolResult, McpError> {
     Ok(CallToolResult::success(vec![ContentBlock::text(

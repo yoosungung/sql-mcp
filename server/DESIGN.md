@@ -6,7 +6,8 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 
 - **일반 HTTP**: `rmcp` `StreamableHttpService`를 **stateless + JSON response**로 기동. 세션 ID·장수 SSE는 쓰지 않는다(계약의 “세션형 Streamable HTTP 취소”와 동일 취지).
 - **시맨틱**: 프로세스 내 `libsql` 0.9(`core`) · `document` + `column_index` · `metadata_*`
-- **타깃**: `sqlx` 0.9 · 첫 엔진 **Postgres** · SELECT only
+- **타깃**: `sqlx` 0.9 · 엔진 **Postgres** · **SQLite** · SELECT only
+- **로컬 테스트 DB**: BIRD Mini-Dev SQLite → 저장소 루트 `target_db/` ([target_db/README.md](../target_db/README.md))
 
 ## 모듈
 
@@ -20,8 +21,8 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `search` | BM25(FTS5) · 벡터 · hybrid(RRF) |
 | `embed` | D14: OpenAI-호환 HTTP만. 없으면 None → BM25만. `HashEmbedder`는 테스트 전용 |
 | `code_detect` | D9 `sample_column` 런타임 `is_code` 휴리스틱(메타 `as_code`와 무관·미기록) |
-| `target` | 타깃 레지스트리 · Postgres 클라이언트 |
-| `tools` | MCP 툴 표면 |
+| `target` | 타깃 레지스트리 · Postgres / SQLite 클라이언트 |
+| `tools` | MCP 툴 표면 · Resource(`document.schema.json`) |
 | `http` | axum 리스너 `/mcp` |
 
 ## 검증
@@ -64,6 +65,10 @@ cargo run -p sql-mcp
 
 # Postgres 연동 스모크(선택)
 cargo test -p sql-mcp --test http_smoke -- --ignored
+
+# BIRD SQLite 타깃 (target_db/ 준비 후 — ../target_db/README.md)
+export SQL_MCP_CONFIG=./server/examples/config.bird.toml
+cargo run -p sql-mcp
 
 # 컨테이너·K8s: ../deploy/SETUP.md
 ```

@@ -23,6 +23,7 @@ sqlparser = "0.58"
 sqlx = { version = "0.9", default-features = false, features = [
   "runtime-tokio",
   "postgres",
+  "sqlite",
   "json",
 ] }
 thiserror = "2"

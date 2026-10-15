@@ -4,3 +4,7 @@ __pycache__/
 /target/
 /data/
 **/*.db
+target_db/**/*.sqlite
+target_db/**/*.sqlite.partial
+target_db/**/*.partial
+target_db/.cache/

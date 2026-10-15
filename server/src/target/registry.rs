@@ -7,6 +7,7 @@ use crate::config::{Config, TargetConfig};
 use crate::error::AppError;
 
 use super::postgres::PostgresTarget;
+use super::sqlite::SqliteTarget;
 use super::TargetDb;
 
 #[derive(Debug, Clone, Serialize)]
@@ -62,16 +63,20 @@ async fn build_target(
     cfg: &TargetConfig,
     info: TargetInfo,
 ) -> Result<Arc<dyn TargetDb>, AppError> {
+    let url = std::env::var(&cfg.url_env).map_err(|_| {
+        AppError::Validation(format!(
+            "missing env {} for target {}",
+            cfg.url_env, cfg.id
+        ))
+    })?;
     match cfg.engine.as_str() {
         "postgres" => {
-            let url = std::env::var(&cfg.url_env).map_err(|_| {
-                AppError::Validation(format!(
-                    "missing env {} for target {}",
-                    cfg.url_env, cfg.id
-                ))
-            })?;
             let pg = PostgresTarget::connect(info, &url).await?;
             Ok(Arc::new(pg))
+        }
+        "sqlite" => {
+            let sqlite = SqliteTarget::connect(info, &url).await?;
+            Ok(Arc::new(sqlite))
         }
         other => Err(AppError::Validation(format!(
             "unsupported target engine: {other}"

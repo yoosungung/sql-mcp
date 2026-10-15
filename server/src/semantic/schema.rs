@@ -5,13 +5,17 @@ use serde_json::Value;
 
 use crate::error::AppError;
 
-const DOCUMENT_SCHEMA: &str = include_str!("../../../semantic/schema/document.schema.json");
+/// MCP Resource URI — equals JSON Schema `$id` (not an HTTP download URL).
+pub const DOCUMENT_SCHEMA_URI: &str = "https://sql-mcp.local/semantic/document.schema.json";
+
+pub const DOCUMENT_SCHEMA_JSON: &str =
+    include_str!("../../../semantic/schema/document.schema.json");
 
 fn validator() -> &'static Validator {
     static VALIDATOR: OnceLock<Validator> = OnceLock::new();
     VALIDATOR.get_or_init(|| {
         let schema: Value =
-            serde_json::from_str(DOCUMENT_SCHEMA).expect("document.schema.json must parse");
+            serde_json::from_str(DOCUMENT_SCHEMA_JSON).expect("document.schema.json must parse");
         Validator::new(&schema).expect("document.schema.json must compile")
     })
 }

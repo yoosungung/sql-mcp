@@ -1,0 +1,42 @@
+# BIRD Mini-Dev SQLite 타깃 예시.
+# DSN: target_db/env.bird.example 을 source 한 뒤 기동.
+listen = "127.0.0.1:8080"
+max_rows = 1000
+sample_limit = 20
+timeout_ms = 30000
+
+[[targets]]
+id = "superhero"
+name = "BIRD superhero"
+engine = "sqlite"
+url_env = "SQL_MCP_TARGET_SUPERHERO_URL"
+
+[[targets]]
+id = "student_club"
+name = "BIRD student_club"
+engine = "sqlite"
+url_env = "SQL_MCP_TARGET_STUDENT_CLUB_URL"
+
+[[targets]]
+id = "toxicology"
+name = "BIRD toxicology"
+engine = "sqlite"
+url_env = "SQL_MCP_TARGET_TOXICOLOGY_URL"
+
+[[targets]]
+id = "thrombosis_prediction"
+name = "BIRD thrombosis_prediction"
+engine = "sqlite"
+url_env = "SQL_MCP_TARGET_THROMBOSIS_URL"
+
+[[targets]]
+id = "california_schools"
+name = "BIRD california_schools"
+engine = "sqlite"
+url_env = "SQL_MCP_TARGET_CALIFORNIA_SCHOOLS_URL"
+
+[[targets]]
+id = "formula_1"
+name = "BIRD formula_1"
+engine = "sqlite"
+url_env = "SQL_MCP_TARGET_FORMULA_1_URL"

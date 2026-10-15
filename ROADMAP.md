@@ -48,7 +48,7 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 | D7 | 배포 | **결정(M3): release 바이너리 + 컨테이너 이미지**. Kustomize 베이스는 `deploy/k8s/base/` |
 | D9 | code 판정 | **결정:** `sample_column`의 `is_code`는 런타임 휴리스틱(컬럼명·샘플). **`as_code` 메타는 코딩 에이전트가 등록 JSON에 기입**하고 MCP는 **준 그대로 저장만**(추론·덮어쓰기 없음) |
 | D12 | 등록 스키마 ↔ 검색 인덱스 | **결정: 현재 구현을 정본으로 문서화.** 등록 정본=`document.schema.json` · 인덱스는 그 투영(`column_index`, 규칙은 `semantic/DESIGN.md`). 나중에 바꾸면 스키마·DESIGN·`extract_index_rows`를 **같이** 고친다 |
-| D13 | 타깃 엔진 | **결정: 첫 타깃 = Postgres** (`sqlx`). 확장은 M2+ |
+| D13 | 타깃 엔진 | **결정: Postgres + SQLite** (`sqlx`). 테스트 타깃은 BIRD Mini-Dev SQLite (`target_db/`) |
 | D15 | `metadata_update` | **결정: 전체 replace** (merge-patch 아님). `body`는 문서 JSON 전체 |
 | D16 | metric·segment 식 문법 | **결정: 새 DSL 없음.** `sqlparser`로 파싱한 **신뢰된 SQL 조각** + AST 제한. metric `expression` = 스칼라/집계식만 · segment·filter = 단일 boolean 식만. 서브쿼리·다중 문장·쓰기·CTE 거부. 식별자: table 필터=물리 컬럼 · cube/metric/segment=dimension·fact 이름 |
 | D17 | `encryption: true` | **결정: 암·복호화 아님 → 응답 마스킹.** SELECT/샘플/로그에서 해당 셀을 `null`(또는 `"***"`)로 치환. AES·토큰화는 타깃 DW 책임 |
@@ -68,7 +68,7 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 
 1. [x] `server/` + **libSQL** 임베디드 + HTTP 리스너 + `DESIGN.md` / Commands
 2. [x] `metadata_*` CRUD — `document.schema.json` 검증 + `document` 테이블 저장 · update=전체 replace(D15)
-3. [x] `list_targets` · 타깃 SELECT 가드 · `list_tables` / `describe_table` / `execute_sql` / `sample_column` · 첫 엔진 Postgres(D13)
+3. [x] `list_targets` · 타깃 SELECT 가드 · `list_tables` / `describe_table` / `execute_sql` / `sample_column` · 엔진 Postgres·SQLite(D13)
 4. [x] `search_columns`는 스텁 또는 no-op 허용 — 인덱스 본구현은 M2
 5. [x] HTTP 클라이언트로 스모크 (`cargo test -p sql-mcp`)
 
@@ -83,14 +83,15 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 - [x] OpenAI-호환 임베딩 HTTP 클라이언트 배선 (`SQL_MCP_EMBEDDING_*`, 미설정 시 BM25만 · D14)
 - [x] cube/metric/segment → 물리 SQL 컴파일 (`compile_metric_select`)
 - [x] D16 식 AST 제한 · D18 컴파일 식별자 검사 · D17 encryption 마스킹
-- [ ] 타깃 엔진 확장 — 후속(현재 Postgres만)
+- [x] 타깃 엔진 SQLite (`sqlx`) · BIRD Mini-Dev → `target_db/`
 
 ### M3 — 배포·하드닝
 
 - [x] (D7) release 바이너리 + 컨테이너 · `deploy/SETUP.md` · `deploy/k8s/base/`
 - [x] `/health` 프로브 · tracing 로그
 - [x] D16–D18 본구현 (`expr_guard` · `mask`)
-- [ ] 타깃 엔진 확장·운영 하드닝(인증·rate limit 등)은 필요 시 후속
+- [x] MCP Resource로 `document.schema.json` 제공 (`resources/list` · `resources/read`)
+- [ ] 타깃 엔진 추가 확장·운영 하드닝(인증·rate limit 등)은 필요 시 후속
 
 ## 구현 시 작업 규칙
 

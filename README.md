@@ -10,7 +10,7 @@
 
 ## Status
 
-M0–M3 골격: 시맨틱=**libSQL**, 타깃=**Postgres**, transport=**일반 HTTP**, 검색·컴파일·CI·배포 런북. 빌드·실행은 [server/DESIGN.md](server/DESIGN.md), 배포는 [deploy/SETUP.md](deploy/SETUP.md).
+M0–M3 골격: 시맨틱=**libSQL**, 타깃=**Postgres·SQLite**, transport=**일반 HTTP**, 검색·컴파일·CI·배포 런북. BIRD 샘플은 [target_db/README.md](target_db/README.md). 빌드·실행은 [server/DESIGN.md](server/DESIGN.md), 배포는 [deploy/SETUP.md](deploy/SETUP.md).
 
 ## Quickstart
 
