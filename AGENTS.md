@@ -35,4 +35,4 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
  
 ## 3. Status
  
-M1 진행. 확정: 임베디드 **libSQL**(`libsql` 0.9) · 첫 타깃 **Postgres**(`sqlx`) · 메타 **CRUD(JSON)** · update=전체 replace · transport=**일반 HTTP**(stdio·세션형 Streamable HTTP 취소) · Frontend 취소. 등록 스키마·카탈로그는 `semantic/`. 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 서버 [server/DESIGN.md](server/DESIGN.md).
+M2 진행(검색·table 컴파일·CI 착수). 확정: 임베디드 **libSQL** · 첫 타깃 **Postgres** · 메타 CRUD · `search_columns` BM25/벡터/hybrid · D9 휴리스틱 · transport=**일반 HTTP**. 남은 M2: OpenAI 임베딩 배선 · cube SQL 컴파일. 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 서버 [server/DESIGN.md](server/DESIGN.md).

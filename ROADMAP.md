@@ -73,10 +73,12 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 
 ### M2 — 검색·컴파일
 
-- [ ] `search_columns` BM25(FTS5) / 벡터 / hybrid(RRF) · (D14)(D9)
-- [ ] 메타 CRUD 시 `column_index` 재구축
-- [ ] SELECT AST 검사 강화 + table→물리 SQL 컴파일(필터 AND)
-- [ ] CI (`.github/workflows/ci.yml`)
+- [x] `search_columns` BM25(FTS5) / 벡터 / hybrid(RRF) · D14(기본 HashEmbedder, API 후속) · D9 휴리스틱
+- [x] 메타 CRUD 시 `column_index` 재구축
+- [x] table→물리 SQL 컴파일(필터 AND) + SELECT AST 가드 유지
+- [x] CI (`.github/workflows/ci.yml`)
+- [ ] OpenAI-호환 임베딩 HTTP 클라이언트 배선
+- [ ] cube/metric/segment → 물리 SQL 컴파일
 - [ ] 타깃 엔진 확장 — 후속(현재 Postgres만)
 
 ### M3 — 배포·하드닝
