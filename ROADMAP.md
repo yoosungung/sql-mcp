@@ -14,4 +14,4 @@
 - 시멘틱 SQL에서 metric과 segment를 가리키는 문법
 - `encryption`이 true일 때의 암호 방식
 - DW SQL 다이얼렉트
-- dimension·fact `expression`, metric `expression`, segment `filter` 안의 컬럼 이름 검사. 컴파일 단계에서 한다.
+- dimension·fact `expression`과 metric `expression`의 view 컬럼 이름 검사, segment `filter`의 컬럼 이름 검사. 컴파일 단계에서 한다.

@@ -64,6 +64,6 @@ view `combine`은 `from`, `join`, `union`, `minus`, `select`다. `from`은 테�
 
 dimension `type`은 `code`, `date`, `time`, `datetime`, `string` 중 하나다. fact는 `amount`, `fx`를 가진다. 둘 다 `default_filter`, `encryption`을 가진다. `role`의 기본값은 `all`이다. 값은 view 컬럼 `column`이거나, view 컬럼 이름을 쓰는 스칼라 `expression`이다. 둘 중 하나만 둔다.
 
-metric `expression`은 집계 전의 스칼라 식이고 `aggregation`은 `sum`, `avg`, `min`, `max`, `count`, `count_distinct` 중 하나다. segment `filter`는 비울 수 없다.
+metric `expression`은 연결된 cube의 view 컬럼 연산이다. `aggregation`은 `group`, `rollup`, `cube`, `grouping_sets` 중 하나이고, 질의의 그룹 기준을 그 방식으로 묶는다. segment `filter`는 비울 수 없다.
 
 예시는 `semantic/examples/`에 있다.

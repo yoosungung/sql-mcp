@@ -14,10 +14,11 @@
     "expression": {
       "type": "string",
       "minLength": 1,
-      "description": "집계 전 스칼라 식. cube 의 dimension, fact 이름을 쓴다."
+      "description": "연결된 cube 의 view 컬럼 연산. 예: sum(sale_amount), sale_amount * fx_rate."
     },
     "aggregation": {
-      "enum": ["sum", "avg", "min", "max", "count", "count_distinct"]
+      "enum": ["group", "rollup", "cube", "grouping_sets"],
+      "description": "그룹 기준에 대한 집계. group, rollup, cube, grouping_sets."
     },
     "filter": {
       "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/nullableFilter",

@@ -176,6 +176,23 @@ def test_expression_member_skips_view_column_check():
     validate_registry([_table(), _from_view(), cube])
 
 
+def test_metric_aggregation_is_group_or_rollup():
+    document = {
+        "kind": "metric",
+        "name": "revenue",
+        "cube": "sales",
+        "expression": "sum(sale_amount)",
+        "aggregation": "sum",
+        "filter": None,
+    }
+    with pytest.raises(SchemaError) as raised:
+        validate_document(document)
+    assert any("aggregation" in error for error in raised.value.errors)
+    for aggregation in ("group", "rollup", "cube", "grouping_sets"):
+        document["aggregation"] = aggregation
+        validate_document(document)
+
+
 def test_metric_name_must_not_match_cube_column():
     from sql_mcp_semantic.validate import validate_registry
 
@@ -189,8 +206,8 @@ def test_metric_name_must_not_match_cube_column():
                     "kind": "metric",
                     "name": "amount",
                     "cube": "sales",
-                    "expression": "amount",
-                    "aggregation": "sum",
+                    "expression": "sum(amount)",
+                    "aggregation": "group",
                     "filter": None,
                 },
             ]

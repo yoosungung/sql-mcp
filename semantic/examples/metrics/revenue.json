@@ -2,7 +2,7 @@
   "kind": "metric",
   "name": "revenue",
   "cube": "sales",
-  "expression": "sale_amount",
-  "aggregation": "sum",
+  "expression": "sum(sale_amount)",
+  "aggregation": "group",
   "filter": null
 }
