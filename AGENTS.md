@@ -14,7 +14,7 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
 | `ARCHITECTURE.md` | **계약사항(불변 규칙)** + 컴포넌트 *간* 인터페이스 형태(스키마·레이아웃·이벤트) | 루트 |
 | `README.md` | 저장소 방문자용 소개 + 로컬 quickstart | 루트 |
 | `ROADMAP.md` | 수행 계획(마일스톤·순서·미결정 항목) | 루트 |
-| `<comp>/DESIGN.md` | 컴포넌트 *내부* 설계 + `## Commands` (빌드/실행/테스트) | `server/` (M1+); 프론트/배포는 보류 |
+| `<comp>/DESIGN.md` | 컴포넌트 *내부* 설계 + `## Commands` (빌드/실행/테스트) | `server/` (M1+), `frontend/` (M2+); `api/`는 D10 확정 시 |
  
 규칙:
  
@@ -35,4 +35,4 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
  
 ## 3. Status
  
-기획 단계. 확정: **Rust** (`rmcp`) · 툴=`list_tables`/`describe_table`/`search_columns`/`sample_column`/`execute_sql`(SELECT만). 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md). 다음: D1·D2 확정 후 M1.
+기획 단계. 확정: **시맨틱 레이어 DB** 원천 · MCP(`server/`, Rust/`rmcp`, SELECT·탐색만) · **Frontend**(`frontend/`)로 DB 관리. 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md). 다음: D1·D10·D11·D12 합의 후 M1.
