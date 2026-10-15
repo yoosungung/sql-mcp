@@ -1,6 +1,10 @@
+pub mod code_detect;
+pub mod compile;
 pub mod config;
+pub mod embed;
 pub mod error;
 pub mod http;
+pub mod search;
 pub mod select_guard;
 pub mod semantic;
 pub mod target;

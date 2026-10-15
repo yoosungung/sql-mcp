@@ -23,3 +23,26 @@ CREATE TABLE document (
   ),
   PRIMARY KEY (kind, name)
 ) STRICT;
+
+-- search_columns 인덱스. 문서 단위가 아니라 검색 가능한 필드(컬럼/dimension/fact/metric) 한 행.
+-- text 는 BM25(FTS5)용, embedding 은 벡터(리틀엔디안 f32 blob)용.
+CREATE TABLE column_index (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  doc_kind TEXT NOT NULL CHECK (
+    doc_kind IN ('table', 'view', 'cube', 'metric', 'segment')
+  ),
+  doc_name TEXT NOT NULL,
+  field_name TEXT NOT NULL,
+  field_role TEXT NOT NULL CHECK (
+    field_role IN ('column', 'dimension', 'fact', 'metric', 'segment', 'document')
+  ),
+  text TEXT NOT NULL,
+  embedding BLOB,
+  UNIQUE (doc_kind, doc_name, field_name, field_role)
+) STRICT;
+
+-- FTS는 content 테이블과 수동 동기화(트리거 없음). MCP가 CRUD 때 함께 갱신한다.
+CREATE VIRTUAL TABLE column_index_fts USING fts5(
+  text,
+  row_id UNINDEXED
+);

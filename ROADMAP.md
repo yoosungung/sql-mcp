@@ -41,9 +41,9 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 |----|------|-------------|
 | D1 | 임베디드 시맨틱 엔진 | **결정: libSQL** |
 | D2 | 클라이언트 | **결정:** 시맨틱=`libsql` 0.9 (`core`만) · 타깃=`sqlx` 0.9(+postgres). **크레이트 분리**. Rust **1.94+** (`rust-toolchain.toml`) |
-| D14 | 임베딩 | API / 로컬 ONNX / 둘 다 — **M2** |
+| D14 | 임베딩 | **결정(M2): OpenAI-호환 HTTP API** (`SQL_MCP_EMBEDDING_*`). 미설정 시 vector/hybrid는 keyword로 폴백. 로컬 ONNX는 후속 |
 | D7 | 배포 | 바이너리 등 — 필요 시만 |
-| D9 | code 판정 | 휴리스틱 vs `as_code` |
+| D9 | code 판정 | **결정(M2): 휴리스틱** (컬럼명·샘플 값). `as_code` 메타는 후속 |
 | D12 | 시맨틱 등록 스키마 | **초안 있음** (`semantic/`). 검색 인덱스·스키마 단일화 등은 후속 |
 | D13 | 타깃 엔진 | **결정: 첫 타깃 = Postgres** (`sqlx`). 확장은 M2+ |
 | D15 | `metadata_update` | **결정: 전체 replace** (merge-patch 아님). `body`는 문서 JSON 전체 |
@@ -73,8 +73,11 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 
 ### M2 — 검색·컴파일
 
-- `search_columns` BM25/벡터/hybrid 본구현 · (D14)(D9) · CI · 타깃 엔진 확장(D13 이후)
-- SELECT AST 검사와 물리 SQL 컴파일
+- [ ] `search_columns` BM25(FTS5) / 벡터 / hybrid(RRF) · (D14)(D9)
+- [ ] 메타 CRUD 시 `column_index` 재구축
+- [ ] SELECT AST 검사 강화 + table→물리 SQL 컴파일(필터 AND)
+- [ ] CI (`.github/workflows/ci.yml`)
+- [ ] 타깃 엔진 확장 — 후속(현재 Postgres만)
 
 ### M3 — 배포·하드닝
 

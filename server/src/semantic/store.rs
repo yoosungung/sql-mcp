@@ -5,7 +5,9 @@ use libsql::{Builder, Connection, params};
 use serde_json::Value;
 use tokio::sync::Mutex;
 
+use crate::embed::Embedder;
 use crate::error::AppError;
+use crate::search::{self, SearchHit};
 
 use super::links::validate_links;
 use super::schema::validate_document;
@@ -15,6 +17,7 @@ const CATALOG_SQL: &str = include_str!("../../../semantic/libsql/catalog.sql");
 #[derive(Clone)]
 pub struct SemanticStore {
     conn: Arc<Mutex<Connection>>,
+    embedder: Option<Arc<dyn Embedder>>,
 }
 
 impl SemanticStore {
@@ -40,7 +43,17 @@ impl SemanticStore {
             .map_err(|e| AppError::Internal(e.into()))?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
+            embedder: None,
         })
+    }
+
+    pub fn with_embedder(mut self, embedder: Arc<dyn Embedder>) -> Self {
+        self.embedder = Some(embedder);
+        self
+    }
+
+    pub fn conn_arc(&self) -> Arc<Mutex<Connection>> {
+        self.conn.clone()
     }
 
     pub async fn create(&self, body: Value) -> Result<Value, AppError> {
@@ -61,6 +74,7 @@ impl SemanticStore {
         validate_links(&docs)?;
         self.insert_row(kind, name, description.as_deref(), &body)
             .await?;
+        self.reindex(&docs).await?;
         Ok(body)
     }
 
@@ -79,17 +93,20 @@ impl SemanticStore {
             .ok_or_else(|| AppError::NotFound(format!("{kind}/{name}")))?;
         docs[pos] = body.clone();
         validate_links(&docs)?;
-        let conn = self.conn.lock().await;
-        let n = conn
-            .execute(
-                "UPDATE document SET description = ?1, body = ?2 WHERE kind = ?3 AND name = ?4",
-                params![description, body.to_string(), kind, name],
-            )
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
-        if n == 0 {
-            return Err(AppError::NotFound(format!("{kind}/{name}")));
+        {
+            let conn = self.conn.lock().await;
+            let n = conn
+                .execute(
+                    "UPDATE document SET description = ?1, body = ?2 WHERE kind = ?3 AND name = ?4",
+                    params![description, body.to_string(), kind, name],
+                )
+                .await
+                .map_err(|e| AppError::Internal(e.into()))?;
+            if n == 0 {
+                return Err(AppError::NotFound(format!("{kind}/{name}")));
+            }
         }
+        self.reindex(&docs).await?;
         Ok(body)
     }
 
@@ -101,17 +118,20 @@ impl SemanticStore {
             return Err(AppError::NotFound(format!("{kind}/{name}")));
         }
         validate_links(&docs)?;
-        let conn = self.conn.lock().await;
-        let n = conn
-            .execute(
-                "DELETE FROM document WHERE kind = ?1 AND name = ?2",
-                params![kind, name],
-            )
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
-        if n == 0 {
-            return Err(AppError::NotFound(format!("{kind}/{name}")));
+        {
+            let conn = self.conn.lock().await;
+            let n = conn
+                .execute(
+                    "DELETE FROM document WHERE kind = ?1 AND name = ?2",
+                    params![kind, name],
+                )
+                .await
+                .map_err(|e| AppError::Internal(e.into()))?;
+            if n == 0 {
+                return Err(AppError::NotFound(format!("{kind}/{name}")));
+            }
         }
+        self.reindex(&docs).await?;
         Ok(())
     }
 
@@ -159,6 +179,22 @@ impl SemanticStore {
         Ok(out)
     }
 
+    pub async fn search_columns(
+        &self,
+        query: &str,
+        mode: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchHit>, AppError> {
+        let embedder = self.embedder.as_deref();
+        search::search_columns(&self.conn, query, mode, limit, embedder).await
+    }
+
+    async fn reindex(&self, docs: &[Value]) -> Result<(), AppError> {
+        let conn = self.conn.lock().await;
+        let embedder = self.embedder.as_deref();
+        search::rebuild_index(&conn, docs, embedder).await
+    }
+
     async fn list_all(&self) -> Result<Vec<Value>, AppError> {
         self.list(None).await
     }
@@ -202,10 +238,14 @@ fn description_of(body: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::embed::HashEmbedder;
     use serde_json::json;
 
     async fn mem() -> SemanticStore {
-        SemanticStore::open(":memory:").await.unwrap()
+        SemanticStore::open(":memory:")
+            .await
+            .unwrap()
+            .with_embedder(Arc::new(HashEmbedder::new(16)))
     }
 
     #[tokio::test]
@@ -247,5 +287,16 @@ mod tests {
             Err(AppError::Validation(_))
         ));
         assert!(store.list(None).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn search_after_create() {
+        let store = mem().await;
+        let customer: Value =
+            serde_json::from_str(include_str!("../../../semantic/examples/tables/customer.json"))
+                .unwrap();
+        store.create(customer).await.unwrap();
+        let hits = store.search_columns("region", "keyword", 10).await.unwrap();
+        assert!(hits.iter().any(|h| h.field_name == "region_code"));
     }
 }

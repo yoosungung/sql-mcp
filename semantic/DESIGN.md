@@ -17,3 +17,16 @@
 `metadata_create` / `metadata_update` / `metadata_delete`는 JSON Schema와 연결 검증을 통과한 뒤에만 이 테이블을 바꾼다. `metadata_get`은 `(kind, name)`으로 `body`를 읽고, `metadata_list`는 `kind`로 걸러 `body` 목록을 반환한다.
 
 필드별 정규화 테이블은 두지 않는다. 연결 검사는 등록 집합의 `body`를 읽어 한다.
+
+## 검색 인덱스
+
+`column_index` / `column_index_fts`는 `search_columns`용이다. 등록 JSON을 펼쳐 필드 단위로 인덱싱한다.
+
+| field_role | 출처 |
+|------------|------|
+| `column` | table `columns[]` |
+| `dimension` / `fact` | cube |
+| `metric` / `segment` | 각 문서 |
+| `document` | 문서 `description`(있을 때) |
+
+`text` = 이름·타입·description 등을 공백으로 이은 검색 문자열. `embedding`은 D14 API로 채운 f32 blob(미설정이면 NULL).

@@ -231,12 +231,20 @@ impl SqlMcp {
         map_result(self.store.get("table", &args.table).await)
     }
 
-    #[tool(description = "Search columns (M1 stub — returns empty items; BM25/vector in M2)")]
+    #[tool(description = "Search columns via keyword (BM25), vector, or hybrid (RRF)")]
     async fn search_columns(
         &self,
-        Parameters(_args): Parameters<SearchColumnsArgs>,
+        Parameters(args): Parameters<SearchColumnsArgs>,
     ) -> Result<CallToolResult, McpError> {
-        ok_json(json!({ "items": [] }))
+        let mode = args.mode.as_deref().unwrap_or("hybrid");
+        let limit = args.limit.map(|n| n as usize).unwrap_or(20);
+        let hits = match self.store.search_columns(&args.query, mode, limit).await {
+            Ok(h) => h,
+            Err(e) => return tool_err(e),
+        };
+        // optional target filter is reserved for target-catalog search; semantic index has no target id
+        let _ = args.target;
+        ok_json(crate::search::hits_to_json(&hits))
     }
 
     #[tool(description = "Sample distinct-ish values from a target column")]
@@ -259,10 +267,15 @@ impl SqlMcp {
             Ok(v) => v,
             Err(e) => return tool_err(e),
         };
-        ok_json(json!({
+        let (is_code, language) = crate::code_detect::detect_code(&args.column, &values);
+        let mut out = json!({
             "values": values,
-            "is_code": false,
-        }))
+            "is_code": is_code,
+        });
+        if let Some(lang) = language {
+            out["language"] = json!(lang);
+        }
+        ok_json(out)
     }
 
     #[tool(description = "Execute a single SELECT on a target database")]
