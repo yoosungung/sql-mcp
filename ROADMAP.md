@@ -4,7 +4,7 @@
 
 ## 목표
 
-Rust(`rmcp`)로 **안전한 SQL MCP 서버**를 만든다. 제공 능력은 **테이블 목록/상세**, **컬럼 샘플(+code)**, **SELECT SQL** 뿐이다.
+Rust(`rmcp`)로 **안전한 SQL MCP 서버**를 만든다. 제공 능력은 **테이블 목록/상세**, **컬럼 검색**, **컬럼 샘플(+code)**, **SELECT SQL** 뿐이다.
 
 참고한 외부 패턴(구현 수단): Rust+sqlx+가드 사례, 공식 SDK [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk). 툴 이름은 우리 계약(§ ARCHITECTURE 3.2)을 따른다.
 
@@ -14,7 +14,7 @@ Rust(`rmcp`)로 **안전한 SQL MCP 서버**를 만든다. 제공 능력은 **�
 |------|------|
 | 서버 언어 | Rust |
 | MCP SDK | `rmcp` (spec `2026-07-28`) |
-| MCP 능력 | `list_tables`, `describe_table`, `sample_column`(code 처리), `execute_sql`(**SELECT만**) |
+| MCP 능력 | `list_tables`, `describe_table`, `search_columns`, `sample_column`(code 처리), `execute_sql`(**SELECT만**) |
 | 쓰기 | 제공하지 않음 (영구 SELECT-only) |
 | Resources | M1에서 없음 (툴만) |
 | 기본 transport | stdio |
@@ -40,7 +40,7 @@ Rust(`rmcp`)로 **안전한 SQL MCP 서버**를 만든다. 제공 능력은 **�
 - [x] `ARCHITECTURE.md` 계약·인터페이스 초안
 - [x] 이 로드맵
 - [x] `README.md` 소개(구현 전 quickstart는 “아직 없음” 명시)
-- [x] MCP 능력 확정 (테이블/샘플/SELECT)
+- [x] MCP 능력 확정 (테이블/컬럼검색/샘플/SELECT)
 - [ ] 미결정 D1–D2 확정
 
 **완료 기준:** 계약·계획이 저장소에 있고, 첫 엔진·sqlx 여부가 합의됨.
@@ -52,12 +52,12 @@ Rust(`rmcp`)로 **안전한 SQL MCP 서버**를 만든다. 제공 능력은 **�
 1. Cargo 워크스페이스/`server` 바이너리, `rmcp` stdio 서버
 2. 설정: URL + max_rows/sample_limit/timeout
 3. 가드: SQL 파서로 **SELECT-only** + LIMIT/상한 (`not_select` 에러)
-4. 툴 4개: `list_tables`, `describe_table`, `sample_column`(code), `execute_sql`
+4. 툴 5개: `list_tables`, `describe_table`, `search_columns`, `sample_column`(code), `execute_sql`
 5. 엔진: D1에서 고른 것 1개
 6. 테스트: 가드 유닛 + 샘플/code 판정 + 통합
 7. Cursor/Inspector로 stdio 스모크
 
-**완료 기준:** 테이블 목록·상세·컬럼 샘플·SELECT가 동작하고, 비-SELECT는 거부된다.
+**완료 기준:** 테이블 목록·상세·컬럼 검색·컬럼 샘플·SELECT가 동작하고, 비-SELECT는 거부된다.
 
 ### M2 — 엔진·운영 확장
 

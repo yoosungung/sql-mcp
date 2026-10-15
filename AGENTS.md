@@ -35,4 +35,4 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
  
 ## 3. Status
  
-기획 단계. 확정: **Rust** (`rmcp`) · 툴=`list_tables`/`describe_table`/`sample_column`/`execute_sql`(SELECT만). 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md). 다음: D1·D2 확정 후 M1.
+기획 단계. 확정: **Rust** (`rmcp`) · 툴=`list_tables`/`describe_table`/`search_columns`/`sample_column`/`execute_sql`(SELECT만). 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md). 다음: D1·D2 확정 후 M1.

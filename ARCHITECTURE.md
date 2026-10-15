@@ -7,7 +7,7 @@
 1. **언어.** MCP 서버는 **Rust**로 구현한다. 공식 SDK는 [`rmcp`](https://crates.io/crates/rmcp) (MCP spec `2026-07-28`, 하위 호환 유지).
 2. **역할.** 이 저장소는 AI 클라이언트가 SQL 데이터베이스를 **안전하게** 탐색·질의할 수 있게 하는 MCP 서버다. DB 자격 증명은 채팅/툴 인자로 받지 않는다 — 기동 시 설정(환경변수·설정 파일·시크릿 스토어)으로만 주입한다.
 3. **SELECT only.** 임의 SQL 실행은 **단일 SELECT**(및 엔진이 SELECT와 동등하게 취급하는 읽기 CTE 등 — DESIGN에서 화이트리스트)만 허용한다. INSERT/UPDATE/DELETE/DDL/다중 문장/쓰기 CTE는 거부한다. 행 수 상한·쿼리 타임아웃을 강제한다.
-4. **제공 능력은 셋뿐.** (1) 테이블 목록·상세 (2) 컬럼 샘플 조회 — 값이 코드인 경우 코드로 취급 (3) SELECT SQL 수행. 그 외 툴은 기본 표면에 넣지 않는다.
+4. **제공 능력은 네 가지.** (1) 테이블 목록·상세 (2) 컬럼 검색 (3) 컬럼 샘플 조회 — 값이 코드인 경우 코드로 취급 (4) SELECT SQL 수행. 그 외 툴은 기본 표면에 넣지 않는다.
 5. **시크릿.** 로그·에러·툴 응답에 DSN/비밀번호를 실지 않는다.
 6. **문서 우선.** 계약·계획·내부 설계 변경은 해당 문서를 코드와 함께(또는 먼저) 갱신한다. 개발은 TDD(스켈레톤 → 테스트 → 구현).
 
@@ -34,6 +34,7 @@
 |------|------|------------|------|------|
 | `list_tables` | 테이블 목록 | `schema?`, `connection?` | 테이블명·종류(table/view)·대략 행수(가능 시) | 메타데이터만 |
 | `describe_table` | 테이블 상세 | `table`, `schema?`, `connection?` | 컬럼(이름·타입·null·default)·PK/FK/인덱스 요약 | 한 테이블 단위 |
+| `search_columns` | 컬럼 검색 | `query`, `schema?`, `table?`, `connection?`, `limit?` | 매칭 컬럼 목록(table·column·type·nullability 등) | 아래 §3.2.2 |
 | `sample_column` | 컬럼 샘플 | `table`, `column`, `schema?`, `limit?`, `connection?` | 샘플 값 목록·`is_code`·(코드면) 보존된 개행/펜스 가능한 텍스트 | 아래 §3.2.1 |
 | `execute_sql` | SQL 수행 | `sql`, `connection?`, `params?` | 행(JSON)·메타(`row_count`, `truncated`) | **SELECT만** + row limit + timeout |
 
@@ -44,6 +45,13 @@
 - 일반 값: 짧은 문자열/숫자 샘플. 긴 텍스트는 길이 상한으로 truncate + `truncated: true`.
 - **코드인 경우** (`is_code: true`): 개행을 유지한 샘플을 반환하고, 응답에 코드로 소비하라는 신호를 둔다(구조화 필드 `is_code` + 필요 시 `language` 힌트).
 - “코드” 판정(초안, DESIGN에서 확정): 컬럼 타입/이름 힌트(예: `text`/`json` + 이름에 `code`/`script`/`sql`/`query`) 또는 값 휴리스틱(다줄·중괄호/들여쓰기 비율). 클라이언트가 `as_code: true`로 강제할 수 있게 할지는 ROADMAP D9.
+
+#### 3.2.2 `search_columns` — 컬럼 검색
+
+- `query`로 컬럼명(및 선택적으로 테이블명)을 부분 일치 검색한다. 대소문자 무시가 기본.
+- `table`/`schema`로 범위를 좁힐 수 있다. 없으면 연결 DB 전체 메타데이터를 대상으로 한다.
+- 결과는 메타데이터만(이름·타입·null·소속 테이블). 값/샘플은 반환하지 않는다 — 값은 `sample_column`으로.
+- 결과 상한(`limit`, 설정 기본값)을 두어 토큰 폭주를 막는다.
 
 ### 3.3 Resources
 
@@ -60,6 +68,19 @@ M1에서는 **툴만** 제공한다. MCP Resources URI는 두지 않는다(테�
   "row_count": 1,
   "truncated": false,
   "connection": "default"
+}
+```
+
+`search_columns` 성공 예:
+
+```json
+{
+  "query": "email",
+  "matches": [
+    {"schema": "public", "table": "users", "column": "email", "type": "varchar", "nullable": false}
+  ],
+  "match_count": 1,
+  "truncated": false
 }
 ```
 
