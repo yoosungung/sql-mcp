@@ -1,27 +1,27 @@
 # sql-mcp
 
-**시맨틱 레이어 DB**를 읽는 Rust **MCP** 서버.
+임베디드 시맨틱 DB를 품은 Rust **MCP** 서버(`rmcp`, **stdio**).
 
-- **MCP** (`server/`, `rmcp`): 테이블·컬럼 탐색, BM25/벡터 컬럼 검색, 샘플(+code), **SELECT만**
-- Frontend / 관리 UI: **없음(취소)**
-- 자격 증명은 기동 설정으로만 주입
+- **타깃 DB** (DW, **복수**): 테이블/컬럼 탐색, 샘플(+code), **SELECT만**
+- **시맨틱 DB** (프로세스 내): BM25/벡터 컬럼 검색 + **메타데이터 CRUD(JSON)**
+- Frontend / Streamable HTTP: **없음(취소)**
 
 계약: [ARCHITECTURE.md](ARCHITECTURE.md) · 계획: [ROADMAP.md](ROADMAP.md) · 워크플로: [AGENTS.md](AGENTS.md)
 
 ## Status
 
-기획 단계. 바이너리 실행 방법은 아직 없다. D1/D2/D12/D14 확정 후 M1(`server/`)을 시작한다.
+기획 단계. D1/D2/D12/D14 확정 후 M1(`server/`) 시작.
 
 ## Quickstart
 
 구현 후 `server/DESIGN.md`의 `## Commands`와 이 절을 채운다.
 
 ```text
-# (예정) 시맨틱 DB URL
-export SEMANTIC_DATABASE_URL=...
+# (예정) 임베디드 시맨틱 DB 경로 + 타깃 설정
+export SQL_MCP_SEMANTIC_PATH=./data/semantic.db
+# targets: config file / env (복수)
 
-# (예정) MCP
-cargo run -p sql-mcp
+cargo run -p sql-mcp   # stdio MCP
 ```
 
 ## 문서 맵
