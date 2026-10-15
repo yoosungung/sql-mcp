@@ -14,6 +14,7 @@ MCP 능력: **테이블 목록/상세**, **컬럼 검색**, **컬럼 샘플(+cod
 | 항목 | 결정 |
 |------|------|
 | 데이터 원천 | **시맨틱 레이어 DB** (MCP는 여기만 사용) |
+| 메타 스키마 | **얇게** — 원천 엔터프라이즈 스키마를 통째 미러하지 않음 ([ARCHITECTURE §1a](ARCHITECTURE.md)) |
 | MCP 언어·SDK | Rust / `rmcp` (`2026-07-28`) |
 | MCP 능력 | `list_tables`, `describe_table`, `search_columns`, `sample_column`, `execute_sql`(**SELECT만**) |
 | MCP 쓰기 | 없음 |
@@ -33,7 +34,7 @@ MCP 능력: **테이블 목록/상세**, **컬럼 검색**, **컬럼 샘플(+cod
 | D9 | code 판정 | 휴리스틱만 vs `as_code` 플래그 |
 | D10 | Admin API 위치 | **A)** 별도 `api/`(Rust) **B)** `server`에 MCP+HTTP 공존 **C)** Frontend BFF만. 권장: A(쓰기와 MCP 분리) |
 | D11 | Frontend 스택 | 예: React/Vite, Next 등 — 팀 선호 확인 |
-| D12 | 시맨틱 모델 | DB 테이블 스키마 vs YAML/파일+DB 하이브리드 · 메트릭/디멘션/조인 포함 범위 |
+| D12 | 시맨틱 모델 필드 | **방향 확정: 얇은 메타.** 남는 선택 — 최소 테이블 집합(연결/테이블/컬럼/매핑)만 vs 메트릭·조인까지. YAML 병행 여부 |
 | D13 | 물리 웨어하우스 | 시맨틱만 질의 vs 레이어가 물리 SQL 컴파일·실행까지 하는지 |
 
 ## 마일스톤
