@@ -1,4 +1,8 @@
+use std::env;
+use std::sync::Arc;
+
 use async_trait::async_trait;
+use serde::Deserialize;
 
 use crate::error::AppError;
 
@@ -7,6 +11,97 @@ use crate::error::AppError;
 pub trait Embedder: Send + Sync {
     async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, AppError>;
     fn dimensions(&self) -> usize;
+}
+
+/// Build embedder from env: `SQL_MCP_EMBEDDING_URL` + `SQL_MCP_EMBEDDING_API_KEY` → OpenAI-compatible.
+/// Otherwise HashEmbedder(dim from `SQL_MCP_EMBEDDING_DIM`, default 64).
+pub fn from_env() -> Arc<dyn Embedder> {
+    let dim = env::var("SQL_MCP_EMBEDDING_DIM")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(64);
+    match (
+        env::var("SQL_MCP_EMBEDDING_URL").ok(),
+        env::var("SQL_MCP_EMBEDDING_API_KEY").ok(),
+    ) {
+        (Some(url), Some(key)) if !url.is_empty() && !key.is_empty() => {
+            let model = env::var("SQL_MCP_EMBEDDING_MODEL")
+                .unwrap_or_else(|_| "text-embedding-3-small".into());
+            Arc::new(OpenAiEmbedder::new(url, key, model, dim))
+        }
+        _ => Arc::new(HashEmbedder::new(dim)),
+    }
+}
+
+pub struct OpenAiEmbedder {
+    url: String,
+    api_key: String,
+    model: String,
+    dim: usize,
+    client: reqwest::Client,
+}
+
+impl OpenAiEmbedder {
+    pub fn new(url: String, api_key: String, model: String, dim: usize) -> Self {
+        Self {
+            url,
+            api_key,
+            model,
+            dim,
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct EmbeddingResponse {
+    data: Vec<EmbeddingData>,
+}
+
+#[derive(Deserialize)]
+struct EmbeddingData {
+    embedding: Vec<f32>,
+}
+
+#[async_trait]
+impl Embedder for OpenAiEmbedder {
+    async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, AppError> {
+        if texts.is_empty() {
+            return Ok(vec![]);
+        }
+        let body = serde_json::json!({
+            "model": self.model,
+            "input": texts,
+        });
+        let resp = self
+            .client
+            .post(&self.url)
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| AppError::Connection(e.into()))?;
+        if !resp.status().is_success() {
+            return Err(AppError::Connection(anyhow::anyhow!(
+                "embedding HTTP {}",
+                resp.status()
+            )));
+        }
+        let parsed: EmbeddingResponse = resp
+            .json()
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?;
+        if parsed.data.len() != texts.len() {
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "embedding count mismatch"
+            )));
+        }
+        Ok(parsed.data.into_iter().map(|d| d.embedding).collect())
+    }
+
+    fn dimensions(&self) -> usize {
+        self.dim
+    }
 }
 
 /// Stable hash embedding for tests and when API is unset.
