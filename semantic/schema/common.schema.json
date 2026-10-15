@@ -41,10 +41,17 @@
       }
     },
     "role": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/name" },
-      "uniqueItems": true,
-      "description": "컬럼을 볼 수 있는 role. 빈 배열이면 역할 제한이 없다."
+      "description": "컬럼을 볼 수 있는 role. 생략하거나 all 이면 모든 role.",
+      "default": "all",
+      "anyOf": [
+        { "const": "all" },
+        {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/name" }
+        }
+      ]
     }
   }
 }

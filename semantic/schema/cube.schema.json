@@ -27,7 +27,7 @@
     "dimension": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "type", "default_filter", "encryption", "role"],
+      "required": ["name", "type", "default_filter", "encryption"],
       "properties": {
         "name": {
           "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/name",
@@ -61,7 +61,7 @@
     "fact": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "amount", "fx", "default_filter", "encryption", "role"],
+      "required": ["name", "amount", "fx", "default_filter", "encryption"],
       "properties": {
         "name": { "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/name" },
         "column": {

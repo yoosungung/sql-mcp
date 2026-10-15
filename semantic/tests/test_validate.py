@@ -96,6 +96,19 @@ def test_registry_rejects_unknown_table_reference():
     assert any("missing" in error for error in raised.value.errors)
 
 
+def test_role_defaults_to_all():
+    document = _cube()
+    del document["dimensions"][0]["role"]
+    del document["facts"][0]["role"]
+    validate_document(document)
+    document["dimensions"][0]["role"] = "all"
+    validate_document(document)
+    document["facts"][0]["role"] = []
+    with pytest.raises(SchemaError) as raised:
+        validate_document(document)
+    assert any("role" in error for error in raised.value.errors)
+
+
 def test_dimension_type_is_code_date_time_datetime_or_string():
     document = _cube()
     document["dimensions"][0].pop("type")
@@ -128,7 +141,7 @@ def test_dimension_and_fact_are_column_or_expression():
             "expression": "cast(order_id as varchar)",
             "default_filter": None,
             "encryption": False,
-            "role": [],
+            "role": "all",
         }
     )
     calculated["facts"].append(
@@ -139,7 +152,7 @@ def test_dimension_and_fact_are_column_or_expression():
             "fx": False,
             "default_filter": None,
             "encryption": False,
-            "role": [],
+            "role": "all",
         }
     )
     validate_document(calculated)
@@ -157,7 +170,7 @@ def test_expression_member_skips_view_column_check():
             "fx": False,
             "default_filter": None,
             "encryption": False,
-            "role": [],
+            "role": "all",
         }
     ]
     validate_registry([_table(), _from_view(), cube])
@@ -250,7 +263,7 @@ def _cube() -> dict:
                 "column": "order_id",
                 "default_filter": None,
                 "encryption": False,
-                "role": [],
+                "role": "all",
             }
         ],
         "facts": [
@@ -261,7 +274,7 @@ def _cube() -> dict:
                 "fx": False,
                 "default_filter": None,
                 "encryption": False,
-                "role": [],
+                "role": "all",
             }
         ],
     }

@@ -10,7 +10,7 @@
       "column": "order_month",
       "default_filter": null,
       "encryption": false,
-      "role": []
+      "role": "all"
     },
     {
       "name": "order_year",
@@ -18,7 +18,7 @@
       "expression": "date_trunc('year', order_month)",
       "default_filter": null,
       "encryption": false,
-      "role": []
+      "role": "all"
     },
     {
       "name": "region_code",
@@ -26,7 +26,7 @@
       "column": "region_code",
       "default_filter": null,
       "encryption": false,
-      "role": []
+      "role": "all"
     },
     {
       "name": "status_code",
@@ -34,7 +34,7 @@
       "column": "status_code",
       "default_filter": null,
       "encryption": false,
-      "role": []
+      "role": "all"
     },
     {
       "name": "customer_id",
@@ -42,7 +42,7 @@
       "column": "customer_id",
       "default_filter": null,
       "encryption": false,
-      "role": []
+      "role": "all"
     }
   ],
   "facts": [

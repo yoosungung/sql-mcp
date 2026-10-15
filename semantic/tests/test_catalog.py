@@ -120,7 +120,7 @@ def _cube() -> dict:
                 "column": "order_id",
                 "default_filter": None,
                 "encryption": False,
-                "role": [],
+                "role": "all",
             }
         ],
         "facts": [],
