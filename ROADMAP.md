@@ -77,13 +77,13 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 - [x] 메타 CRUD 시 `column_index` 재구축
 - [x] table→물리 SQL 컴파일(필터 AND) + SELECT AST 가드 유지
 - [x] CI (`.github/workflows/ci.yml`)
-- [ ] OpenAI-호환 임베딩 HTTP 클라이언트 배선
-- [ ] cube/metric/segment → 물리 SQL 컴파일
+- [x] OpenAI-호환 임베딩 HTTP 클라이언트 배선 (`SQL_MCP_EMBEDDING_*`, 미설정 시 HashEmbedder)
+- [x] cube/metric/segment → 물리 SQL 컴파일 (`compile_metric_select`)
 - [ ] 타깃 엔진 확장 — 후속(현재 Postgres만)
 
 ### M3 — 배포·하드닝
 
-- (D7) · 관측 · 릴리스
+- [ ] (D7) 배포 형태 확정 · 관측 · 릴리스 런북
 
 ## 구현 시 작업 규칙
 

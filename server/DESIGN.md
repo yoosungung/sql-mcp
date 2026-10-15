@@ -43,6 +43,9 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `SQL_MCP_CONFIG` | TOML 설정 경로 |
 | `SQL_MCP_LISTEN` | 바인드 주소(기본 `127.0.0.1:8080`) |
 | `SQL_MCP_MAX_ROWS` / `SQL_MCP_SAMPLE_LIMIT` / `SQL_MCP_TIMEOUT_MS` | 상한 |
+| `SQL_MCP_EMBEDDING_URL` / `SQL_MCP_EMBEDDING_API_KEY` | OpenAI-호환 임베딩(둘 다 있으면 사용) |
+| `SQL_MCP_EMBEDDING_MODEL` | 기본 `text-embedding-3-small` |
+| `SQL_MCP_EMBEDDING_DIM` | HashEmbedder 차원(기본 64) |
 
 타깃 DSN은 설정 `url_env`가 가리키는 환경 변수로만 주입한다.
 
