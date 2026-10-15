@@ -23,6 +23,7 @@
     "filter": {
       "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/nullableFilter",
       "description": "이 지표에만 붙는 필터. 시멘틱 컬럼 이름을 쓴다. 없으면 null."
-    }
+    },
+    "role": { "$ref": "https://sql-mcp.local/semantic/common.schema.json#/$defs/role" }
   }
 }

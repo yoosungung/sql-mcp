@@ -4,5 +4,6 @@
   "cube": "sales",
   "expression": "sum(sale_amount)",
   "aggregation": "group",
-  "filter": null
+  "filter": null,
+  "role": "all"
 }
