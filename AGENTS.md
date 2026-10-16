@@ -39,4 +39,4 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
  
 ## 3. Status
  
-M0–M4 핵심 완료: 타입별 `meta_*` · 시맨틱-only `execute_sql` · 요약뷰/join pruning/필터 푸시다운. 후속: union/minus · AST Folder 전면 이관. 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 파이프라인 [server/spec.md](server/spec.md).
+M0–M4 완료: 타입별 `meta_*` · 시맨틱-only `execute_sql` · 요약뷰/join·union pruning/필터 푸시다운 · `ast_rewrite`. 후속: 전체 쿼리 AST 조립·날짜 disjoint union. 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 파이프라인 [server/spec.md](server/spec.md).

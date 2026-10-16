@@ -100,8 +100,9 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 - [x] `execute_sql` = 시맨틱 SQL → `pipeline` → 물리 SELECT (자유 물리 SELECT 삭제, D19)
 - [x] keyword = FTS5/`bm25` · vector/hybrid 유지 (D12)
 - [x] 요약 뷰 라우팅 (`combine=select` + `prefer=summary`) · join Steiner 근사 pruning · 인라인 뷰 필터 푸시다운 · dim/fact `default_filter` · encryption 프로젝션 NULL
-- [ ] union/minus 컴파일·union pruning
-- [ ] 구 `compile_*`를 sqlparser Folder 전면 AST 이관 (현재 문자열 + 파이프라인 오케스트레이션)
+- [x] union/minus 컴파일 · union pruning(`1=0` scope · 미매핑 source 제거)
+- [x] metric/view 식별자 치환을 sqlparser `VisitorMut` AST 경로로 이관 (`ast_rewrite`)
+- [ ] 전체 쿼리 AST Folder(SELECT 조립 포함) · 날짜범위 기반 union disjoint 고도화
 
 ## 구현 시 작업 규칙
 

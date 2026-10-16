@@ -174,6 +174,8 @@ pub fn compile_view_from_opts(
         .ok_or_else(|| AppError::Validation("view.combine required".into()))?;
     match combine {
         "join" => compile_join_view(docs, view, role, used_view_cols),
+        "union" => compile_set_view(docs, view, role, used_view_cols, false),
+        "minus" => compile_set_view(docs, view, role, used_view_cols, true),
         "select" => Err(AppError::Validation(
             "combine=select must be resolved before compile_view_from".into(),
         )),
@@ -181,6 +183,131 @@ pub fn compile_view_from_opts(
             "combine={other} not yet supported in compile"
         ))),
     }
+}
+
+/// UNION ALL / EXCEPT of aligned projections per source table (Step 4 union pruning).
+fn compile_set_view(
+    docs: &[Value],
+    view: &Value,
+    role: Option<&str>,
+    used_view_cols: Option<&HashSet<String>>,
+    is_minus: bool,
+) -> Result<String, AppError> {
+    let sources = view
+        .get("sources")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| AppError::Validation("view.sources required".into()))?;
+    if sources.len() < 2 {
+        return Err(AppError::Validation(
+            "union/minus view needs at least two sources".into(),
+        ));
+    }
+    let proj_cols: Vec<String> = if let Some(used) = used_view_cols {
+        let mut v: Vec<_> = used.iter().cloned().collect();
+        v.sort();
+        v
+    } else {
+        let mut v: Vec<_> = view_column_name_set(view).into_iter().collect();
+        v.sort();
+        v
+    };
+    if proj_cols.is_empty() {
+        return Err(AppError::Validation(
+            "union/minus needs at least one projected column".into(),
+        ));
+    }
+
+    let op = if is_minus { "EXCEPT" } else { "UNION ALL" };
+    let mut branches = Vec::new();
+    for src in sources {
+        let tname = source_name(src)?;
+        if !source_maps_any_cols(view, tname, &proj_cols) {
+            continue; // prune: no mapping for required columns
+        }
+        let table = find_doc(docs, "table", tname)?;
+        if scope_is_dead(table) {
+            continue; // prune: sentinel unsatisfiable scope
+        }
+        let mut select_parts = Vec::new();
+        for col in &proj_cols {
+            let phys = view_physical_expr_for_source(view, col, tname)?;
+            select_parts.push(format!("{phys} AS {}", quote_ident(col)?));
+        }
+        let from = inline_table_ref(docs, tname, role)?;
+        branches.push(format!("SELECT {} FROM {}", select_parts.join(", "), from));
+    }
+    if branches.is_empty() {
+        return Err(AppError::Validation(
+            "all union/minus branches pruned".into(),
+        ));
+    }
+    if is_minus && branches.len() < 2 {
+        return Err(AppError::Validation(
+            "minus needs at least two live branches".into(),
+        ));
+    }
+    Ok(format!("({})", branches.join(&format!(" {op} "))))
+}
+
+fn source_maps_any_cols(view: &Value, source: &str, cols: &[String]) -> bool {
+    let Some(vcols) = view.get("columns").and_then(|v| v.as_array()) else {
+        return false;
+    };
+    for col in cols {
+        for c in vcols {
+            if c.get("name").and_then(|v| v.as_str()) != Some(col.as_str()) {
+                continue;
+            }
+            if let Some(maps) = c.get("mappings").and_then(|v| v.as_array()) {
+                if maps
+                    .iter()
+                    .any(|m| m.get("source").and_then(|v| v.as_str()) == Some(source))
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn scope_is_dead(table: &Value) -> bool {
+    filter_expr(table.get("scope_filter"))
+        .map(|e| {
+            let t = e.replace(' ', "").to_ascii_lowercase();
+            t == "1=0" || t == "false" || t == "0=1"
+        })
+        .unwrap_or(false)
+}
+
+fn view_physical_expr_for_source(
+    view: &Value,
+    view_col: &str,
+    source: &str,
+) -> Result<String, AppError> {
+    let cols = view
+        .get("columns")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| AppError::Validation("view.columns required".into()))?;
+    let col = cols
+        .iter()
+        .find(|c| c.get("name").and_then(|v| v.as_str()) == Some(view_col))
+        .ok_or_else(|| AppError::NotFound(format!("view column {view_col}")))?;
+    let mapping = col
+        .get("mappings")
+        .and_then(|v| v.as_array())
+        .and_then(|m| {
+            m.iter()
+                .find(|x| x.get("source").and_then(|v| v.as_str()) == Some(source))
+        })
+        .ok_or_else(|| {
+            AppError::Validation(format!("no mapping for {view_col} on source {source}"))
+        })?;
+    let column = mapping
+        .get("column")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::Validation("mapping.column".into()))?;
+    Ok(format!("{}.{}", quote_ident(source)?, quote_ident(column)?))
 }
 
 /// Resolve cube.view, applying summary-view routing when combine=select (Step 3).
@@ -622,14 +749,19 @@ pub fn compile_metric_select(
     }
 
     let view = resolve_view_for_cube(docs, cube, &req_cols, is_semi)?;
-    let from = compile_view_from_opts(docs, &view, role, Some(&req_cols))?;
+    let combine = view.get("combine").and_then(|v| v.as_str()).unwrap_or("");
+    let set_alias = matches!(combine, "union" | "minus").then_some("_sem_uv");
+    let mut from = compile_view_from_opts(docs, &view, role, Some(&req_cols))?;
+    if let Some(a) = set_alias {
+        from = format!("{from} AS {}", quote_ident(a)?);
+    }
 
     let mut select_parts = Vec::new();
     for g in &group_by {
         let gname = g
             .as_str()
             .ok_or_else(|| AppError::Validation("group_by entry".into()))?;
-        let expr = view_physical_expr(&view, gname)?;
+        let expr = output_col_expr(&view, gname, set_alias)?;
         let proj = if member_encrypted(cube, gname) {
             format!("NULL AS {}", quote_ident(gname)?)
         } else {
@@ -643,17 +775,20 @@ pub fn compile_metric_select(
 
     assert_metric_expr(metric_expr)?;
     assert_idents_known(metric_expr, &members)?;
-    let rewritten = rewrite_metric_expression(metric_expr, cube, &view)?;
+    let rewritten = rewrite_metric_expression(metric_expr, cube, &view, set_alias)?;
     select_parts.push(format!("{rewritten} AS {}", quote_ident(metric_name)?));
 
     // Outer WHERE: metric/segment/dimension-fact default_filter only (table filters pushed down).
     let mut filters = Vec::new();
-    collect_member_default_filters(cube, &req_cols, &view, &mut filters)?;
+    collect_member_default_filters(cube, &req_cols, &view, set_alias, &mut filters)?;
 
     if let Some(expr) = filter_expr(metric.get("filter")) {
         assert_filter_expr(expr)?;
         assert_idents_known(expr, &members)?;
-        filters.push(format!("({})", rewrite_view_idents(expr, &view)?));
+        filters.push(format!(
+            "({})",
+            rewrite_view_idents(expr, &view, set_alias)?
+        ));
     }
     for seg_name in segment_names {
         let seg = find_doc(docs, "segment", seg_name)?;
@@ -665,7 +800,10 @@ pub fn compile_metric_select(
         if let Some(expr) = filter_expr(seg.get("filter")) {
             assert_filter_expr(expr)?;
             assert_idents_known(expr, &members)?;
-            filters.push(format!("({})", rewrite_view_idents(expr, &view)?));
+            filters.push(format!(
+                "({})",
+                rewrite_view_idents(expr, &view, set_alias)?
+            ));
         }
     }
 
@@ -678,13 +816,25 @@ pub fn compile_metric_select(
         let mut gb = Vec::new();
         for g in &group_by {
             let gname = g.as_str().unwrap();
-            gb.push(view_physical_expr(&view, gname)?);
+            gb.push(output_col_expr(&view, gname, set_alias)?);
         }
         sql.push_str(" GROUP BY ");
         sql.push_str(&gb.join(", "));
     }
     assert_select_only(&sql)?;
     Ok(sql)
+}
+
+fn output_col_expr(
+    view: &Value,
+    view_col: &str,
+    set_alias: Option<&str>,
+) -> Result<String, AppError> {
+    if let Some(a) = set_alias {
+        Ok(format!("{}.{}", quote_ident(a)?, quote_ident(view_col)?))
+    } else {
+        view_physical_expr(view, view_col)
+    }
 }
 
 fn collect_member_view_cols(cube: &Value, expr: &str, out: &mut HashSet<String>) {
@@ -761,6 +911,7 @@ fn collect_member_default_filters(
     cube: &Value,
     used_view_cols: &HashSet<String>,
     view: &Value,
+    set_alias: Option<&str>,
     filters: &mut Vec<String>,
 ) -> Result<(), AppError> {
     for key in ["dimensions", "facts"] {
@@ -776,7 +927,10 @@ fn collect_member_default_filters(
                 }
                 if let Some(expr) = filter_expr(item.get("default_filter")) {
                     assert_filter_expr(expr)?;
-                    filters.push(format!("({})", rewrite_view_idents(expr, view)?));
+                    filters.push(format!(
+                        "({})",
+                        rewrite_view_idents(expr, view, set_alias)?
+                    ));
                 }
             }
         }
@@ -801,9 +955,14 @@ fn validate_cube_member_expressions(
     Ok(())
 }
 
-fn rewrite_metric_expression(expr: &str, cube: &Value, view: &Value) -> Result<String, AppError> {
-    // Replace bare fact/dimension identifiers that appear as whole words.
-    let mut out = expr.to_string();
+fn rewrite_metric_expression(
+    expr: &str,
+    cube: &Value,
+    view: &Value,
+    set_alias: Option<&str>,
+) -> Result<String, AppError> {
+    use std::collections::HashMap;
+    let mut map = HashMap::new();
     for key in ["facts", "dimensions"] {
         if let Some(items) = cube.get(key).and_then(|v| v.as_array()) {
             for item in items {
@@ -812,109 +971,42 @@ fn rewrite_metric_expression(expr: &str, cube: &Value, view: &Value) -> Result<S
                     continue;
                 }
                 let phys = if let Some(e) = item.get("expression").and_then(|v| v.as_str()) {
-                    format!("({e})")
+                    // nested member expr may still need view rewrite
+                    rewrite_view_idents(e, view, set_alias)?
                 } else if let Some(col) = item.get("column").and_then(|v| v.as_str()) {
-                    view_physical_expr(view, col)?
+                    output_col_expr(view, col, set_alias)?
                 } else {
                     continue;
                 };
-                out = replace_ident(&out, name, &phys);
+                map.insert(name.to_string(), phys);
             }
         }
     }
-    Ok(out)
+    crate::ast_rewrite::rewrite_idents(expr, &map)
 }
 
-fn rewrite_view_idents(expr: &str, view: &Value) -> Result<String, AppError> {
-    let mut out = expr.to_string();
+fn rewrite_view_idents(
+    expr: &str,
+    view: &Value,
+    set_alias: Option<&str>,
+) -> Result<String, AppError> {
+    use std::collections::HashMap;
+    let mut map = HashMap::new();
     if let Some(cols) = view.get("columns").and_then(|v| v.as_array()) {
         for c in cols {
             let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("");
             if name.is_empty() {
                 continue;
             }
-            let phys = view_physical_expr(view, name)?;
-            out = replace_ident(&out, name, &phys);
+            map.insert(name.to_string(), output_col_expr(view, name, set_alias)?);
         }
     }
-    Ok(out)
-}
-
-fn replace_ident(hay: &str, ident: &str, with: &str) -> String {
-    let mut out = String::new();
-    let chars: Vec<char> = hay.chars().collect();
-    let id: Vec<char> = ident.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        if i + id.len() <= chars.len() && chars[i..i + id.len()] == id[..] {
-            let before_ok = i == 0 || !is_ident_char(chars[i - 1]);
-            let after_ok = i + id.len() == chars.len() || !is_ident_char(chars[i + id.len()]);
-            if before_ok && after_ok {
-                out.push_str(with);
-                i += id.len();
-                continue;
-            }
-        }
-        out.push(chars[i]);
-        i += 1;
-    }
-    out
+    // Also map cube-style bare names that equal physical column names on members.
+    crate::ast_rewrite::rewrite_idents(expr, &map)
 }
 
 fn is_ident_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
-}
-
-fn qualify_filter(expr: &str, alias: &str) -> Result<String, AppError> {
-    // Prefix simple identifiers with alias. Keep bind params (:x) and string literals intact.
-    let mut out = String::new();
-    let chars: Vec<char> = expr.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        if chars[i] == '\'' {
-            out.push('\'');
-            i += 1;
-            while i < chars.len() {
-                out.push(chars[i]);
-                if chars[i] == '\'' {
-                    i += 1;
-                    break;
-                }
-                i += 1;
-            }
-            continue;
-        }
-        if chars[i] == ':' {
-            out.push(':');
-            i += 1;
-            while i < chars.len() && is_ident_char(chars[i]) {
-                out.push(chars[i]);
-                i += 1;
-            }
-            continue;
-        }
-        if chars[i].is_ascii_alphabetic() || chars[i] == '_' {
-            let start = i;
-            i += 1;
-            while i < chars.len() && is_ident_char(chars[i]) {
-                i += 1;
-            }
-            let word: String = chars[start..i].iter().collect();
-            let upper = word.to_ascii_uppercase();
-            if matches!(
-                upper.as_str(),
-                "AND" | "OR" | "NOT" | "NULL" | "IS" | "IN" | "LIKE" | "BETWEEN" | "TRUE" | "FALSE"
-            ) {
-                out.push_str(&word);
-            } else {
-                out.push_str(&format!("{}.{}", quote_ident(alias)?, quote_ident(&word)?));
-            }
-            continue;
-        }
-        out.push(chars[i]);
-        i += 1;
-    }
-    Ok(format!("({out})"))
 }
 
 #[cfg(test)]
@@ -1042,5 +1134,68 @@ mod tests {
             }
         }
         assert!(compile_metric_select(&docs, "revenue", &[], None).is_err());
+    }
+
+    #[test]
+    fn compiles_union_view_and_prunes_dead_scope() {
+        let mut docs = example_docs();
+        // Dead branch: unsatisfiable scope
+        for d in &mut docs {
+            if d.get("kind").and_then(|v| v.as_str()) == Some("table")
+                && d.get("name").and_then(|v| v.as_str()) == Some("orders_month")
+            {
+                d["scope_filter"] = json!({ "expression": "1=0" });
+            }
+        }
+        docs.push(json!({
+            "kind": "view",
+            "name": "orders_union",
+            "combine": "union",
+            "sources": [
+                {"kind": "table", "name": "orders"},
+                {"kind": "table", "name": "orders_month"}
+            ],
+            "columns": [
+                {"name": "region_code", "mappings": [
+                    {"source": "orders", "column": "region_code"},
+                    {"source": "orders_month", "column": "region_code"}
+                ]},
+                {"name": "order_date", "mappings": [
+                    {"source": "orders", "column": "order_date"},
+                    {"source": "orders_month", "column": "order_month"}
+                ]},
+                {"name": "sale_amount", "mappings": [
+                    {"source": "orders", "column": "sale_amount"},
+                    {"source": "orders_month", "column": "sale_amount"}
+                ]},
+                {"name": "status_code", "mappings": [
+                    {"source": "orders", "column": "status_code"},
+                    {"source": "orders_month", "column": "status_code"}
+                ]},
+                {"name": "fx_rate", "mappings": [
+                    {"source": "orders", "column": "fx_rate"},
+                    {"source": "orders_month", "column": "fx_rate"}
+                ]},
+                {"name": "customer_id", "mappings": [
+                    {"source": "orders", "column": "customer_id"},
+                    {"source": "orders_month", "column": "region_code"}
+                ]}
+            ]
+        }));
+        for d in &mut docs {
+            if d.get("kind").and_then(|v| v.as_str()) == Some("cube")
+                && d.get("name").and_then(|v| v.as_str()) == Some("sales")
+            {
+                d["view"] = json!("orders_union");
+            }
+        }
+        let sql = compile_metric_select(&docs, "revenue", &["paid"], Some("branch")).unwrap();
+        assert!(sql.contains("UNION ALL") || !sql.contains("orders_month"), "{sql}");
+        assert!(
+            !sql.contains("orders_month") || sql.matches("orders_month").count() == 0,
+            "dead scope branch should be pruned: {sql}"
+        );
+        assert!(sql.contains("sum(") || sql.to_ascii_lowercase().contains("sum"), "{sql}");
+        assert_select_only(&sql).unwrap();
     }
 }

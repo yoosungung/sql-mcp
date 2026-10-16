@@ -1,3 +1,4 @@
+pub mod ast_rewrite;
 pub mod code_detect;
 pub mod compile;
 pub mod config;
