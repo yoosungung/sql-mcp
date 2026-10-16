@@ -1,9 +1,9 @@
 ---
-name: semantic-cube-metric
+name: semantic-cube-metric-segment
 description: >-
   Designs semantic cube, metric, and segment registration JSON for sql-mcp on
-  top of an existing view. Use when defining dimensions, facts, KPIs, or cohort
-  filters after table/view docs exist.
+  top of an existing view. Use when defining dimensions, facts, KPIs, cohort
+  filters, or segments after table/view docs exist.
 ---
 
 # Semantic cube · metric · segment
@@ -12,6 +12,10 @@ description: >-
 
 규칙: [contract.md](contract.md). 예시: [examples/](examples/).
 
+## Output layout
+
+`{outdir}/{name}.json` (table/view와 같은 디렉터리에 평탄하게). view가 많으면 휴리스틱 초안 스크립트 허용 — dimension/fact 분류·metric은 [contract.md](contract.md) 준수 후 검토. **MCP 등록은 사용자 요청 전 금지.**
+
 ## Workflow
 
 ```
@@ -19,8 +23,8 @@ Progress:
 - [ ] 1. view 컬럼 목록 확보 (초안 파일 또는 metadata_get)
 - [ ] 2. cube: dimensions + facts (column XOR expression)
 - [ ] 3. metric: expression · aggregation · group_by · filter
-- [ ] 4. segment: 비어 있지 않은 boolean filter
-- [ ] 5. 이름 충돌 검사 후 semantic-register
+- [ ] 4. segment: 비어 있지 않은 boolean filter (선택)
+- [ ] 5. 이름 충돌 검사; 등록은 요청 시에만 semantic-register
 ```
 
 ### 1. Bound view

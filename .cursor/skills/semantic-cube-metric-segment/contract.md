@@ -8,6 +8,10 @@
 
 참조 방향: `table → view → cube → metric|segment`.
 
+## 이름 우선권
+
+자연스러운 `name`은 **cube · dimension · fact · metric · segment** 우선(검색 대상: 이름·설명, dim/fact는 type 추가). 중복 시 table · view · view 컬럼이 접미사를 받아 양보한다(물리 경로·물리 컬럼명은 유지). dim/fact가 가리키는 view 컬럼과 멤버명이 같으면 OK.
+
 ## 식·역할 공통
 
 - 필터·metric·segment·dimension/fact `expression`은 코딩 에이전트가 작성한 **신뢰된 SQL 조각**. 새 DSL 없음.
@@ -31,7 +35,7 @@
 
 **fact**
 
-- `amount` / `fx` boolean
+- `type`: `amount` | `fx` | `quantity` (취급 방식 — dim `type`과 같은 축)
 - `column` XOR `expression`
 - `encryption`, `role`
 

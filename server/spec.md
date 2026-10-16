@@ -126,8 +126,7 @@ CREATE TABLE meta_cube_dimensions (
 CREATE TABLE meta_cube_facts (
     cube_name TEXT REFERENCES meta_cubes(name),
     name TEXT NOT NULL,
-    amount BOOLEAN NOT NULL,
-    fx BOOLEAN NOT NULL,
+    type TEXT NOT NULL CHECK (type IN ('amount', 'fx', 'quantity')),
     column_ref TEXT,
     expression TEXT,
     encryption BOOLEAN NOT NULL,

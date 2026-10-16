@@ -104,73 +104,55 @@ struct IndexRow {
     text: String,
 }
 
+fn name_desc_text(name: &str, doc: &Value) -> String {
+    match doc.get("description").and_then(|v| v.as_str()) {
+        Some(d) if !d.is_empty() => format!("{name} {d}"),
+        _ => name.to_string(),
+    }
+}
+
+/// D12: cube/dim/fact/metric/segment only — name (+ description); dim/fact add type.
 fn extract_index_rows(doc: &Value) -> Vec<IndexRow> {
     let kind = doc.get("kind").and_then(|v| v.as_str()).unwrap_or("");
     let name = doc.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let mut rows = Vec::new();
-    if let Some(desc) = doc.get("description").and_then(|v| v.as_str()) {
-        if !desc.is_empty() {
+    match kind {
+        "cube" => {
             rows.push(IndexRow {
                 doc_kind: kind.into(),
                 doc_name: name.into(),
                 field_name: name.into(),
                 field_role: "document".into(),
-                text: format!("{kind} {name} {desc}"),
+                text: name_desc_text(name, doc),
             });
-        }
-    }
-    match kind {
-        "table" => {
-            if let Some(cols) = doc.get("columns").and_then(|v| v.as_array()) {
-                for c in cols {
-                    let cname = c.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                    let ctype = c.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                    let mut text = format!("table {name} column {cname} {ctype}");
-                    if c.get("as_code").and_then(|v| v.as_bool()) == Some(true) {
-                        text.push_str(" as_code");
-                    }
-                    rows.push(IndexRow {
-                        doc_kind: kind.into(),
-                        doc_name: name.into(),
-                        field_name: cname.into(),
-                        field_role: "column".into(),
-                        text,
-                    });
-                }
-            }
-        }
-        "cube" => {
             for (role, key) in [("dimension", "dimensions"), ("fact", "facts")] {
                 if let Some(items) = doc.get(key).and_then(|v| v.as_array()) {
                     for item in items {
                         let fname = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                        let dtype = item
-                            .get("type")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or(role);
+                        let dtype = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        let text = if dtype.is_empty() {
+                            fname.to_string()
+                        } else {
+                            format!("{fname} {dtype}")
+                        };
                         rows.push(IndexRow {
                             doc_kind: kind.into(),
                             doc_name: name.into(),
                             field_name: fname.into(),
                             field_role: role.into(),
-                            text: format!("cube {name} {role} {fname} {dtype}"),
+                            text,
                         });
                     }
                 }
             }
         }
         "metric" | "segment" => {
-            let expr = doc
-                .get("expression")
-                .or_else(|| doc.get("filter").and_then(|f| f.get("expression")))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
             rows.push(IndexRow {
                 doc_kind: kind.into(),
                 doc_name: name.into(),
                 field_name: name.into(),
                 field_role: kind.into(),
-                text: format!("{kind} {name} {expr}"),
+                text: name_desc_text(name, doc),
             });
         }
         _ => {}
@@ -406,21 +388,41 @@ mod tests {
     use std::sync::Arc;
 
     #[tokio::test]
-    async fn keyword_and_hybrid_find_column() {
-        let embedder = Arc::new(HashEmbedder::new(16));
-        let store = SemanticStore::open(":memory:")
-            .await
-            .unwrap()
-            .with_embedder(embedder.clone());
+    async fn table_columns_are_not_indexed() {
+        let store = SemanticStore::open(":memory:").await.unwrap();
         let customer: Value =
             serde_json::from_str(include_str!("../../semantic/examples/tables/customer.json"))
                 .unwrap();
         store.create(customer).await.unwrap();
         let hits = store.search_columns("region", "keyword", 10).await.unwrap();
+        assert!(hits.is_empty(), "hits={hits:?}");
+    }
+
+    #[tokio::test]
+    async fn keyword_and_hybrid_find_dimension() {
+        let embedder = Arc::new(HashEmbedder::new(16));
+        let store = SemanticStore::open(":memory:")
+            .await
+            .unwrap()
+            .with_embedder(embedder.clone());
+        for path in [
+            include_str!("../../semantic/examples/tables/customer.json"),
+            include_str!("../../semantic/examples/tables/orders.json"),
+            include_str!("../../semantic/examples/views/orders_customer.json"),
+            include_str!("../../semantic/examples/cubes/sales.json"),
+        ] {
+            store
+                .create(serde_json::from_str(path).unwrap())
+                .await
+                .unwrap();
+        }
+        let hits = store.search_columns("region", "keyword", 10).await.unwrap();
         assert!(
-            hits.iter().any(|h| h.field_name == "region_code"),
+            hits.iter()
+                .any(|h| h.field_name == "region_code" && h.field_role == "dimension"),
             "hits={hits:?}"
         );
+        assert!(hits.iter().any(|h| h.text.contains("code")));
         let hybrid = store.search_columns("region", "hybrid", 10).await.unwrap();
         assert!(!hybrid.is_empty());
     }
@@ -428,16 +430,55 @@ mod tests {
     #[tokio::test]
     async fn without_embedder_hybrid_falls_back_to_keyword() {
         let store = SemanticStore::open(":memory:").await.unwrap();
-        let customer: Value =
-            serde_json::from_str(include_str!("../../semantic/examples/tables/customer.json"))
+        for path in [
+            include_str!("../../semantic/examples/tables/customer.json"),
+            include_str!("../../semantic/examples/tables/orders.json"),
+            include_str!("../../semantic/examples/views/orders_customer.json"),
+            include_str!("../../semantic/examples/cubes/sales.json"),
+        ] {
+            store
+                .create(serde_json::from_str(path).unwrap())
+                .await
                 .unwrap();
-        store.create(customer).await.unwrap();
+        }
         let hits = store.search_columns("region", "hybrid", 10).await.unwrap();
         assert!(
             hits.iter().any(|h| h.field_name == "region_code"),
             "hits={hits:?}"
         );
         assert!(hits.iter().all(|h| h.mode == "keyword"));
+    }
+
+    #[test]
+    fn extract_skips_expression_and_table() {
+        let table: Value =
+            serde_json::from_str(include_str!("../../semantic/examples/tables/customer.json"))
+                .unwrap();
+        assert!(extract_index_rows(&table).is_empty());
+
+        let metric: Value =
+            serde_json::from_str(include_str!("../../semantic/examples/metrics/revenue.json"))
+                .unwrap();
+        let rows = extract_index_rows(&metric);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].field_role, "metric");
+        assert_eq!(rows[0].text, "revenue");
+        assert!(!rows[0].text.contains("sum"));
+
+        let cube: Value =
+            serde_json::from_str(include_str!("../../semantic/examples/cubes/sales.json")).unwrap();
+        let rows = extract_index_rows(&cube);
+        assert!(rows.iter().any(|r| r.field_role == "document" && r.text.contains("매출")));
+        let dim = rows
+            .iter()
+            .find(|r| r.field_name == "region_code")
+            .expect("dim");
+        assert_eq!(dim.text, "region_code code");
+        let fact = rows
+            .iter()
+            .find(|r| r.field_name == "sale_amount")
+            .expect("fact");
+        assert_eq!(fact.text, "sale_amount amount");
     }
 
     #[test]

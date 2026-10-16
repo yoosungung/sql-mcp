@@ -82,8 +82,7 @@ CREATE TABLE IF NOT EXISTS meta_cube_dimensions (
 CREATE TABLE IF NOT EXISTS meta_cube_facts (
   cube_name TEXT NOT NULL REFERENCES meta_cubes(name) ON DELETE CASCADE,
   name TEXT NOT NULL,
-  amount INTEGER NOT NULL,
-  fx INTEGER NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('amount', 'fx', 'quantity')),
   column_ref TEXT,
   expression TEXT,
   encryption INTEGER NOT NULL,
@@ -112,6 +111,7 @@ CREATE TABLE IF NOT EXISTS meta_segments (
 ) STRICT;
 
 -- 5. 검색 투영 (FTS5 keyword/bm25 + vector embedding). 이중 FTS 없음.
+-- D12: 실제 적재는 cube/dim/fact/metric/segment(이름·설명·dim type·fact amount/fx)만. column 역할은 레거시 CHECK용.
 CREATE TABLE IF NOT EXISTS column_index (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   doc_kind TEXT NOT NULL CHECK (

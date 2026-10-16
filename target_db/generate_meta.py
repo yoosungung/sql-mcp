@@ -1,13 +1,38 @@
 #!/usr/bin/env python3
-"""target_db/{db}/*.sqlite → meta/{table|view}.json (document.schema 골격)."""
+"""target_db/{db}/*.sqlite → meta/{name}.json (table|view|cube|metric 골격).
+
+물리 카탈로그는 sqlite에서 직접 읽고, MCP는 쓰지 않는다.
+cube/metric은 view당 휴리스틱 초안(코딩 에이전트가 다듬을 수 있음).
+"""
 
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+
+NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+AMOUNT_HINT = re.compile(
+    r"(amount|balance|price|cost|salary|revenue|sum|total)",
+    re.I,
+)
+FX_HINT = re.compile(r"(^|_)(fx|rate|exchange)(_|$)|fx_rate|exchange_rate", re.I)
+QTY_HINT = re.compile(
+    r"(qty|quantity|count|score|points?|wins?|loss|num|number|volume)",
+    re.I,
+)
+CODE_HINT = re.compile(
+    r"(^|_)(code|status|type|freq|gender|class|level|flag|align)(_|$)",
+    re.I,
+)
+DATE_HINT = re.compile(r"(date|time|year|month|day|dob|birth)", re.I)
+ID_HINT = re.compile(r"(^|_)(id|key)(_|$)", re.I)
+NUMERIC_TYPES = re.compile(
+    r"^(INT|INTEGER|REAL|FLOAT|DOUBLE|NUMERIC|DECIMAL|NUMBER)", re.I
+)
 
 
 def quote_ident(name: str) -> str:
@@ -21,6 +46,322 @@ def resolve_table_name(tables: dict[str, dict], ref: str) -> str | None:
     return lower.get(ref.lower())
 
 
+def is_ident(name: str) -> bool:
+    return bool(NAME_RE.match(name))
+
+
+def mark_as_code(col_name: str, col_type: str) -> bool:
+    if CODE_HINT.search(col_name):
+        return True
+    if col_type and re.search(r"CHAR|TEXT|CLOB", col_type, re.I) and CODE_HINT.search(
+        col_name
+    ):
+        return True
+    return False
+
+
+def physical_type(tables: dict[str, dict], source: str, column: str) -> str:
+    t = tables.get(source)
+    if not t:
+        return "NULL"
+    for c in t["columns"]:
+        if c["name"] == column:
+            return c.get("type") or "NULL"
+    return "NULL"
+
+
+def classify_view_column(
+    view_col: str, phys_type: str
+) -> tuple[str, dict] | None:
+    """Return ('dimension'|'fact', member dict) or None if skipped."""
+    if not is_ident(view_col):
+        return None
+    typ = phys_type or ""
+    lower = view_col.lower()
+    if DATE_HINT.search(lower) and not NUMERIC_TYPES.match(typ):
+        dtype = "datetime" if "time" in lower else "date"
+        return (
+            "dimension",
+            {
+                "name": view_col,
+                "type": dtype,
+                "column": view_col,
+                "encryption": False,
+                "role": "all",
+            },
+        )
+    if NUMERIC_TYPES.match(typ) and not ID_HINT.search(lower):
+        if FX_HINT.search(lower) and not AMOUNT_HINT.search(lower):
+            ftype = "fx"
+        elif AMOUNT_HINT.search(lower):
+            ftype = "amount"
+        elif QTY_HINT.search(lower):
+            ftype = "quantity"
+        else:
+            ftype = "quantity"
+        return (
+            "fact",
+            {
+                "name": view_col,
+                "type": ftype,
+                "column": view_col,
+                "encryption": False,
+                "role": "all",
+            },
+        )
+    # ids / text / other → dimension
+    dim_type = "code" if CODE_HINT.search(lower) or mark_as_code(view_col, typ) else "string"
+    return (
+        "dimension",
+        {
+            "name": view_col,
+            "type": dim_type,
+            "column": view_col,
+            "encryption": False,
+            "role": "all",
+        },
+    )
+
+
+def alloc_name(base: str, taken: set[str], *suffixes: str) -> str:
+    """Pick base if free+ident, else base_suffix, else base_suffixN."""
+    if is_ident(base) and base not in taken:
+        return base
+    for suf in suffixes:
+        cand = f"{base}_{suf}" if suf else base
+        if is_ident(cand) and cand not in taken:
+            return cand
+        n = 2
+        while True:
+            cand_n = f"{cand}_{n}"
+            if is_ident(cand_n) and cand_n not in taken:
+                return cand_n
+            n += 1
+    # unreachable if suffixes non-empty
+    raise ValueError(f"cannot alloc name from {base!r}")
+
+
+def priority_names(
+    cubes: list[dict], metrics: list[dict], segments: list[dict] | None = None
+) -> set[str]:
+    out: set[str] = set()
+    for c in cubes:
+        out.add(c["name"])
+        for d in c.get("dimensions", []):
+            out.add(d["name"])
+        for f in c.get("facts", []):
+            out.add(f["name"])
+    for m in metrics:
+        out.add(m["name"])
+    for s in segments or []:
+        out.add(s["name"])
+    return out
+
+
+def rename_table(
+    tables: dict[str, dict], views: list[dict], old: str, new: str
+) -> None:
+    doc = tables.pop(old)
+    doc["name"] = new
+    tables[new] = doc
+    for t in tables.values():
+        for fk in t.get("fk", []):
+            if fk["references"]["table"] == old:
+                fk["references"]["table"] = new
+    for v in views:
+        for src in v.get("sources", []):
+            if src.get("name") == old:
+                src["name"] = new
+        for j in v.get("joins", []):
+            if j.get("left") == old:
+                j["left"] = new
+            if j.get("right") == old:
+                j["right"] = new
+        for col in v.get("columns", []):
+            for m in col.get("mappings", []):
+                if m.get("source") == old:
+                    m["source"] = new
+
+
+def rename_view(views: list[dict], cubes: list[dict], old: str, new: str) -> None:
+    for v in views:
+        if v["name"] == old:
+            v["name"] = new
+    for c in cubes:
+        if c.get("view") == old:
+            c["view"] = new
+
+
+def rename_view_column(
+    view: dict,
+    cubes: list[dict],
+    metrics: list[dict],
+    old: str,
+    new: str,
+) -> None:
+    for col in view["columns"]:
+        if col["name"] == old:
+            col["name"] = new
+    vname = view["name"]
+    cube_names = {c["name"] for c in cubes if c.get("view") == vname}
+    for c in cubes:
+        if c.get("view") != vname:
+            continue
+        for member in c.get("dimensions", []) + c.get("facts", []):
+            if member.get("column") == old:
+                member["column"] = new
+            expr = member.get("expression")
+            if isinstance(expr, str):
+                member["expression"] = re.sub(
+                    rf"\b{re.escape(old)}\b", new, expr
+                )
+    for m in metrics:
+        if m.get("cube") not in cube_names:
+            continue
+        m["expression"] = re.sub(
+            rf"\b{re.escape(old)}\b", new, m.get("expression", "")
+        )
+        m["group_by"] = [new if g == old else g for g in m.get("group_by") or []]
+
+
+def apply_name_priority(
+    tables: dict[str, dict],
+    views: list[dict],
+    cubes: list[dict],
+    metrics: list[dict],
+) -> None:
+    """cube/dim/fact/metric/segment keep natural names; table/view/view-col yield."""
+    reserved = priority_names(cubes, metrics)
+    taken = set(reserved)
+
+    # tables yield
+    for old in list(tables):
+        if old not in reserved:
+            taken.add(old)
+            continue
+        new = alloc_name(old, taken, "table")
+        rename_table(tables, views, old, new)
+        taken.add(new)
+
+    # views yield
+    for v in list(views):
+        old = v["name"]
+        if old not in reserved:
+            taken.add(old)
+            continue
+        new = alloc_name(old, taken, "view")
+        rename_view(views, cubes, old, new)
+        taken.add(new)
+
+    # view columns yield unless they are the bound column for a priority member
+    # with the same natural name on a cube over this view
+    for v in views:
+        bound_same = set()
+        for c in cubes:
+            if c.get("view") != v["name"]:
+                continue
+            for member in c.get("dimensions", []) + c.get("facts", []):
+                col = member.get("column")
+                if col and col == member.get("name"):
+                    bound_same.add(col)
+        for col in list(v["columns"]):
+            old = col["name"]
+            if old not in reserved or old in bound_same:
+                taken.add(old)
+                continue
+            new = alloc_name(old, taken, "col")
+            rename_view_column(v, cubes, metrics, old, new)
+            taken.add(new)
+
+
+def cube_and_metric_from_view(
+    view: dict, tables: dict[str, dict], priority_taken: set[str]
+) -> tuple[dict, dict | None]:
+    """Choose natural cube/metric/member names; do not yield to table/view names."""
+    dimensions: list[dict] = []
+    facts: list[dict] = []
+    for col in view["columns"]:
+        vname = col["name"]
+        mapping = col["mappings"][0]
+        ptype = physical_type(tables, mapping["source"], mapping["column"])
+        classified = classify_view_column(vname, ptype)
+        if classified is None:
+            continue
+        kind, member = classified
+        if kind == "dimension":
+            dimensions.append(member)
+        else:
+            facts.append(member)
+
+    if not dimensions and facts:
+        f0 = facts[0]
+        dimensions.append(
+            {
+                "name": f0["name"],
+                "type": "string",
+                "column": f0["column"],
+                "encryption": False,
+                "role": "all",
+            }
+        )
+        facts = facts[1:]
+
+    if not dimensions:
+        dimensions.append(
+            {
+                "name": "row_key",
+                "type": "string",
+                "expression": "1",
+                "encryption": False,
+                "role": "all",
+            }
+        )
+
+    preferred = view["name"]
+    if preferred.endswith("_all"):
+        preferred = preferred[: -len("_all")] or view["name"]
+    cube_name = alloc_name(preferred, priority_taken, "cube")
+    priority_taken.add(cube_name)
+    for m in dimensions + facts:
+        priority_taken.add(m["name"])
+
+    cube = {
+        "kind": "cube",
+        "name": cube_name,
+        "view": view["name"],
+        "description": f"Auto cube over view {view['name']}.",
+        "dimensions": dimensions,
+        "facts": facts,
+    }
+
+    member_names = {m["name"] for m in dimensions} | {m["name"] for m in facts}
+    metric: dict | None = None
+    metric_name = alloc_name(
+        f"{cube_name}_count", priority_taken | member_names, "metric"
+    )
+    group_cols = [d["column"] for d in dimensions[:2] if d.get("column")]
+    if metric_name not in member_names and group_cols:
+        amount_facts = [
+            f for f in facts if f.get("type") == "amount" and f.get("column")
+        ]
+        if amount_facts:
+            expr = f"sum({amount_facts[0]['column']})"
+        else:
+            expr = f"count({group_cols[0]})"
+        metric = {
+            "kind": "metric",
+            "name": metric_name,
+            "cube": cube_name,
+            "expression": expr,
+            "aggregation": "group",
+            "group_by": group_cols,
+            "filter": None,
+            "role": "all",
+        }
+        priority_taken.add(metric_name)
+    return cube, metric
+
+
 def extract_table(
     con: sqlite3.Connection, db_id: str, table: str, table_pks: dict[str, list[str]]
 ) -> dict:
@@ -29,13 +370,14 @@ def extract_table(
     for _cid, name, typ, notnull, _dflt, pk_ord in con.execute(
         f"PRAGMA table_info({quote_ident(table)})"
     ):
-        columns.append(
-            {
-                "name": name,
-                "type": typ if typ else "NULL",
-                "nullable": notnull == 0,
-            }
-        )
+        col: dict = {
+            "name": name,
+            "type": typ if typ else "NULL",
+            "nullable": notnull == 0,
+        }
+        if mark_as_code(name, typ or ""):
+            col["as_code"] = True
+        columns.append(col)
         if pk_ord > 0:
             pk.append((pk_ord, name))
     pk_names = [name for _, name in sorted(pk)]
@@ -347,9 +689,14 @@ def load_pks(con: sqlite3.Connection, table_names: list[str]) -> dict[str, list[
     return out
 
 
+def write_json(path: Path, doc: dict) -> None:
+    path.write_text(
+        json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+
 def main() -> None:
-    table_n = 0
-    view_n = 0
+    table_n = view_n = cube_n = metric_n = 0
     for sqlite_path in sorted(ROOT.glob("*/*.sqlite")):
         db_id = sqlite_path.parent.name
         meta_dir = sqlite_path.parent / "meta"
@@ -374,7 +721,6 @@ def main() -> None:
         tables: dict[str, dict] = {}
         for table in table_names:
             doc = extract_table(con, db_id, table, table_pks)
-            # Normalize FK ref table to canonical casing.
             for fk in doc["fk"]:
                 resolved = resolve_table_name(
                     {n: {} for n in table_names}, fk["references"]["table"]
@@ -382,26 +728,41 @@ def main() -> None:
                 if resolved:
                     fk["references"]["table"] = resolved
             tables[table] = doc
-            (meta_dir / f"{table}.json").write_text(
-                json.dumps(doc, indent=2, ensure_ascii=False) + "\n",
-                encoding="utf-8",
-            )
-            table_n += 1
 
         views = views_from_tables(tables, db_id)
+        priority_taken: set[str] = set()
+        cubes: list[dict] = []
+        metrics: list[dict] = []
+        for view in views:
+            cube, metric = cube_and_metric_from_view(view, tables, priority_taken)
+            cubes.append(cube)
+            if metric:
+                metrics.append(metric)
+
+        apply_name_priority(tables, views, cubes, metrics)
+
+        for doc in tables.values():
+            write_json(meta_dir / f"{doc['name']}.json", doc)
+            table_n += 1
         for doc in views:
-            (meta_dir / f"{doc['name']}.json").write_text(
-                json.dumps(doc, indent=2, ensure_ascii=False) + "\n",
-                encoding="utf-8",
-            )
+            write_json(meta_dir / f"{doc['name']}.json", doc)
             view_n += 1
+        for doc in cubes:
+            write_json(meta_dir / f"{doc['name']}.json", doc)
+            cube_n += 1
+        for doc in metrics:
+            write_json(meta_dir / f"{doc['name']}.json", doc)
+            metric_n += 1
 
         con.close()
         print(
-            f"{db_id}: {len(tables)} tables, {len(views)} views "
-            f"-> {meta_dir.relative_to(ROOT.parent)}"
+            f"{db_id}: {len(tables)} tables, {len(views)} views, "
+            f"{len(cubes)} cubes -> {meta_dir.relative_to(ROOT.parent)}"
         )
-    print(f"wrote {table_n} tables, {view_n} views")
+    print(
+        f"wrote {table_n} tables, {view_n} views, "
+        f"{cube_n} cubes, {metric_n} metrics"
+    )
 
 
 if __name__ == "__main__":

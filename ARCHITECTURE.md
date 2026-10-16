@@ -99,7 +99,7 @@ JSON에 DSN/password 금지 — 타깃 연결 비밀은 설정 쪽 id 참조만.
 
 - 목표 모드: `keyword`(BM25) · `vector` · `hybrid`(RRF). 기본 `hybrid` 권장.
 - JSON 교환·검증 정본은 `semantic/schema/document.schema.json`. 저장은 타입별 `meta_*`. 검색 인덱스(`column_index` / FTS5)는 등록 JSON의 **투영**이며 규칙은 [semantic/DESIGN.md](semantic/DESIGN.md)(D12). 파이프라인 상세는 [server/spec.md](server/spec.md).
-- **D14:** 임베딩은 외부 OpenAI-호환 HTTP API(`SQL_MCP_EMBEDDING_URL` + `API_KEY`)로만 생성하고 libSQL에 저장한다. API가 없으면 embedder를 두지 않으며, `vector`/`hybrid` 요청은 **keyword(BM25)로 폴백**한다. 오프라인 검색 품질은 BM25 강화(한글 토큰 유지, 문자 bigram, `as_code` 등)로 올린다. 로컬 ONNX·운영용 HashEmbedder는 쓰지 않는다.
+- **D14:** 임베딩은 외부 OpenAI-호환 HTTP API(`SQL_MCP_EMBEDDING_URL` + `API_KEY`)로만 생성하고 libSQL에 저장한다. API가 없으면 embedder를 두지 않으며, `vector`/`hybrid` 요청은 **keyword(BM25)로 폴백**한다. 오프라인 검색 품질은 BM25 강화(한글 토큰 유지, 문자 bigram)로 올린다. 로컬 ONNX·운영용 HashEmbedder는 쓰지 않는다. 투영 범위는 [semantic/DESIGN.md](semantic/DESIGN.md) D12.
 
 ### 3.6 Resources
 
@@ -128,6 +128,8 @@ semantic/examples/
 
 참조는 `table → view → cube → metric|segment` 방향이다. cube는 view 하나에 연결된다. metric과 segment는 cube 하나에 연결된다. metric 이름은 같은 cube의 dimension, fact 이름과 겹칠 수 없다.
 
+**이름 우선권.** 자연스러운 짧은 `name`은 **cube · dimension · fact · metric · segment**가 우선한다(이들이 `search_columns` 검색 대상 — D12). 이들과 문자열이 겹치면 **table · view · view 컬럼** 쪽 논리 이름에 접미사(`_table`, `_view`, `_col` 등)를 붙여 피한다. 물리 `db`/`schema`/`table` 및 table `columns[].name`(물리 컬럼)은 바꾸지 않는다. dimension/fact가 `column`으로 가리키는 view 컬럼과 멤버 `name`이 같은 경우는 동일 식별 공유로 허용한다.
+
 필드 타입의 정본은 `semantic/schema/document.schema.json` 하나다. `$id`는 `https://sql-mcp.local/semantic/document.schema.json`이며 HTTP 다운로드 주소가 아니다(MCP Resource URI와 같다 — §3.6).
 
 | 문서 | 필수 필드 |
@@ -142,7 +144,7 @@ table `role`의 기본값은 `all`이다. `columns`는 `name`, `type`, `nullable
 
 view `combine`은 `join`, `union`, `minus`, `select` 중 하나다. `combine`이 없으면 view가 아니다. `join`, `union`, `minus`의 source는 테이블이고, `select`의 source는 view다. union과 minus는 첫 source가 기준이고 각 view 컬럼이 모든 source를 가리킨다. join의 `type`은 `inner`, `left`, `right`, `full`이다.
 
-dimension `type`은 `code`, `date`, `time`, `datetime`, `string` 중 하나다. fact는 `amount`, `fx`를 가진다. 둘 다 `encryption`(D17 마스킹)을 가진다. `role`의 기본값은 `all`이다. 값은 view 컬럼 `column`이거나, view 컬럼 이름을 쓰는 스칼라 `expression`이다. 둘 중 하나만 둔다.
+dimension `type`은 `code`, `date`, `time`, `datetime`, `string` 중 하나다(취급 방식). fact `type`은 `amount`, `fx`, `quantity` 중 하나다(금액·환율·일반 수량). 둘 다 `encryption`(D17 마스킹)을 가진다. `role`의 기본값은 `all`이다. 값은 view 컬럼 `column`이거나, view 컬럼 이름을 쓰는 스칼라 `expression`이다. 둘 중 하나만 둔다.
 
 metric `expression`은 연결된 cube의 view 컬럼 연산이다. `aggregation`은 `group`, `rollup`, `cube`, `grouping_sets` 중 하나이고, 질의의 그룹 기준을 그 방식으로 묶는다. `group`이면 `group_by`에 GROUP BY로 쓰는 view 컬럼을 둔다. metric과 segment `role`의 기본값은 `all`이다. segment `filter`는 비울 수 없다.
 

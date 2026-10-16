@@ -46,6 +46,7 @@ impl SemanticStore {
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
         migrate_drop_member_default_filter(&conn).await?;
+        migrate_fact_type_from_amount_fx(&conn).await?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             embedder: None,
@@ -223,6 +224,37 @@ async fn migrate_drop_member_default_filter(conn: &Connection) -> Result<(), App
     Ok(())
 }
 
+/// Older catalogs used amount/fx booleans; rebuild to fact `type` enum (idempotent).
+async fn migrate_fact_type_from_amount_fx(conn: &Connection) -> Result<(), AppError> {
+    if !table_has_column(conn, "meta_cube_facts", "amount").await? {
+        return Ok(());
+    }
+    conn.execute_batch(
+        r#"
+        CREATE TABLE meta_cube_facts_new (
+          cube_name TEXT NOT NULL REFERENCES meta_cubes(name) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          type TEXT NOT NULL CHECK (type IN ('amount', 'fx', 'quantity')),
+          column_ref TEXT,
+          expression TEXT,
+          encryption INTEGER NOT NULL,
+          role_json TEXT NOT NULL DEFAULT '"all"',
+          PRIMARY KEY (cube_name, name)
+        ) STRICT;
+        INSERT INTO meta_cube_facts_new (cube_name, name, type, column_ref, expression, encryption, role_json)
+        SELECT cube_name, name,
+               CASE WHEN fx != 0 THEN 'fx' WHEN amount != 0 THEN 'amount' ELSE 'quantity' END,
+               column_ref, expression, encryption, role_json
+        FROM meta_cube_facts;
+        DROP TABLE meta_cube_facts;
+        ALTER TABLE meta_cube_facts_new RENAME TO meta_cube_facts;
+        "#,
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(())
+}
+
 async fn table_has_column(
     conn: &Connection,
     table: &str,
@@ -319,12 +351,19 @@ mod tests {
     #[tokio::test]
     async fn search_after_create() {
         let store = mem().await;
-        let customer: Value =
-            serde_json::from_str(include_str!("../../../semantic/examples/tables/customer.json"))
+        for path in [
+            include_str!("../../../semantic/examples/tables/customer.json"),
+            include_str!("../../../semantic/examples/tables/orders.json"),
+            include_str!("../../../semantic/examples/views/orders_customer.json"),
+            include_str!("../../../semantic/examples/cubes/sales.json"),
+        ] {
+            store
+                .create(serde_json::from_str(path).unwrap())
+                .await
                 .unwrap();
-        store.create(customer).await.unwrap();
+        }
         let hits = store.search_columns("region", "keyword", 10).await.unwrap();
-        assert!(hits.iter().any(|h| h.field_name == "region_code"));
+        assert!(hits.iter().any(|h| h.field_name == "region_code" && h.field_role == "dimension"));
     }
 
     #[tokio::test]

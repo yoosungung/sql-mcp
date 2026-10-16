@@ -43,25 +43,22 @@
   "facts": [
     {
       "name": "sale_amount",
+      "type": "amount",
       "column": "sale_amount",
-      "amount": true,
-      "fx": false,
       "encryption": false,
       "role": ["finance"]
     },
     {
       "name": "fx_rate",
+      "type": "fx",
       "column": "fx_rate",
-      "amount": false,
-      "fx": true,
       "encryption": false,
       "role": ["finance"]
     },
     {
       "name": "krw_amount",
+      "type": "amount",
       "expression": "sale_amount * fx_rate",
-      "amount": true,
-      "fx": false,
       "encryption": false,
       "role": ["finance"]
     }

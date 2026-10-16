@@ -508,16 +508,14 @@ async fn insert_cube_member(
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
     } else {
-        let amount = item.get("amount").and_then(|v| v.as_bool()).unwrap_or(false);
-        let fx = item.get("fx").and_then(|v| v.as_bool()).unwrap_or(false);
+        let ftype = str_field(item, "type")?;
         conn.execute(
-            "INSERT INTO meta_cube_facts (cube_name, name, amount, fx, column_ref, expression, encryption, role_json)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+            "INSERT INTO meta_cube_facts (cube_name, name, type, column_ref, expression, encryption, role_json)
+             VALUES (?1,?2,?3,?4,?5,?6,?7)",
             params![
                 cube,
                 name,
-                amount as i32,
-                fx as i32,
+                ftype,
                 column_ref,
                 expression,
                 encryption as i32,
@@ -567,7 +565,7 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut facts = Vec::new();
     let mut frows = conn
         .query(
-            "SELECT name, amount, fx, column_ref, expression, encryption, role_json
+            "SELECT name, type, column_ref, expression, encryption, role_json
              FROM meta_cube_facts WHERE cube_name = ?1 ORDER BY name",
             params![name],
         )
@@ -617,16 +615,14 @@ fn load_member_dim(r: &libsql::Row) -> Result<Value, AppError> {
 
 fn load_member_fact(r: &libsql::Row) -> Result<Value, AppError> {
     let name: String = r.get(0).map_err(|e| AppError::Internal(e.into()))?;
-    let amount: i32 = r.get(1).map_err(|e| AppError::Internal(e.into()))?;
-    let fx: i32 = r.get(2).map_err(|e| AppError::Internal(e.into()))?;
-    let column_ref: Option<String> = r.get(3).ok();
-    let expression: Option<String> = r.get(4).ok();
-    let encryption: i32 = r.get(5).map_err(|e| AppError::Internal(e.into()))?;
-    let role_s: String = r.get(6).map_err(|e| AppError::Internal(e.into()))?;
+    let ftype: String = r.get(1).map_err(|e| AppError::Internal(e.into()))?;
+    let column_ref: Option<String> = r.get(2).ok();
+    let expression: Option<String> = r.get(3).ok();
+    let encryption: i32 = r.get(4).map_err(|e| AppError::Internal(e.into()))?;
+    let role_s: String = r.get(5).map_err(|e| AppError::Internal(e.into()))?;
     let mut out = json!({
         "name": name,
-        "amount": amount != 0,
-        "fx": fx != 0,
+        "type": ftype,
         "encryption": encryption != 0,
         "role": serde_json::from_str::<Value>(&role_s).unwrap_or(json!("all")),
     });

@@ -10,7 +10,7 @@ description: >-
 
 # Semantic register · validate
 
-초안 작성은 `semantic-table-view` / `semantic-cube-metric`. 이 스킬은 **검증 + CRUD**만.
+초안 작성은 `semantic-table-view` / `semantic-cube-metric-segment`. 이 스킬은 **검증 + CRUD**만. 초안만 파일로 두는 단계에서는 호출하지 않는다.
 
 규칙: [contract.md](contract.md). Schema: [document.schema.json](document.schema.json).
 

@@ -13,15 +13,21 @@ description: >-
 
 규칙·필드: [contract.md](contract.md). 형태 예시: [examples/](examples/).
 
+## Output layout
+
+문서마다 `{outdir}/{name}.json` 한 파일(파일명 = `name`, `kind`는 JSON 안). 하위 `tables/` 폴더는 필수가 아니다. 사용자가 경로를 주면 그 `meta/`(또는 지정 디렉터리)에 쓴다.
+
+다수 테이블이면 카탈로그를 읽는 **로컬 스크립트**로 table/view 골격을 만들어도 된다. 결과는 [contract.md](contract.md)를 지켜야 하며, 에이전트가 샘플·`as_code`·필터를 검토한다. **사용자가 요청하기 전에는 `metadata_*`로 MCP 등록하지 않는다.**
+
 ## Workflow
 
 ```
 Progress:
 - [ ] 1. 타깃 DW를 MCP 밖에서 탐색 (카탈로그·컬럼·샘플)
 - [ ] 2. 이미 등록된 시맨틱 table/view 이름 확인 (선택, metadata_*)
-- [ ] 3. table JSON 초안
-- [ ] 4. view JSON 초안
-- [ ] 5. semantic-register로 검증·등록 (이 스킬에서 metadata_create 하지 않음)
+- [ ] 3. table JSON 초안 → {outdir}/{name}.json
+- [ ] 4. view JSON 초안 → {outdir}/{name}.json
+- [ ] 5. 등록은 사용자 요청 시에만 semantic-register
 ```
 
 ### 1. Explore target DW (not MCP)
@@ -54,4 +60,4 @@ Progress:
 ## Do not
 
 - 타깃 DW 탐색에 MCP `list_tables` / `describe_table` / `sample_column` / `execute_sql`에 의존하지 않는다.
-- cube / metric / segment는 `semantic-cube-metric`.
+- cube / metric / segment는 `semantic-cube-metric-segment`.
