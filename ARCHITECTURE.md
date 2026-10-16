@@ -6,12 +6,12 @@
 
 1. **임베디드 시맨틱 DB (libSQL).** 시맨틱 저장소는 **MCP 서버(`rmcp`/process) 안에 libSQL로 임베드**한다(별도 원격 시맨틱 서버 없음). 파일 경로 등은 기동 설정. (장차) BM25/벡터 인덱스는 이 DB에 둔다.
 2. **시맨틱 등록 문서.** 코딩 에이전트가 등록하는 JSON은 `table`, `view`, `cube`, `metric`, `segment`다. 문서 하나의 정본은 `semantic/schema/document.schema.json`이다. 코딩 에이전트는 그 스키마와 이 계약의 연결 규칙을 보고 검증한다. MCP `metadata_*`도 같은 스키마로 검증한다.
-3. **타깃 DB (복수).** 실제 DW/조회 대상은 **타깃 DB**라 부른다. **복수 등록**을 허용한다. `execute_sql`·샘플 등 데이터 조회는 타깃 DB로 간다.
+3. **타깃 DB (복수).** 실제 DW/조회 대상은 **타깃 DB**라 부른다. **복수 등록**을 허용한다. `execute_sql`·샘플 등 데이터 조회는 타깃 DB로 간다. `table` · `view` · `cube` 등록 문서에 MCP 연결 id인 **`target`**을 둔다(설정 `TargetConfig.id`와 동일). view·cube가 닿는 모든 leaf table의 `target`은 서로·문서와 **같아야** 한다. table의 `db`는 그 타깃 *안*의 물리 DB 이름이다. 같은 `target`인 cube끼리 semantic JOIN/UNION은 **후속**(현재는 단일 cube FROM; view 안 table join/union만).
 4. **언어.** MCP 서버는 **Rust** + [`rmcp`](https://crates.io/crates/rmcp) (MCP spec `2026-07-28`).
 5. **범위.** **MCP 서버만.** Frontend·Admin UI·Admin API·**세션형 Streamable HTTP**는 **취소(범위 밖)**. Transport는 **일반 HTTP**(배포·원격)와 **stdio**(로컬 자식 프로세스). 둘 다 동일 툴 표면.
 6. **타깃 SQL = 시맨틱 SELECT만.** `execute_sql` 입력은 **시맨틱 SQL**(cube FROM · metric/dimension/segment)이며, 서버가 6단계 파이프라인으로 물리 SELECT를 만든 뒤에만 타깃에 실행한다. **자유 물리 SELECT 경로는 없다.** 컴파일·실행 결과는 단일 SELECT(읽기 CTE 허용)만. INSERT/UPDATE/DELETE/DDL/다중 문장/쓰기 CTE 거부. 행 상한·타임아웃 강제. (문서상 `execute_semantic_sql`은 `execute_sql` 이명.)
 7. **메타데이터 CRUD (예외).** 임베디드 시맨틱 저장소에 한해 MCP 툴로 **CRUD**를 제공한다. 요청/응답 바디는 **JSON**. 타깃 DB 쓰기가 아니다.
-8. **MCP 제공 능력.** (1) 타깃·테이블 목록/상세 (2) 컬럼 검색(BM25/벡터/hybrid) (3) 컬럼 샘플(+code) (4) 타깃 SELECT SQL (5) **메타데이터 CRUD(JSON)** (6) **Resource:** 등록 문서 JSON Schema(`document.schema.json`) · **Agent Skills**(`skills/` 트리를 Resource로 제공). 그 외 툴·Resource는 기본 표면에 넣지 않는다. DW 에이전트에게는 메타 CRUD 도구를 주지 않는다. 이 에이전트에게 테이블은 cube이고 컬럼은 dimension, fact, metric이다.
+8. **MCP 제공 능력.** (1) 타깃 목록 · **cube** 목록/상세(`list_tables`/`describe_table`) (2) 컬럼 검색(BM25/벡터/hybrid) (3) 컬럼 샘플(+code) (4) 타깃 SELECT SQL (5) **메타데이터 CRUD(JSON)** (6) **Resource:** 등록 문서 JSON Schema(`document.schema.json`) · **Agent Skills**(`skills/` 트리를 Resource로 제공). 그 외 툴·Resource는 기본 표면에 넣지 않는다. DW 에이전트에게는 메타 CRUD 도구를 주지 않는다. 이 에이전트에게 테이블은 cube이고 컬럼은 dimension, fact, metric이다.
 9. **시크릿.** 로그·에러·툴 응답에 DSN/비밀번호를 실지 않는다. 타깃 자격 증명은 기동 설정으로만 주입(채팅으로 비밀번호 받지 않음). 메타 CRUD JSON에도 시크릿 필드를 넣지 않는다.
 10. **문서 우선 · TDD.**
 
@@ -35,7 +35,7 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 
 `metadata_create`와 `metadata_update`는 문서 하나의 JSON Schema 검증을 통과한 뒤에, 그 문서를 반영한 등록 집합 전체의 연결을 검증한다. `metadata_delete`는 그 문서를 뺀 집합의 연결을 검증한다. 검증이 실패하면 시맨틱 DB를 바꾸지 않는다. `metadata_get`과 `metadata_list`는 저장된 문서를 반환한다.
 
-연결은 `fk.references`, view `sources`와 `mappings`, cube `view`, dimension·fact의 `column`, metric·segment `cube`, metric `group_by`다. `expression`으로 만든 dimension·fact는 **저장 시** view 컬럼 연결 검사를 하지 않는다(식 식별자 검사는 D18 컴파일 단계). `aggregation`이 `group`이면 `group_by`의 각 이름이 연결된 view 컬럼에 있어야 한다. MCP 저장 계층은 타입별 libSQL `meta_*` 테이블이다(`semantic/libsql/catalog.sql`). `metadata_*` **입출력은 JSON**(`document.schema.json`)이며 저장 시 타입별 행으로 분해·조회 시 JSON으로 재조립한다. 검색 투영은 `column_index`(+embedding)와 FTS5(`column_index_fts`, 순위 `bm25`)다 — keyword는 FTS5이며 vector/hybrid(RRF)를 유지한다.
+연결은 `fk.references`, view `sources`와 `mappings`, cube `view`, dimension·fact의 `column`, metric·segment `cube`, metric `group_by`, 그리고 table/view/cube의 **`target` 일치**다. `expression`으로 만든 dimension·fact는 **저장 시** view 컬럼 연결 검사를 하지 않는다(식 식별자 검사는 D18 컴파일 단계). `aggregation`이 `group`이면 `group_by`의 각 이름이 연결된 view 컬럼에 있어야 한다. MCP 저장 계층은 타입별 libSQL `meta_*` 테이블이다(`semantic/libsql/catalog.sql`). `metadata_*` **입출력은 JSON**(`document.schema.json`)이며 저장 시 타입별 행으로 분해·조회 시 JSON으로 재조립한다. 검색 투영은 `column_index`(+embedding)와 FTS5(`column_index_fts`, 순위 `bm25`)다 — keyword는 FTS5이며 vector/hybrid(RRF)를 유지한다.
 
 ## 2. 컴포넌트
 
@@ -68,12 +68,12 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 
 | Tool | 능력 | 입력(요약) | 출력 | 규칙 |
 |------|------|------------|------|------|
-| `list_targets` | 타깃 DB 목록 | — | id·이름·엔진(시크릿 제외) | 메타에서 읽기 |
-| `list_tables` | 테이블 목록 | `target?`, `schema?` | 테이블 메타 | 타깃 또는 시맨틱 등록분 — DESIGN |
-| `describe_table` | 테이블 상세 | `target?`, `table`, `schema?` | 컬럼·키 요약 | |
+| `list_targets` | 타깃 DB 목록 | — | id·이름·엔진(시크릿 제외) | 설정에서 읽기 |
+| `list_tables` | **cube** 목록 | `target?` | cube 문서 목록 | 시맨틱 `kind=cube` (`target`이면 필터) |
+| `describe_table` | **cube** 상세 | `table`(cube name), `target?` | dimensions·facts·metrics·segments | `target`이면 cube.target 일치 |
 | `search_columns` | 컬럼 검색 | `query`, `target?`, `mode?`, `limit?` | 매칭 메타 | §3.2.2 |
-| `sample_column` | dim/fact 샘플 | `target`, `cube`, `member`, `limit?` | 샘플·`resolved`·`as_code` | §3.4 — **타깃**(시맨틱 해석) |
-| `execute_sql` | 시맨틱 SQL 컴파일·실행 | `target`, `sql`, `caller_role?`, `params?` | 행·메타·`sql`(물리) | **시맨틱 SELECT만** → 물리 SELECT |
+| `sample_column` | dim/fact 샘플 | `target`, `cube`, `member`, `limit?` | 샘플·`resolved`·`as_code` | §3.4 — **cube.target == target** |
+| `execute_sql` | 시맨틱 SQL 컴파일·실행 | `target`, `sql`, `caller_role?`, `params?` | 행·메타·`sql`(물리) | **시맨틱 SELECT만** · **cube.target == target** |
 
 ### 3.3 Tools — 메타데이터 CRUD (JSON)
 
@@ -136,9 +136,9 @@ semantic/examples/
 
 | 문서 | 필수 필드 |
 | --- | --- |
-| table | `kind`, `name`, `db`, `schema`, `table`, `columns`, `pk`, `fk`, `permission_filters`, `scope_filter`, `default_filter` |
-| view | `kind`, `name`, `combine`, `sources`, `columns`. join은 `joins`, select는 `prefer` |
-| cube | `kind`, `name`, `view`, `description`, `dimensions`, `facts` |
+| table | `kind`, `name`, `target`, `db`, `schema`, `table`, `columns`, `pk`, `fk`, `permission_filters`, `scope_filter`, `default_filter` |
+| view | `kind`, `name`, `target`, `combine`, `sources`, `columns`. join은 `joins`, select는 `prefer` |
+| cube | `kind`, `name`, `target`, `view`, `description`, `dimensions`, `facts` |
 | metric | `kind`, `name`, `cube`, `expression`, `aggregation`, `filter` |
 | segment | `kind`, `name`, `cube`, `filter` |
 

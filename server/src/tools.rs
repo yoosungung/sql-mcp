@@ -55,15 +55,16 @@ pub struct MetadataListArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListTablesArgs {
+    /// Optional MCP target id; when set, only cubes with that `target` are returned.
     pub target: Option<String>,
-    pub schema: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DescribeTableArgs {
-    pub target: Option<String>,
+    /// Cube name (DW agent "table").
     pub table: String,
-    pub schema: Option<String>,
+    /// Optional MCP target id; when set, must match cube.target.
+    pub target: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -183,67 +184,66 @@ impl SqlMcp {
         }
     }
 
-    #[tool(description = "List tables from a target catalog, or semantic table docs if target omitted")]
+    #[tool(description = "List semantic cubes (DW agent tables), optionally filtered by target")]
     async fn list_tables(
         &self,
         Parameters(args): Parameters<ListTablesArgs>,
     ) -> Result<CallToolResult, McpError> {
-        if let Some(target) = args.target.as_deref() {
-            let db = match self.targets.get(target) {
-                Ok(t) => t,
-                Err(e) => return tool_err(e),
-            };
-            let tables = match db.list_tables(args.schema.as_deref()).await {
-                Ok(t) => t,
-                Err(e) => return tool_err(e),
-            };
-            let items: Vec<Value> = tables
-                .into_iter()
-                .map(|t| json!({"schema": t.schema, "name": t.name}))
-                .collect();
-            return ok_json(json!({ "items": items }));
-        }
-        let docs = match self.store.list(Some("table")).await {
+        let docs = match self.store.list(Some("cube")).await {
             Ok(v) => v,
             Err(e) => return tool_err(e),
         };
-        ok_json(json!({ "items": docs }))
+        let items: Vec<Value> = match args.target.as_deref() {
+            Some(t) => docs
+                .into_iter()
+                .filter(|d| d.get("target").and_then(|v| v.as_str()) == Some(t))
+                .collect(),
+            None => docs,
+        };
+        ok_json(json!({ "items": items }))
     }
 
-    #[tool(description = "Describe a table from a target, or a semantic table document")]
+    #[tool(
+        description = "Describe a semantic cube (dimensions, facts) plus linked metrics and segments"
+    )]
     async fn describe_table(
         &self,
         Parameters(args): Parameters<DescribeTableArgs>,
     ) -> Result<CallToolResult, McpError> {
-        if let Some(target) = args.target.as_deref() {
-            let db = match self.targets.get(target) {
-                Ok(t) => t,
-                Err(e) => return tool_err(e),
-            };
-            let cols = match db
-                .describe_table(args.schema.as_deref(), &args.table)
-                .await
-            {
-                Ok(c) => c,
-                Err(e) => return tool_err(e),
-            };
-            let columns: Vec<Value> = cols
-                .into_iter()
-                .map(|c| {
-                    json!({
-                        "name": c.name,
-                        "type": c.data_type,
-                        "nullable": c.nullable,
-                    })
-                })
-                .collect();
-            return ok_json(json!({
-                "table": args.table,
-                "schema": args.schema,
-                "columns": columns,
-            }));
+        let cube = match self.store.get("cube", &args.table).await {
+            Ok(c) => c,
+            Err(e) => return tool_err(e),
+        };
+        if let Some(want) = args.target.as_deref() {
+            let got = cube.get("target").and_then(|v| v.as_str()).unwrap_or("");
+            if got != want {
+                return tool_err(AppError::Validation(format!(
+                    "cube {} target {got} != requested target {want}",
+                    args.table
+                )));
+            }
         }
-        map_result(self.store.get("table", &args.table).await)
+        let metrics = match self.store.list(Some("metric")).await {
+            Ok(v) => v,
+            Err(e) => return tool_err(e),
+        };
+        let segments = match self.store.list(Some("segment")).await {
+            Ok(v) => v,
+            Err(e) => return tool_err(e),
+        };
+        let cube_name = args.table.as_str();
+        let metrics: Vec<Value> = metrics
+            .into_iter()
+            .filter(|m| m.get("cube").and_then(|v| v.as_str()) == Some(cube_name))
+            .collect();
+        let segments: Vec<Value> = segments
+            .into_iter()
+            .filter(|s| s.get("cube").and_then(|v| v.as_str()) == Some(cube_name))
+            .collect();
+        let mut out = cube;
+        out["metrics"] = json!(metrics);
+        out["segments"] = json!(segments);
+        ok_json(out)
     }
 
     #[tool(description = "Search columns via keyword (BM25), vector, or hybrid (RRF)")]
@@ -277,6 +277,9 @@ impl SqlMcp {
             Ok(d) => d,
             Err(e) => return tool_err(e),
         };
+        if let Err(e) = assert_cube_target(&docs, &args.cube, &args.target) {
+            return tool_err(e);
+        }
         let limit = args
             .limit
             .map(|n| n as usize)
@@ -350,6 +353,13 @@ impl SqlMcp {
             Ok(d) => d,
             Err(e) => return tool_err(e),
         };
+        let cube_name = match crate::pipeline::cube_name_from_semantic_sql(&args.sql) {
+            Ok(n) => n,
+            Err(e) => return tool_err(e),
+        };
+        if let Err(e) = assert_cube_target(&docs, &cube_name, &args.target) {
+            return tool_err(e);
+        }
         let physical = match crate::pipeline::compile_semantic_sql_with_binds(
             &docs,
             &args.sql,
@@ -445,4 +455,115 @@ fn tool_err(err: AppError) -> Result<CallToolResult, McpError> {
     Ok(CallToolResult::error(vec![ContentBlock::text(
         err.to_json().to_string(),
     )]))
+}
+
+fn assert_cube_target(docs: &[Value], cube_name: &str, target: &str) -> Result<(), AppError> {
+    let cube = docs
+        .iter()
+        .find(|d| {
+            d.get("kind").and_then(|v| v.as_str()) == Some("cube")
+                && d.get("name").and_then(|v| v.as_str()) == Some(cube_name)
+        })
+        .ok_or_else(|| AppError::NotFound(format!("cube/{cube_name}")))?;
+    let got = cube
+        .get("target")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::Validation(format!("cube {cube_name}: target missing")))?;
+    if got != target {
+        return Err(AppError::Validation(format!(
+            "cube {cube_name} target {got} != requested target {target}"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::target::TargetRegistry;
+
+    async fn seed_examples(store: &SemanticStore) {
+        for path in [
+            include_str!("../../semantic/examples/tables/customer.json"),
+            include_str!("../../semantic/examples/tables/region_codes.json"),
+            include_str!("../../semantic/examples/tables/status_codes.json"),
+            include_str!("../../semantic/examples/tables/orders.json"),
+            include_str!("../../semantic/examples/tables/orders_month.json"),
+            include_str!("../../semantic/examples/views/orders_customer.json"),
+            include_str!("../../semantic/examples/cubes/sales.json"),
+            include_str!("../../semantic/examples/metrics/revenue.json"),
+            include_str!("../../semantic/examples/segments/paid.json"),
+        ] {
+            store
+                .create(serde_json::from_str(path).unwrap())
+                .await
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn list_tables_returns_cubes() {
+        let store = SemanticStore::open(":memory:").await.unwrap();
+        seed_examples(&store).await;
+        let cfg = Config {
+            listen: "127.0.0.1:0".into(),
+            max_rows: 100,
+            sample_limit: 10,
+            timeout_ms: 1000,
+            targets: vec![],
+        };
+        let targets = TargetRegistry::from_config(&cfg).await.unwrap();
+        let mcp = SqlMcp::new(store, targets, cfg);
+        let docs = mcp.store.list(Some("cube")).await.unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0]["name"], "sales");
+        assert_eq!(docs[0]["kind"], "cube");
+        let filtered: Vec<_> = docs
+            .iter()
+            .filter(|d| d.get("target").and_then(|v| v.as_str()) == Some("dw"))
+            .collect();
+        assert_eq!(filtered.len(), 1);
+        let none: Vec<_> = docs
+            .iter()
+            .filter(|d| d.get("target").and_then(|v| v.as_str()) == Some("nope"))
+            .collect();
+        assert!(none.is_empty());
+        let _ = mcp;
+    }
+
+    #[tokio::test]
+    async fn describe_assembles_metrics_segments() {
+        let store = SemanticStore::open(":memory:").await.unwrap();
+        seed_examples(&store).await;
+        let cube = store.get("cube", "sales").await.unwrap();
+        let metrics = store.list(Some("metric")).await.unwrap();
+        let segments = store.list(Some("segment")).await.unwrap();
+        let metrics: Vec<_> = metrics
+            .into_iter()
+            .filter(|m| m.get("cube").and_then(|v| v.as_str()) == Some("sales"))
+            .collect();
+        let segments: Vec<_> = segments
+            .into_iter()
+            .filter(|s| s.get("cube").and_then(|v| v.as_str()) == Some("sales"))
+            .collect();
+        assert!(!cube["dimensions"].as_array().unwrap().is_empty());
+        assert!(!cube["facts"].as_array().unwrap().is_empty());
+        assert_eq!(metrics.len(), 1);
+        assert_eq!(segments.len(), 1);
+    }
+
+    #[test]
+    fn assert_cube_target_checks() {
+        let docs = vec![json!({
+            "kind": "cube",
+            "name": "sales",
+            "target": "dw",
+        })];
+        assert!(assert_cube_target(&docs, "sales", "dw").is_ok());
+        assert!(matches!(
+            assert_cube_target(&docs, "sales", "other"),
+            Err(AppError::Validation(_))
+        ));
+    }
 }

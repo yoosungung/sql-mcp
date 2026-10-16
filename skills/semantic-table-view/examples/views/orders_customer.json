@@ -1,6 +1,7 @@
 {
   "kind": "view",
   "name": "orders_customer",
+  "target": "dw",
   "combine": "join",
   "sources": [
     {

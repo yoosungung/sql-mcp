@@ -10,7 +10,7 @@
 
 **이름 우선권:** cube · dimension · fact · metric · segment > table · view · view 컬럼(충돌 시 후자에 접미사). 물리 table/컬럼 경로는 유지.
 
-연결 검증에 쓰는 링크: `fk.references`, view `sources`/`mappings`, cube `view`, dimension·fact `column`, metric·segment `cube`, metric `group_by`.
+연결 검증에 쓰는 링크: `fk.references`, view `sources`/`mappings`, cube `view`, dimension·fact `column`, metric·segment `cube`, metric `group_by`, **table/view/cube `target` 일치**(MCP 타깃 id; leaf table과 같아야 함).
 
 ## metadata_* 동작
 

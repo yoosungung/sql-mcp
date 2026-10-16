@@ -48,6 +48,7 @@ impl SemanticStore {
         migrate_drop_member_default_filter(&conn).await?;
         migrate_fact_type_from_amount_fx(&conn).await?;
         migrate_as_code_json(&conn).await?;
+        migrate_add_target_columns(&conn).await?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             embedder: None,
@@ -253,6 +254,23 @@ async fn migrate_fact_type_from_amount_fx(conn: &Connection) -> Result<(), AppEr
     )
     .await
     .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(())
+}
+
+/// Older catalogs lack MCP `target` on table/view/cube; add with default `dw`.
+async fn migrate_add_target_columns(conn: &Connection) -> Result<(), AppError> {
+    for table in ["meta_tables", "meta_views", "meta_cubes"] {
+        if table_has_column(conn, table, "target").await? {
+            continue;
+        }
+        // SQLite: ADD COLUMN with NOT NULL requires DEFAULT for existing rows.
+        let sql = format!(
+            "ALTER TABLE {table} ADD COLUMN target TEXT NOT NULL DEFAULT 'dw'"
+        );
+        conn.execute(&sql, ())
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?;
+    }
     Ok(())
 }
 

@@ -54,6 +54,7 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 | D17 | `encryption: true` | **결정: 암·복호화 아님 → 응답 마스킹.** SELECT/샘플/로그에서 해당 셀을 `null`(또는 `"***"`)로 치환. AES·토큰화는 타깃 DW 책임 |
 | D18 | expression/filter 컬럼 검사 시점 | **결정: 이중 검사.** `metadata_*` = 연결 그래프 · 컴파일=AST 식별자. `execute_sql`은 시맨틱 컴파일 필수 |
 | D19 | `execute_sql` 입력 | **결정: 시맨틱 SELECT만.** 툴명 유지. 자유 물리 SELECT 경로 없음 |
+| D20 | table/view/cube `target` | **결정:** 등록 JSON에 MCP `target` id 필수. leaf table·view·cube 동일 target 강제. `list_tables`/`describe_table`=cube 표면. 같은 target cube JOIN/UNION은 **후속** |
 
 (제거: D5 세션형 Streamable HTTP, D10/D11 Frontend. stdio는 로컬용으로 복원)
 
@@ -105,6 +106,10 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 - [x] metric/view 식별자 치환을 sqlparser `VisitorMut` AST 경로로 이관 (`ast_rewrite`)
 - [x] metric SELECT AST 조립(`ast_select`) · 날짜 리터럴 구간 union disjoint(`date_range`)
 - [x] bind-param 구간 비교(`params` → `:name` 치환) · OR(DNF) 날짜식 · `execute_sql.params`
+
+### 후속 — 동일 target cube JOIN/UNION
+
+- [ ] semantic SQL에서 같은 `target`인 cube끼리 JOIN / UNION (현재는 단일 cube FROM; view 안 table join/union만)
 
 ## 구현 시 작업 규칙
 

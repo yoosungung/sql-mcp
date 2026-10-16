@@ -23,6 +23,22 @@ pub fn compile_semantic_sql(
     compile_semantic_sql_with_binds(docs, sql, role, None)
 }
 
+/// FROM cube name from a semantic SELECT (no compile).
+pub fn cube_name_from_semantic_sql(sql: &str) -> Result<String, AppError> {
+    assert_select_only(sql)?;
+    let dialect = GenericDialect {};
+    let stmts =
+        Parser::parse_sql(&dialect, sql).map_err(|e| AppError::SqlParse(e.to_string()))?;
+    let Statement::Query(query) = stmts
+        .into_iter()
+        .next()
+        .ok_or_else(|| AppError::NotSelect)?
+    else {
+        return Err(AppError::NotSelect);
+    };
+    extract_cube_name(&query)
+}
+
 pub fn compile_semantic_sql_with_binds(
     docs: &[Value],
     sql: &str,

@@ -129,7 +129,7 @@ table → view → cube → metric | segment
 | `search_columns` | 시맨틱 컬럼/멤버 검색 |
 | `sample_column` | cube 멤버 샘플(+코드사전) |
 | `execute_sql` | **시맨틱 SQL만** → 물리 SELECT 컴파일·실행 |
-| `list_targets` / `list_tables` / `describe_table` | 타깃·목록 확인 |
+| `list_targets` / `list_tables` / `describe_table` | 타깃 목록 · **cube** 목록/상세 |
 
 `execute_sql`에 자유 물리 SELECT는 없습니다. cube FROM, metric/dimension/segment 기준만 허용됩니다.
 

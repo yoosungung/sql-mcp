@@ -123,6 +123,7 @@ fn filter_obj(expr: Option<String>) -> Value {
 
 async fn insert_table(conn: &Connection, body: &Value) -> Result<(), AppError> {
     let name = str_field(body, "name")?;
+    let target = str_field(body, "target")?;
     let db = str_field(body, "db")?;
     let schema = str_field(body, "schema")?;
     let table = str_field(body, "table")?;
@@ -132,11 +133,12 @@ async fn insert_table(conn: &Connection, body: &Value) -> Result<(), AppError> {
     let scope = filter_expr(body.get("scope_filter"));
     let default_f = filter_expr(body.get("default_filter"));
     conn.execute(
-        "INSERT INTO meta_tables (name, description, db, schema, table_name, pk_json, fk_json, scope_filter, default_filter, role_json)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        "INSERT INTO meta_tables (name, description, target, db, schema, table_name, pk_json, fk_json, scope_filter, default_filter, role_json)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
         params![
             name,
             description,
+            target,
             db,
             schema,
             table,
@@ -181,7 +183,7 @@ async fn insert_table(conn: &Connection, body: &Value) -> Result<(), AppError> {
 async fn load_table(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut rows = conn
         .query(
-            "SELECT description, db, schema, table_name, pk_json, fk_json, scope_filter, default_filter, role_json
+            "SELECT description, target, db, schema, table_name, pk_json, fk_json, scope_filter, default_filter, role_json
              FROM meta_tables WHERE name = ?1",
             params![name],
         )
@@ -193,14 +195,15 @@ async fn load_table(conn: &Connection, name: &str) -> Result<Value, AppError> {
         .map_err(|e| AppError::Internal(e.into()))?
         .ok_or_else(|| AppError::NotFound(format!("table/{name}")))?;
     let description: Option<String> = row.get(0).ok();
-    let db: String = row.get(1).map_err(|e| AppError::Internal(e.into()))?;
-    let schema: String = row.get(2).map_err(|e| AppError::Internal(e.into()))?;
-    let table: String = row.get(3).map_err(|e| AppError::Internal(e.into()))?;
-    let pk_json: Option<String> = row.get(4).ok();
-    let fk_json: Option<String> = row.get(5).ok();
-    let scope: Option<String> = row.get(6).ok();
-    let default_f: Option<String> = row.get(7).ok();
-    let role_s: String = row.get(8).map_err(|e| AppError::Internal(e.into()))?;
+    let target: String = row.get(1).map_err(|e| AppError::Internal(e.into()))?;
+    let db: String = row.get(2).map_err(|e| AppError::Internal(e.into()))?;
+    let schema: String = row.get(3).map_err(|e| AppError::Internal(e.into()))?;
+    let table: String = row.get(4).map_err(|e| AppError::Internal(e.into()))?;
+    let pk_json: Option<String> = row.get(5).ok();
+    let fk_json: Option<String> = row.get(6).ok();
+    let scope: Option<String> = row.get(7).ok();
+    let default_f: Option<String> = row.get(8).ok();
+    let role_s: String = row.get(9).map_err(|e| AppError::Internal(e.into()))?;
 
     let mut columns = Vec::new();
     let mut crows = conn
@@ -246,6 +249,7 @@ async fn load_table(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut out = json!({
         "kind": "table",
         "name": name,
+        "target": target,
         "db": db,
         "schema": schema,
         "table": table,
@@ -271,12 +275,13 @@ async fn load_table(conn: &Connection, name: &str) -> Result<Value, AppError> {
 
 async fn insert_view(conn: &Connection, body: &Value) -> Result<(), AppError> {
     let name = str_field(body, "name")?;
+    let target = str_field(body, "target")?;
     let description = opt_str(body, "description");
     let combine = str_field(body, "combine")?;
     let prefer = opt_str(body, "prefer");
     conn.execute(
-        "INSERT INTO meta_views (name, description, combine, prefer) VALUES (?1,?2,?3,?4)",
-        params![name, description, combine, prefer],
+        "INSERT INTO meta_views (name, description, target, combine, prefer) VALUES (?1,?2,?3,?4,?5)",
+        params![name, description, target, combine, prefer],
     )
     .await
     .map_err(|e| AppError::Internal(e.into()))?;
@@ -343,7 +348,7 @@ async fn insert_view(conn: &Connection, body: &Value) -> Result<(), AppError> {
 async fn load_view(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut rows = conn
         .query(
-            "SELECT description, combine, prefer FROM meta_views WHERE name = ?1",
+            "SELECT description, target, combine, prefer FROM meta_views WHERE name = ?1",
             params![name],
         )
         .await
@@ -354,8 +359,9 @@ async fn load_view(conn: &Connection, name: &str) -> Result<Value, AppError> {
         .map_err(|e| AppError::Internal(e.into()))?
         .ok_or_else(|| AppError::NotFound(format!("view/{name}")))?;
     let description: Option<String> = row.get(0).ok();
-    let combine: String = row.get(1).map_err(|e| AppError::Internal(e.into()))?;
-    let prefer: Option<String> = row.get(2).ok();
+    let target: String = row.get(1).map_err(|e| AppError::Internal(e.into()))?;
+    let combine: String = row.get(2).map_err(|e| AppError::Internal(e.into()))?;
+    let prefer: Option<String> = row.get(3).ok();
 
     let mut sources = Vec::new();
     let mut srows = conn
@@ -429,6 +435,7 @@ async fn load_view(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut out = json!({
         "kind": "view",
         "name": name,
+        "target": target,
         "combine": combine,
         "sources": sources,
         "columns": columns,
@@ -447,11 +454,12 @@ async fn load_view(conn: &Connection, name: &str) -> Result<Value, AppError> {
 
 async fn insert_cube(conn: &Connection, body: &Value) -> Result<(), AppError> {
     let name = str_field(body, "name")?;
+    let target = str_field(body, "target")?;
     let view = str_field(body, "view")?;
     let description = str_field(body, "description")?;
     conn.execute(
-        "INSERT INTO meta_cubes (name, view_name, description) VALUES (?1,?2,?3)",
-        params![name, view, description],
+        "INSERT INTO meta_cubes (name, target, view_name, description) VALUES (?1,?2,?3,?4)",
+        params![name, target, view, description],
     )
     .await
     .map_err(|e| AppError::Internal(e.into()))?;
@@ -531,7 +539,7 @@ async fn insert_cube_member(
 async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut rows = conn
         .query(
-            "SELECT view_name, description FROM meta_cubes WHERE name = ?1",
+            "SELECT target, view_name, description FROM meta_cubes WHERE name = ?1",
             params![name],
         )
         .await
@@ -541,8 +549,9 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
         .await
         .map_err(|e| AppError::Internal(e.into()))?
         .ok_or_else(|| AppError::NotFound(format!("cube/{name}")))?;
-    let view: String = row.get(0).map_err(|e| AppError::Internal(e.into()))?;
-    let description: String = row.get(1).map_err(|e| AppError::Internal(e.into()))?;
+    let target: String = row.get(0).map_err(|e| AppError::Internal(e.into()))?;
+    let view: String = row.get(1).map_err(|e| AppError::Internal(e.into()))?;
+    let description: String = row.get(2).map_err(|e| AppError::Internal(e.into()))?;
 
     let mut dimensions = Vec::new();
     let mut drows = conn
@@ -581,6 +590,7 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     Ok(json!({
         "kind": "cube",
         "name": name,
+        "target": target,
         "view": view,
         "description": description,
         "dimensions": dimensions,

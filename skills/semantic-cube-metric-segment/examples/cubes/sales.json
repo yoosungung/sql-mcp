@@ -1,6 +1,7 @@
 {
   "kind": "cube",
   "name": "sales",
+  "target": "dw",
   "view": "orders_customer",
   "description": "주문과 고객을 묶은 매출.",
   "dimensions": [
@@ -57,21 +58,27 @@
       "type": "amount",
       "column": "sale_amount",
       "encryption": false,
-      "role": ["finance"]
+      "role": [
+        "finance"
+      ]
     },
     {
       "name": "fx_rate",
       "type": "fx",
       "column": "fx_rate",
       "encryption": false,
-      "role": ["finance"]
+      "role": [
+        "finance"
+      ]
     },
     {
       "name": "krw_amount",
       "type": "amount",
       "expression": "sale_amount * fx_rate",
       "encryption": false,
-      "role": ["finance"]
+      "role": [
+        "finance"
+      ]
     }
   ]
 }

@@ -93,6 +93,7 @@
       "required": [
         "kind",
         "name",
+        "target",
         "db",
         "schema",
         "table",
@@ -110,6 +111,10 @@
           "description": "논리 테이블 이름. view 가 이 이름으로 참조한다."
         },
         "description": { "type": "string" },
+        "target": {
+          "$ref": "#/$defs/name",
+          "description": "MCP 타깃 연결 id (설정 TargetConfig.id)."
+        },
         "db": {
           "$ref": "#/$defs/name",
           "description": "물리 데이터베이스 이름."
@@ -200,10 +205,14 @@
       "description": "테이블 또는 view 를 묶는다. combine 은 join, union, minus, select 중 하나다.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "name", "combine", "sources", "columns"],
+      "required": ["kind", "name", "target", "combine", "sources", "columns"],
       "properties": {
         "kind": { "const": "view" },
         "name": { "$ref": "#/$defs/name" },
+        "target": {
+          "$ref": "#/$defs/name",
+          "description": "MCP 타깃 연결 id. sources의 leaf table target과 같아야 한다."
+        },
         "description": { "type": "string" },
         "combine": {
           "enum": ["join", "union", "minus", "select"],
@@ -357,10 +366,14 @@
       "description": "DW 에이전트에게 테이블로 보이는 문서. view 하나와 설명이 있고 컬럼은 dimension 또는 fact 다.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "name", "view", "description", "dimensions", "facts"],
+      "required": ["kind", "name", "target", "view", "description", "dimensions", "facts"],
       "properties": {
         "kind": { "const": "cube" },
         "name": { "$ref": "#/$defs/name" },
+        "target": {
+          "$ref": "#/$defs/name",
+          "description": "MCP 타깃 연결 id. 연결된 view.target과 같아야 한다."
+        },
         "view": {
           "$ref": "#/$defs/name",
           "description": "연결된 view name."

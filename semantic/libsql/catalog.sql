@@ -6,6 +6,7 @@
 CREATE TABLE IF NOT EXISTS meta_tables (
   name TEXT PRIMARY KEY,
   description TEXT,
+  target TEXT NOT NULL,
   db TEXT NOT NULL,
   schema TEXT NOT NULL,
   table_name TEXT NOT NULL,
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS meta_table_permission_filters (
 CREATE TABLE IF NOT EXISTS meta_views (
   name TEXT PRIMARY KEY,
   description TEXT,
+  target TEXT NOT NULL,
   combine TEXT NOT NULL CHECK (combine IN ('join', 'union', 'minus', 'select')),
   prefer TEXT CHECK (prefer IS NULL OR prefer = 'summary')
 ) STRICT;
@@ -63,6 +65,7 @@ CREATE TABLE IF NOT EXISTS meta_view_columns (
 -- 3. Cube
 CREATE TABLE IF NOT EXISTS meta_cubes (
   name TEXT PRIMARY KEY,
+  target TEXT NOT NULL,
   view_name TEXT NOT NULL REFERENCES meta_views(name),
   description TEXT NOT NULL
 ) STRICT;

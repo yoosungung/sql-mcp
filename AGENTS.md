@@ -40,4 +40,4 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
  
 ## 3. Status
  
-M0–M4 완료: 타입별 `meta_*` · 시맨틱-only `execute_sql` · 요약뷰/join·union pruning · AST 조립 · bind/OR 날짜 disjoint · transport=HTTP+stdio(로컬). 후속: 타깃 엔진·운영 하드닝(필요 시). 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 파이프라인 [server/spec.md](server/spec.md).
+M0–M4 완료: 타입별 `meta_*` · 시맨틱-only `execute_sql` · 요약뷰/join·union pruning · AST 조립 · bind/OR 날짜 disjoint · transport=HTTP+stdio(로컬). table/view/cube `target` · `list_tables`/`describe_table`=cube 표면(D20). 후속: 동일 target cube JOIN/UNION · 타깃 엔진·운영 하드닝(필요 시). 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 파이프라인 [server/spec.md](server/spec.md).

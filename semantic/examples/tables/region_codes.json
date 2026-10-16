@@ -1,16 +1,32 @@
 {
   "kind": "table",
   "name": "region_codes",
+  "target": "dw",
   "db": "dw",
   "schema": "sales",
   "table": "region_codes",
   "description": "지역 코드 사전.",
   "columns": [
-    { "name": "code", "type": "varchar", "nullable": false },
-    { "name": "name", "type": "varchar", "nullable": false },
-    { "name": "lang", "type": "varchar", "nullable": false }
+    {
+      "name": "code",
+      "type": "varchar",
+      "nullable": false
+    },
+    {
+      "name": "name",
+      "type": "varchar",
+      "nullable": false
+    },
+    {
+      "name": "lang",
+      "type": "varchar",
+      "nullable": false
+    }
   ],
-  "pk": ["code", "lang"],
+  "pk": [
+    "code",
+    "lang"
+  ],
   "fk": [],
   "permission_filters": [],
   "scope_filter": null,
