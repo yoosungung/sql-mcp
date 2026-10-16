@@ -278,7 +278,7 @@ def apply_name_priority(
 
 
 def cube_and_metric_from_view(
-    view: dict, tables: dict[str, dict], priority_taken: set[str]
+    view: dict, tables: dict[str, dict], priority_taken: set[str], target: str
 ) -> tuple[dict, dict | None]:
     """Choose natural cube/metric/member names; do not yield to table/view names."""
     dimensions: list[dict] = []
@@ -333,6 +333,7 @@ def cube_and_metric_from_view(
     cube = {
         "kind": "cube",
         "name": cube_name,
+        "target": target,
         "view": view["name"],
         "description": f"Auto cube over view {view['name']}.",
         "dimensions": dimensions,
@@ -376,14 +377,13 @@ def extract_table(
     for _cid, name, typ, notnull, _dflt, pk_ord in con.execute(
         f"PRAGMA table_info({quote_ident(table)})"
     ):
-        col: dict = {
-            "name": name,
-            "type": typ if typ else "NULL",
-            "nullable": notnull == 0,
-        }
-        if mark_as_code(name, typ or ""):
-            col["as_code"] = True
-        columns.append(col)
+        columns.append(
+            {
+                "name": name,
+                "type": typ if typ else "NULL",
+                "nullable": notnull == 0,
+            }
+        )
         if pk_ord > 0:
             pk.append((pk_ord, name))
     pk_names = [name for _, name in sorted(pk)]
@@ -425,6 +425,7 @@ def extract_table(
     return {
         "kind": "table",
         "name": table,
+        "target": db_id,
         "db": db_id,
         "schema": "main",
         "table": table,
@@ -647,6 +648,7 @@ def build_component_view(
     return {
         "kind": "view",
         "name": view_name,
+        "target": tables[root]["target"],
         "combine": "join",
         "sources": sources,
         "joins": joins,
@@ -740,7 +742,9 @@ def main() -> None:
         cubes: list[dict] = []
         metrics: list[dict] = []
         for view in views:
-            cube, metric = cube_and_metric_from_view(view, tables, priority_taken)
+            cube, metric = cube_and_metric_from_view(
+                view, tables, priority_taken, db_id
+            )
             cubes.append(cube)
             if metric:
                 metrics.append(metric)
