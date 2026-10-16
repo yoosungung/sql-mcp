@@ -9,9 +9,10 @@
 
 ## 이름
 
-- `name` 패턴: `^[A-Za-z_][A-Za-z0-9_]*$`
-- 파일로 둘 때 파일명(확장자 제외) = `name`
-- **우선권:** cube · dimension · fact · metric · segment가 자연스러운 이름을 먼저 갖는다(검색 대상). 겹치면 table · view · view 컬럼 논리 이름에 `_table` / `_view` / `_col` 등을 붙인다. 물리 `db`/`schema`/`table`·table 컬럼명(물리)은 유지. dim/fact `name`과 그 `column`(view 컬럼)이 같으면 공유 허용.
+- **시맨틱 `name`:** `^[A-Za-z_][A-Za-z0-9_]*$` (문서 name · view 컬럼 · target 등)
+- **물리 `physical_ident`:** 공백·기호 허용(따옴표·백틱·제어·`;` 금지) — `db`/`schema`/`table`, table 컬럼/`pk`/`fk` 컬럼, view `mappings.column`·join `on` 컬럼
+- 파일로 둘 때 파일명(확장자 제외) = 문서 `name`
+- **우선권:** cube · dimension · fact · metric · segment가 자연스러운 이름을 먼저 갖는다(검색 대상). 겹치면 table · view · view 컬럼 논리 이름에 `_table` / `_view` / `_col` 등을 붙인다. 물리 경로는 유지. 물리 컬럼명이 시맨틱 패턴 밖이면 view에서 별칭을 두고 mapping에 물리를 남긴다. dim/fact `name`과 그 `column`(view 컬럼)이 같으면 공유 허용.
 
 ## table
 

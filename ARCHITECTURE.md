@@ -133,6 +133,8 @@ semantic/examples/
 
 **이름 우선권.** 자연스러운 짧은 `name`은 **cube · dimension · fact · metric · segment**가 우선한다(이들이 `search_columns` 검색 대상 — D12). 이들과 문자열이 겹치면 **table · view · view 컬럼** 쪽 논리 이름에 접미사(`_table`, `_view`, `_col` 등)를 붙여 피한다. 물리 `db`/`schema`/`table` 및 table `columns[].name`(물리 컬럼)은 바꾸지 않는다. dimension/fact가 `column`으로 가리키는 view 컬럼과 멤버 `name`이 같은 경우는 동일 식별 공유로 허용한다.
 
+**식별자 이원(D22).** `$defs/name`은 시맨틱·논리 식별자(`^[A-Za-z_][A-Za-z0-9_]*$`: 문서 name · target · view 컬럼 · dim/fact/metric/segment 등). `$defs/physical_ident`는 물리 경로·컬럼(공백·`%`·괄호 등 허용; 따옴표·백틱·제어문자·`;` 금지): `db`/`schema`/`table`, table `columns[].name`/`pk`/`fk.columns`, view `mappings[].column`·join `on` 컬럼, `as_code` key/value 컬럼. view 컬럼 `name`과 dim/fact `column`은 시맨틱 `name`만 쓴다 — 물리명이 패턴 밖이면 view에서 별칭을 두고 `mappings.column`에 물리를 남긴다. emit은 `quote_ident`로 인용한다.
+
 필드 타입의 정본은 `semantic/schema/document.schema.json` 하나다. `$id`는 `https://sql-mcp.local/semantic/document.schema.json`이며 HTTP 다운로드 주소가 아니다(MCP Resource URI와 같다 — §3.6).
 
 | 문서 | 필수 필드 |

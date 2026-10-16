@@ -79,4 +79,78 @@ mod tests {
             Err(AppError::Validation(_))
         ));
     }
+
+    #[test]
+    fn accepts_physical_column_with_spaces() {
+        let body = json!({
+            "kind": "table",
+            "name": "frpm",
+            "target": "california_schools",
+            "db": "california_schools",
+            "schema": "main",
+            "table": "frpm",
+            "columns": [
+                {"name": "CDSCode", "type": "TEXT", "nullable": false},
+                {"name": "Academic Year", "type": "TEXT", "nullable": true},
+                {"name": "Percent (%) Eligible Free (K-12)", "type": "REAL", "nullable": true}
+            ],
+            "pk": ["CDSCode"],
+            "fk": [],
+            "permission_filters": [],
+            "scope_filter": null,
+            "default_filter": null,
+            "role": "all"
+        });
+        validate_document(&body).unwrap();
+    }
+
+    #[test]
+    fn rejects_spaced_name_on_semantic_document_name() {
+        let body = json!({
+            "kind": "table",
+            "name": "bad name",
+            "target": "t",
+            "db": "t",
+            "schema": "main",
+            "table": "t",
+            "columns": [{"name": "id", "type": "INT", "nullable": false}],
+            "pk": ["id"],
+            "fk": [],
+            "permission_filters": [],
+            "scope_filter": null,
+            "default_filter": null
+        });
+        assert!(matches!(
+            validate_document(&body),
+            Err(AppError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_physical_ident_with_quote_or_semicolon() {
+        let mut body = json!({
+            "kind": "table",
+            "name": "t",
+            "target": "t",
+            "db": "t",
+            "schema": "main",
+            "table": "t",
+            "columns": [{"name": "id", "type": "INT", "nullable": false}],
+            "pk": ["id"],
+            "fk": [],
+            "permission_filters": [],
+            "scope_filter": null,
+            "default_filter": null
+        });
+        body["columns"][0]["name"] = json!("a;drop");
+        assert!(matches!(
+            validate_document(&body),
+            Err(AppError::Validation(_))
+        ));
+        body["columns"][0]["name"] = json!("we\"ird");
+        assert!(matches!(
+            validate_document(&body),
+            Err(AppError::Validation(_))
+        ));
+    }
 }

@@ -254,14 +254,15 @@ fn parse_expr_fragment(sql: &str) -> Expr {
     Expr::Identifier(Ident::new(sql))
 }
 
+/// Physical / quoted SQL identifier (D22). Allows spaces and symbols used in
+/// real DW catalogs (e.g. BIRD); rejects quote delimiters, controls, and `;`.
 fn validate_simple_ident(name: &str) -> Result<(), AppError> {
     if name.is_empty()
+        || name.len() > 512
         || name.contains('"')
         || name.contains('`')
         || name.contains(';')
-        || !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | ' ' | '-'))
+        || name.chars().any(|c| c.is_control())
     {
         return Err(AppError::Validation(format!("invalid identifier: {name}")));
     }
@@ -341,6 +342,24 @@ mod tests {
             "`orders`"
         );
         assert!(DialectProfile::Mysql.quote_ident("a;drop").is_err());
+    }
+
+    #[test]
+    fn quote_ident_allows_bird_physical_names() {
+        assert_eq!(
+            DialectProfile::Postgres
+                .quote_ident("Percent (%) Eligible Free (K-12)")
+                .unwrap(),
+            "\"Percent (%) Eligible Free (K-12)\""
+        );
+        assert_eq!(
+            DialectProfile::Sqlite
+                .quote_ident("Academic Year")
+                .unwrap(),
+            "\"Academic Year\""
+        );
+        assert!(DialectProfile::Postgres.quote_ident("we\"ird").is_err());
+        assert!(DialectProfile::Postgres.quote_ident("a\nb").is_err());
     }
 
     #[test]

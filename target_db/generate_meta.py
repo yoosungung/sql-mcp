@@ -15,6 +15,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# physical_ident: non-empty, no quote/backtick/control/semicolon (document.schema.json)
+PHYSICAL_IDENT_RE = re.compile(r'^[^"`\x00-\x1F;]+$')
 AMOUNT_HINT = re.compile(
     r"(amount|balance|price|cost|salary|revenue|sum|total)",
     re.I,
@@ -48,6 +50,25 @@ def resolve_table_name(tables: dict[str, dict], ref: str) -> str | None:
 
 def is_ident(name: str) -> bool:
     return bool(NAME_RE.match(name))
+
+
+def is_physical_ident(name: str) -> bool:
+    return bool(name) and len(name) <= 512 and bool(PHYSICAL_IDENT_RE.match(name))
+
+
+def sanitize_ident(name: str) -> str:
+    """Map a physical column name to a semantic `name` pattern for view/cube members."""
+    if is_ident(name):
+        return name
+    s = re.sub(r"[^A-Za-z0-9_]+", "_", name)
+    s = re.sub(r"_+", "_", s).strip("_")
+    if not s:
+        s = "col"
+    if s[0].isdigit():
+        s = f"c_{s}"
+    if not is_ident(s):
+        s = "col"
+    return s
 
 
 def mark_as_code(col_name: str, col_type: str) -> bool:
@@ -603,14 +624,18 @@ def build_component_view(
         key = (table, physical)
         if key in loc:
             return loc[key]
-        name = preferred
+        if not is_physical_ident(physical):
+            raise ValueError(f"invalid physical column {table}.{physical!r}")
+        name = preferred if is_ident(preferred) else sanitize_ident(preferred)
         if name in used:
-            name = f"{table}_{physical}"
+            name = sanitize_ident(f"{table}_{physical}")
         base = name
         n = 2
         while name in used:
             name = f"{base}_{n}"
             n += 1
+            if not is_ident(name):
+                name = sanitize_ident(name)
         used.add(name)
         loc[key] = name
         columns.append(
@@ -630,20 +655,25 @@ def build_component_view(
                     col["mappings"].append(mapping)
                 return
 
-    # root columns
+    # root columns — view `name` is semantic; mapping.column keeps physical
     for col in tables[root]["columns"]:
-        ensure_view_col(root, col["name"], col["name"])
+        phys = col["name"]
+        ensure_view_col(root, phys, phys if is_ident(phys) else sanitize_ident(phys))
 
     absorbed_right: set[tuple[str, str]] = set()
     for left, right, on in join_steps:
         for lc, rc in on:
-            vname = ensure_view_col(left, lc, lc)
+            pref = lc if is_ident(lc) else sanitize_ident(lc)
+            vname = ensure_view_col(left, lc, pref)
             add_mapping(vname, right, rc)
             absorbed_right.add((right, rc))
         for col in tables[right]["columns"]:
             if (right, col["name"]) in absorbed_right:
                 continue
-            ensure_view_col(right, col["name"], col["name"])
+            phys = col["name"]
+            ensure_view_col(
+                right, phys, phys if is_ident(phys) else sanitize_ident(phys)
+            )
 
     return {
         "kind": "view",
