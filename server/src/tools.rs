@@ -32,8 +32,18 @@ pub struct SqlMcp {
     tool_router: rmcp::handler::server::router::tool::ToolRouter<Self>,
 }
 
+/// Cursor rejects boolean JSON Schema (`true`) for tool `inputSchema` properties.
+fn json_object_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "type": "object",
+        "additionalProperties": true
+    })
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct MetadataBodyArgs {
+    /// Semantic registration document (JSON object).
+    #[schemars(schema_with = "json_object_schema")]
     pub body: Value,
     pub kind: Option<String>,
 }
@@ -48,6 +58,8 @@ pub struct KindNameArgs {
 pub struct MetadataUpdateArgs {
     pub kind: String,
     pub name: String,
+    /// Semantic registration document (JSON object).
+    #[schemars(schema_with = "json_object_schema")]
     pub body: Value,
 }
 
@@ -592,11 +604,24 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use async_trait::async_trait;
+    use schemars::schema_for;
 
     use crate::config::Config;
     use crate::target::{
         ColumnInfo, QueryResult, TableInfo, TargetDb, TargetInfo, TargetRegistry,
     };
+
+    #[test]
+    fn metadata_body_schema_is_object_not_boolean() {
+        let create = schema_for!(MetadataBodyArgs);
+        let update = schema_for!(MetadataUpdateArgs);
+        let create_body = &create.as_value()["properties"]["body"];
+        let update_body = &update.as_value()["properties"]["body"];
+        assert_eq!(create_body["type"], "object", "{create_body}");
+        assert_eq!(update_body["type"], "object", "{update_body}");
+        assert!(!create_body.is_boolean(), "Cursor rejects boolean schemas");
+        assert!(!update_body.is_boolean(), "Cursor rejects boolean schemas");
+    }
 
     async fn seed_examples(store: &SemanticStore) {
         for path in [
