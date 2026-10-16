@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use libsql::{Builder, Connection};
 use serde_json::Value;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::embed::Embedder;
 use crate::error::AppError;
@@ -19,6 +19,7 @@ const CATALOG_SQL: &str = include_str!("../../../semantic/libsql/catalog.sql");
 pub struct SemanticStore {
     conn: Arc<Mutex<Connection>>,
     embedder: Option<Arc<dyn Embedder>>,
+    cache: Arc<RwLock<Option<Vec<Value>>>>,
 }
 
 impl SemanticStore {
@@ -49,10 +50,13 @@ impl SemanticStore {
         migrate_fact_type_from_amount_fx(&conn).await?;
         migrate_as_code_json(&conn).await?;
         migrate_add_target_columns(&conn).await?;
+        migrate_add_cube_role(&conn).await?;
+        migrate_add_column_index_target(&conn).await?;
         migrate_add_member_descriptions(&conn).await?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             embedder: None,
+            cache: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -82,10 +86,18 @@ impl SemanticStore {
         validate_links(&docs)?;
         {
             let conn = self.conn.lock().await;
+            let embedder = self.embedder.as_deref();
+            let index_rows = search::prepare_index_rows(&conn, &docs, embedder).await?;
             conn.execute_batch("BEGIN IMMEDIATE;")
                 .await
                 .map_err(|e| AppError::Internal(e.into()))?;
-            if let Err(e) = typed::insert_document(&conn, &body).await {
+            let tx_res = async {
+                typed::insert_document(&conn, &body).await?;
+                search::write_prepared_index(&conn, &index_rows).await?;
+                Ok::<(), AppError>(())
+            }
+            .await;
+            if let Err(e) = tx_res {
                 let _ = conn.execute_batch("ROLLBACK;").await;
                 return Err(e);
             }
@@ -93,7 +105,7 @@ impl SemanticStore {
                 .await
                 .map_err(|e| AppError::Internal(e.into()))?;
         }
-        self.reindex(&docs).await?;
+        *self.cache.write().await = Some(docs);
         Ok(body)
     }
 
@@ -113,15 +125,19 @@ impl SemanticStore {
         validate_links(&docs)?;
         {
             let conn = self.conn.lock().await;
+            let embedder = self.embedder.as_deref();
+            let index_rows = search::prepare_index_rows(&conn, &docs, embedder).await?;
             conn.execute_batch("BEGIN IMMEDIATE;")
                 .await
                 .map_err(|e| AppError::Internal(e.into()))?;
-            let del = typed::delete_kind(&conn, kind, name).await;
-            if let Err(e) = del {
-                let _ = conn.execute_batch("ROLLBACK;").await;
-                return Err(e);
+            let tx_res = async {
+                typed::delete_kind(&conn, kind, name).await?;
+                typed::insert_document(&conn, &body).await?;
+                search::write_prepared_index(&conn, &index_rows).await?;
+                Ok::<(), AppError>(())
             }
-            if let Err(e) = typed::insert_document(&conn, &body).await {
+            .await;
+            if let Err(e) = tx_res {
                 let _ = conn.execute_batch("ROLLBACK;").await;
                 return Err(e);
             }
@@ -129,7 +145,7 @@ impl SemanticStore {
                 .await
                 .map_err(|e| AppError::Internal(e.into()))?;
         }
-        self.reindex(&docs).await?;
+        *self.cache.write().await = Some(docs);
         Ok(body)
     }
 
@@ -143,38 +159,52 @@ impl SemanticStore {
         validate_links(&docs)?;
         {
             let conn = self.conn.lock().await;
+            let embedder = self.embedder.as_deref();
+            let index_rows = search::prepare_index_rows(&conn, &docs, embedder).await?;
             conn.execute_batch("BEGIN IMMEDIATE;")
                 .await
                 .map_err(|e| AppError::Internal(e.into()))?;
-            match typed::delete_kind(&conn, kind, name).await {
-                Ok(0) => {
-                    let _ = conn.execute_batch("ROLLBACK;").await;
-                    return Err(AppError::NotFound(format!("{kind}/{name}")));
+            let tx_res = async {
+                match typed::delete_kind(&conn, kind, name).await? {
+                    0 => return Err(AppError::NotFound(format!("{kind}/{name}"))),
+                    _ => {}
                 }
-                Ok(_) => {}
-                Err(e) => {
-                    let _ = conn.execute_batch("ROLLBACK;").await;
-                    return Err(e);
-                }
+                search::write_prepared_index(&conn, &index_rows).await?;
+                Ok::<(), AppError>(())
+            }
+            .await;
+            if let Err(e) = tx_res {
+                let _ = conn.execute_batch("ROLLBACK;").await;
+                return Err(e);
             }
             conn.execute_batch("COMMIT;")
                 .await
                 .map_err(|e| AppError::Internal(e.into()))?;
         }
-        self.reindex(&docs).await?;
+        *self.cache.write().await = Some(docs);
         Ok(())
     }
 
     pub async fn get(&self, kind: &str, name: &str) -> Result<Value, AppError> {
-        let conn = self.conn.lock().await;
-        typed::load_document(&conn, kind, name).await
+        let docs = self.list_all().await?;
+        docs.into_iter()
+            .find(|d| kind_of(d).ok() == Some(kind) && name_of(d).ok() == Some(name))
+            .ok_or_else(|| AppError::NotFound(format!("{kind}/{name}")))
     }
 
     pub async fn list(&self, kind: Option<&str>) -> Result<Vec<Value>, AppError> {
-        let conn = self.conn.lock().await;
+        let docs = self.list_all().await?;
         match kind {
-            Some(k) => typed::list_kind(&conn, k).await,
-            None => typed::list_all(&conn).await,
+            Some(k) => {
+                if !matches!(k, "table" | "view" | "cube" | "metric" | "segment") {
+                    return Err(AppError::Validation(format!("unknown kind: {k}")));
+                }
+                Ok(docs
+                    .into_iter()
+                    .filter(|d| kind_of(d).ok() == Some(k))
+                    .collect())
+            }
+            None => Ok(docs),
         }
     }
 
@@ -184,18 +214,32 @@ impl SemanticStore {
         mode: &str,
         limit: usize,
     ) -> Result<Vec<SearchHit>, AppError> {
-        let embedder = self.embedder.as_deref();
-        search::search_columns(&self.conn, query, mode, limit, embedder).await
+        self.search_columns_for_target(query, None, mode, limit).await
     }
 
-    async fn reindex(&self, docs: &[Value]) -> Result<(), AppError> {
-        let conn = self.conn.lock().await;
+    pub async fn search_columns_for_target(
+        &self,
+        query: &str,
+        target: Option<&str>,
+        mode: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchHit>, AppError> {
         let embedder = self.embedder.as_deref();
-        search::rebuild_index(&conn, docs, embedder).await
+        search::search_columns_filtered(&self.conn, query, target, mode, limit, embedder).await
     }
 
     async fn list_all(&self) -> Result<Vec<Value>, AppError> {
-        self.list(None).await
+        if let Some(cached) = self.cache.read().await.as_ref() {
+            return Ok(cached.clone());
+        }
+        let mut guard = self.cache.write().await;
+        if let Some(cached) = guard.as_ref() {
+            return Ok(cached.clone());
+        }
+        let conn = self.conn.lock().await;
+        let docs = typed::list_all(&conn).await?;
+        *guard = Some(docs.clone());
+        Ok(docs)
     }
 }
 
@@ -234,6 +278,7 @@ async fn migrate_fact_type_from_amount_fx(conn: &Connection) -> Result<(), AppEr
     }
     conn.execute_batch(
         r#"
+        PRAGMA foreign_keys=OFF;
         CREATE TABLE meta_cube_facts_new (
           cube_name TEXT NOT NULL REFERENCES meta_cubes(name) ON DELETE CASCADE,
           name TEXT NOT NULL,
@@ -252,6 +297,7 @@ async fn migrate_fact_type_from_amount_fx(conn: &Connection) -> Result<(), AppEr
         FROM meta_cube_facts;
         DROP TABLE meta_cube_facts;
         ALTER TABLE meta_cube_facts_new RENAME TO meta_cube_facts;
+        PRAGMA foreign_keys=ON;
         "#,
     )
     .await
@@ -273,6 +319,34 @@ async fn migrate_add_target_columns(conn: &Connection) -> Result<(), AppError> {
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
     }
+    Ok(())
+}
+
+/// Older catalogs lack `role_json` on `meta_cubes`; add with default `"all"`.
+async fn migrate_add_cube_role(conn: &Connection) -> Result<(), AppError> {
+    if table_has_column(conn, "meta_cubes", "role_json").await? {
+        return Ok(());
+    }
+    conn.execute(
+        "ALTER TABLE meta_cubes ADD COLUMN role_json TEXT NOT NULL DEFAULT '\"all\"'",
+        (),
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(())
+}
+
+/// Older catalogs lack `target` on `column_index`; add with default `'dw'`.
+async fn migrate_add_column_index_target(conn: &Connection) -> Result<(), AppError> {
+    if table_has_column(conn, "column_index", "target").await? {
+        return Ok(());
+    }
+    conn.execute(
+        "ALTER TABLE column_index ADD COLUMN target TEXT NOT NULL DEFAULT 'dw'",
+        (),
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
     Ok(())
 }
 
@@ -323,6 +397,7 @@ async fn migrate_as_code_json(conn: &Connection) -> Result<(), AppError> {
     if drop_table_as_code {
         conn.execute_batch(
             r#"
+            PRAGMA foreign_keys=OFF;
             CREATE TABLE meta_table_columns_new (
               table_name TEXT NOT NULL REFERENCES meta_tables(name) ON DELETE CASCADE,
               name TEXT NOT NULL,
@@ -334,6 +409,7 @@ async fn migrate_as_code_json(conn: &Connection) -> Result<(), AppError> {
             SELECT table_name, name, type, nullable FROM meta_table_columns;
             DROP TABLE meta_table_columns;
             ALTER TABLE meta_table_columns_new RENAME TO meta_table_columns;
+            PRAGMA foreign_keys=ON;
             "#,
         )
         .await

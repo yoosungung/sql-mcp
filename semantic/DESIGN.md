@@ -30,4 +30,4 @@ JSON 교환 정본은 `schema/document.schema.json`이다. `column_index` / `col
 | `metric` | metric 문서 | `{name} {description}`, `field_role=metric` |
 | `segment` | segment 문서 | `{name} {description}`, `field_role=segment` |
 
-FTS에 넣기 전 텍스트에 **한글 등 non-ASCII 구간의 문자 bigram**을 덧붙인다(D14 BM25 강화). CRUD 성공 후 인덱스를 전량 재구축한다. `embedding`은 D14 API가 있을 때만 채운 f32 blob(없으면 NULL).
+FTS에 넣기 전 텍스트에 **한글 등 non-ASCII 구간의 문자 bigram**을 덧붙인다(D14 BM25 강화). `column_index`는 소속 cube의 **`target`** 컬럼을 함께 저장하여 `search_columns(target)` 필터링을 지원한다. CRUD 시 텍스트가 바뀐 행만 증분 임베딩한 뒤 단일 Write 트랜잭션에서 인덱스를 갱신한다. `embedding`은 D14 API가 있을 때만 채운 f32 blob(없으면 NULL).

@@ -38,6 +38,44 @@ pub fn is_encrypted_column(docs: &[Value], column: &str) -> bool {
     encrypted_names(docs).contains(column)
 }
 
+/// Names of encrypted members and mapped columns scoped only to the given `cube_names`.
+pub fn encrypted_names_for_cubes(docs: &[Value], cube_names: &[String]) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for doc in docs {
+        if doc.get("kind").and_then(|v| v.as_str()) != Some("cube") {
+            continue;
+        }
+        let Some(cname) = doc.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if !cube_names.iter().any(|c| c == cname) {
+            continue;
+        }
+        for key in ["dimensions", "facts"] {
+            let Some(items) = doc.get(key).and_then(|v| v.as_array()) else {
+                continue;
+            };
+            for item in items {
+                if item.get("encryption").and_then(|v| v.as_bool()) != Some(true) {
+                    continue;
+                }
+                if let Some(n) = item.get("name").and_then(|v| v.as_str()) {
+                    out.insert(n.to_string());
+                }
+                if let Some(c) = item.get("column").and_then(|v| v.as_str()) {
+                    out.insert(c.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Check whether `member` on a specific `cube_name` has `encryption: true`.
+pub fn is_encrypted_member(docs: &[Value], cube_name: &str, member: &str) -> bool {
+    encrypted_names_for_cubes(docs, &[cube_name.to_string()]).contains(member)
+}
+
 /// Replace values for encrypted column names with null.
 pub fn mask_result_rows(
     columns: &[String],
@@ -86,6 +124,7 @@ mod tests {
     fn collects_encrypted_names() {
         let cube = json!({
             "kind": "cube",
+            "name": "hr",
             "dimensions": [
                 {"name": "ssn", "column": "ssn_col", "encryption": true},
                 {"name": "region", "column": "region_code", "encryption": false}
@@ -100,6 +139,27 @@ mod tests {
         assert!(names.contains("salary"));
         assert!(names.contains("salary_amt"));
         assert!(!names.contains("region"));
+    }
+
+    #[test]
+    fn scopes_encrypted_names_to_queried_cubes() {
+        let hr = json!({
+            "kind": "cube",
+            "name": "hr",
+            "dimensions": [{"name": "name", "column": "emp_name", "encryption": true}],
+            "facts": []
+        });
+        let sales = json!({
+            "kind": "cube",
+            "name": "sales",
+            "dimensions": [{"name": "name", "column": "product_name", "encryption": false}],
+            "facts": []
+        });
+        let docs = vec![hr, sales];
+        let sales_enc = encrypted_names_for_cubes(&docs, &[String::from("sales")]);
+        assert!(!sales_enc.contains("name"));
+        assert!(!is_encrypted_member(&docs, "sales", "name"));
+        assert!(is_encrypted_member(&docs, "hr", "name"));
     }
 
     #[test]

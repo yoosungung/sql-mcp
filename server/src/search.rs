@@ -12,6 +12,7 @@ const RRF_K: f32 = 60.0;
 
 #[derive(Debug, Clone)]
 pub struct SearchHit {
+    pub target: String,
     pub doc_kind: String,
     pub doc_name: String,
     pub field_name: String,
@@ -21,10 +22,105 @@ pub struct SearchHit {
     pub mode: String,
 }
 
-pub async fn rebuild_index(
+#[derive(Debug, Clone)]
+pub struct IndexRow {
+    pub target: String,
+    pub doc_kind: String,
+    pub doc_name: String,
+    pub field_name: String,
+    pub field_role: String,
+    pub text: String,
+}
+
+/// Prepare index rows and incrementally compute embeddings only for rows whose text changed.
+pub async fn prepare_index_rows(
     conn: &Connection,
     docs: &[Value],
     embedder: Option<&dyn Embedder>,
+) -> Result<Vec<(IndexRow, Option<Vec<u8>>)>, AppError> {
+    let cube_targets: HashMap<String, String> = docs
+        .iter()
+        .filter(|d| d.get("kind").and_then(|v| v.as_str()) == Some("cube"))
+        .filter_map(|d| {
+            let name = d.get("name")?.as_str()?.to_string();
+            let target = d
+                .get("target")
+                .and_then(|v| v.as_str())
+                .unwrap_or("dw")
+                .to_string();
+            Some((name, target))
+        })
+        .collect();
+
+    let mut rows = Vec::new();
+    for doc in docs {
+        rows.extend(extract_index_rows_with_targets(doc, &cube_targets));
+    }
+
+    if let Some(embedder) = embedder {
+        // Load existing embeddings keyed by (doc_kind, doc_name, field_name, field_role, text)
+        let mut existing: HashMap<(String, String, String, String, String), Vec<u8>> =
+            HashMap::new();
+        if let Ok(mut q) = conn
+            .query(
+                "SELECT doc_kind, doc_name, field_name, field_role, text, embedding FROM column_index WHERE embedding IS NOT NULL",
+                (),
+            )
+            .await
+        {
+            while let Ok(Some(r)) = q.next().await {
+                if let (Ok(k), Ok(n), Ok(f), Ok(fr), Ok(t), Ok(b)) = (
+                    r.get::<String>(0),
+                    r.get::<String>(1),
+                    r.get::<String>(2),
+                    r.get::<String>(3),
+                    r.get::<String>(4),
+                    r.get::<Vec<u8>>(5),
+                ) {
+                    if !b.is_empty() {
+                        existing.insert((k, n, f, fr, t), b);
+                    }
+                }
+            }
+        }
+
+        let mut missing_indices = Vec::new();
+        let mut missing_texts = Vec::new();
+        let mut out: Vec<(IndexRow, Option<Vec<u8>>)> = Vec::with_capacity(rows.len());
+
+        for (i, row) in rows.into_iter().enumerate() {
+            let key = (
+                row.doc_kind.clone(),
+                row.doc_name.clone(),
+                row.field_name.clone(),
+                row.field_role.clone(),
+                row.text.clone(),
+            );
+            if let Some(blob) = existing.get(&key) {
+                out.push((row, Some(blob.clone())));
+            } else {
+                missing_indices.push(i);
+                missing_texts.push(row.text.clone());
+                out.push((row, None));
+            }
+        }
+
+        if !missing_texts.is_empty() {
+            let new_embs = embedder.embed(&missing_texts).await?;
+            for (idx, emb) in missing_indices.into_iter().zip(new_embs.into_iter()) {
+                out[idx].1 = Some(f32_to_blob(&emb));
+            }
+        }
+        Ok(out)
+    } else {
+        Ok(rows.into_iter().map(|r| (r, None)).collect())
+    }
+}
+
+/// Write prepared index rows into `column_index` and `column_index_fts` (caller manages transaction).
+pub async fn write_prepared_index(
+    conn: &Connection,
+    prepared: &[(IndexRow, Option<Vec<u8>>)],
 ) -> Result<(), AppError> {
     conn.execute("DELETE FROM column_index_fts", ())
         .await
@@ -33,34 +129,18 @@ pub async fn rebuild_index(
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
 
-    let mut rows = Vec::new();
-    for doc in docs {
-        rows.extend(extract_index_rows(doc));
-    }
-
-    let embeddings = if let Some(embedder) = embedder {
-        let texts: Vec<String> = rows.iter().map(|r| r.text.clone()).collect();
-        if texts.is_empty() {
-            vec![]
-        } else {
-            embedder.embed(&texts).await?
-        }
-    } else {
-        vec![]
-    };
-
-    for (i, row) in rows.iter().enumerate() {
-        let emb = embeddings.get(i).map(|v| f32_to_blob(v));
+    for (row, emb) in prepared {
         conn.execute(
-            "INSERT INTO column_index (doc_kind, doc_name, field_name, field_role, text, embedding)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO column_index (target, doc_kind, doc_name, field_name, field_role, text, embedding)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
+                row.target.as_str(),
                 row.doc_kind.as_str(),
                 row.doc_name.as_str(),
                 row.field_name.as_str(),
                 row.field_role.as_str(),
                 row.text.as_str(),
-                emb
+                emb.clone()
             ],
         )
         .await
@@ -96,12 +176,13 @@ pub async fn rebuild_index(
     Ok(())
 }
 
-struct IndexRow {
-    doc_kind: String,
-    doc_name: String,
-    field_name: String,
-    field_role: String,
-    text: String,
+pub async fn rebuild_index(
+    conn: &Connection,
+    docs: &[Value],
+    embedder: Option<&dyn Embedder>,
+) -> Result<(), AppError> {
+    let prepared = prepare_index_rows(conn, docs, embedder).await?;
+    write_prepared_index(conn, &prepared).await
 }
 
 fn name_desc_text(name: &str, doc: &Value) -> String {
@@ -121,13 +202,27 @@ fn member_index_text(item: &Value) -> String {
     }
 }
 
+#[cfg(test)]
 fn extract_index_rows(doc: &Value) -> Vec<IndexRow> {
+    extract_index_rows_with_targets(doc, &HashMap::new())
+}
+
+fn extract_index_rows_with_targets(
+    doc: &Value,
+    cube_targets: &HashMap<String, String>,
+) -> Vec<IndexRow> {
     let kind = doc.get("kind").and_then(|v| v.as_str()).unwrap_or("");
     let name = doc.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let mut rows = Vec::new();
     match kind {
         "cube" => {
+            let target = doc
+                .get("target")
+                .and_then(|v| v.as_str())
+                .unwrap_or("dw")
+                .to_string();
             rows.push(IndexRow {
+                target: target.clone(),
                 doc_kind: kind.into(),
                 doc_name: name.into(),
                 field_name: name.into(),
@@ -139,6 +234,7 @@ fn extract_index_rows(doc: &Value) -> Vec<IndexRow> {
                     for item in items {
                         let fname = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
                         rows.push(IndexRow {
+                            target: target.clone(),
                             doc_kind: kind.into(),
                             doc_name: name.into(),
                             field_name: fname.into(),
@@ -150,7 +246,14 @@ fn extract_index_rows(doc: &Value) -> Vec<IndexRow> {
             }
         }
         "metric" | "segment" => {
+            let cube = doc.get("cube").and_then(|v| v.as_str()).unwrap_or("");
+            let target = cube_targets
+                .get(cube)
+                .cloned()
+                .or_else(|| doc.get("target").and_then(|v| v.as_str()).map(str::to_string))
+                .unwrap_or_else(|| "dw".to_string());
             rows.push(IndexRow {
+                target,
                 doc_kind: kind.into(),
                 doc_name: name.into(),
                 field_name: name.into(),
@@ -170,14 +273,25 @@ pub async fn search_columns(
     limit: usize,
     embedder: Option<&dyn Embedder>,
 ) -> Result<Vec<SearchHit>, AppError> {
+    search_columns_filtered(conn, query, None, mode, limit, embedder).await
+}
+
+pub async fn search_columns_filtered(
+    conn: &Arc<Mutex<Connection>>,
+    query: &str,
+    target: Option<&str>,
+    mode: &str,
+    limit: usize,
+    embedder: Option<&dyn Embedder>,
+) -> Result<Vec<SearchHit>, AppError> {
     let mode = normalize_mode(mode, embedder.is_some());
     match mode.as_str() {
-        "keyword" => keyword_search(conn, query, limit).await,
-        "vector" => vector_search(conn, query, limit, embedder).await,
+        "keyword" => keyword_search(conn, query, target, limit).await,
+        "vector" => vector_search(conn, query, target, limit, embedder).await,
         "hybrid" => {
-            let kw = keyword_search(conn, query, limit * 2).await?;
+            let kw = keyword_search(conn, query, target, limit * 2).await?;
             let vec = if embedder.is_some() {
-                vector_search(conn, query, limit * 2, embedder).await?
+                vector_search(conn, query, target, limit * 2, embedder).await?
             } else {
                 vec![]
             };
@@ -196,9 +310,24 @@ fn normalize_mode(mode: &str, has_embedder: bool) -> String {
     }
 }
 
+/// Convert SQLite FTS5 `bm25()` rank (negative float; more negative = better match) into a
+/// monotonically increasing score in `(0.0, 1.0]`.
+pub fn bm25_rank_to_score(rank: f64) -> f32 {
+    if !rank.is_finite() {
+        return 0.0;
+    }
+    if rank < 0.0 {
+        let pos = (-rank) as f32;
+        pos / (1.0 + pos)
+    } else {
+        1.0 / (1.0 + rank as f32)
+    }
+}
+
 async fn keyword_search(
     conn: &Arc<Mutex<Connection>>,
     query: &str,
+    target: Option<&str>,
     limit: usize,
 ) -> Result<Vec<SearchHit>, AppError> {
     let fts_query = sanitize_fts_query(query);
@@ -206,10 +335,25 @@ async fn keyword_search(
         return Ok(vec![]);
     }
     let conn = conn.lock().await;
-    let mut rows = conn
-        .query(
+    let mut rows = if let Some(t) = target {
+        conn.query(
             r#"
-            SELECT c.doc_kind, c.doc_name, c.field_name, c.field_role, c.text,
+            SELECT c.target, c.doc_kind, c.doc_name, c.field_name, c.field_role, c.text,
+                   bm25(column_index_fts) AS rank
+            FROM column_index_fts
+            JOIN column_index c ON c.id = column_index_fts.row_id
+            WHERE column_index_fts MATCH ?1 AND c.target = ?2
+            ORDER BY rank
+            LIMIT ?3
+            "#,
+            params![fts_query, t, limit as i64],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?
+    } else {
+        conn.query(
+            r#"
+            SELECT c.target, c.doc_kind, c.doc_name, c.field_name, c.field_role, c.text,
                    bm25(column_index_fts) AS rank
             FROM column_index_fts
             JOIN column_index c ON c.id = column_index_fts.row_id
@@ -220,22 +364,23 @@ async fn keyword_search(
             params![fts_query, limit as i64],
         )
         .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(|e| AppError::Internal(e.into()))?
+    };
     let mut out = Vec::new();
     while let Some(row) = rows
         .next()
         .await
         .map_err(|e| AppError::Internal(e.into()))?
     {
-        let rank: f64 = row.get(5).unwrap_or(0.0);
-        // bm25: lower is better → convert to positive score
-        let score = 1.0 / (1.0 + rank as f32);
+        let rank: f64 = row.get(6).unwrap_or(0.0);
+        let score = bm25_rank_to_score(rank);
         out.push(SearchHit {
-            doc_kind: row.get(0).map_err(|e| AppError::Internal(e.into()))?,
-            doc_name: row.get(1).map_err(|e| AppError::Internal(e.into()))?,
-            field_name: row.get(2).map_err(|e| AppError::Internal(e.into()))?,
-            field_role: row.get(3).map_err(|e| AppError::Internal(e.into()))?,
-            text: row.get(4).map_err(|e| AppError::Internal(e.into()))?,
+            target: row.get(0).map_err(|e| AppError::Internal(e.into()))?,
+            doc_kind: row.get(1).map_err(|e| AppError::Internal(e.into()))?,
+            doc_name: row.get(2).map_err(|e| AppError::Internal(e.into()))?,
+            field_name: row.get(3).map_err(|e| AppError::Internal(e.into()))?,
+            field_role: row.get(4).map_err(|e| AppError::Internal(e.into()))?,
+            text: row.get(5).map_err(|e| AppError::Internal(e.into()))?,
             score,
             mode: "keyword".into(),
         });
@@ -246,6 +391,7 @@ async fn keyword_search(
 async fn vector_search(
     conn: &Arc<Mutex<Connection>>,
     query: &str,
+    target: Option<&str>,
     limit: usize,
     embedder: Option<&dyn Embedder>,
 ) -> Result<Vec<SearchHit>, AppError> {
@@ -254,28 +400,37 @@ async fn vector_search(
     })?;
     let qv = embedder.embed(&[query.to_string()]).await?.remove(0);
     let conn = conn.lock().await;
-    let mut rows = conn
-        .query(
-            "SELECT doc_kind, doc_name, field_name, field_role, text, embedding FROM column_index WHERE embedding IS NOT NULL",
+    let mut rows = if let Some(t) = target {
+        conn.query(
+            "SELECT target, doc_kind, doc_name, field_name, field_role, text, embedding FROM column_index WHERE embedding IS NOT NULL AND target = ?1",
+            params![t],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?
+    } else {
+        conn.query(
+            "SELECT target, doc_kind, doc_name, field_name, field_role, text, embedding FROM column_index WHERE embedding IS NOT NULL",
             (),
         )
         .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(|e| AppError::Internal(e.into()))?
+    };
     let mut scored = Vec::new();
     while let Some(row) = rows
         .next()
         .await
         .map_err(|e| AppError::Internal(e.into()))?
     {
-        let blob: Vec<u8> = row.get(5).map_err(|e| AppError::Internal(e.into()))?;
+        let blob: Vec<u8> = row.get(6).map_err(|e| AppError::Internal(e.into()))?;
         let emb = blob_to_f32(&blob);
         let score = cosine(&qv, &emb);
         scored.push(SearchHit {
-            doc_kind: row.get(0).map_err(|e| AppError::Internal(e.into()))?,
-            doc_name: row.get(1).map_err(|e| AppError::Internal(e.into()))?,
-            field_name: row.get(2).map_err(|e| AppError::Internal(e.into()))?,
-            field_role: row.get(3).map_err(|e| AppError::Internal(e.into()))?,
-            text: row.get(4).map_err(|e| AppError::Internal(e.into()))?,
+            target: row.get(0).map_err(|e| AppError::Internal(e.into()))?,
+            doc_kind: row.get(1).map_err(|e| AppError::Internal(e.into()))?,
+            doc_name: row.get(2).map_err(|e| AppError::Internal(e.into()))?,
+            field_name: row.get(3).map_err(|e| AppError::Internal(e.into()))?,
+            field_role: row.get(4).map_err(|e| AppError::Internal(e.into()))?,
+            text: row.get(5).map_err(|e| AppError::Internal(e.into()))?,
             score,
             mode: "vector".into(),
         });
@@ -372,6 +527,7 @@ fn augment_fts_text(text: &str) -> String {
 pub fn hits_to_json(hits: &[SearchHit]) -> Value {
     json!({
         "items": hits.iter().map(|h| json!({
+            "target": h.target,
             "doc_kind": h.doc_kind,
             "doc_name": h.doc_name,
             "field_name": h.field_name,
@@ -390,6 +546,17 @@ mod tests {
     use crate::semantic::SemanticStore;
     use std::sync::Arc;
 
+    #[test]
+    fn bm25_negative_ranks_produce_positive_monotonic_scores() {
+        let s_strong = bm25_rank_to_score(-12.5);
+        let s_medium = bm25_rank_to_score(-1.0);
+        let s_weak = bm25_rank_to_score(-0.2);
+        assert!(s_strong > 0.0 && s_strong <= 1.0);
+        assert!(s_medium > 0.0 && s_medium.is_finite());
+        assert!(s_weak > 0.0);
+        assert!(s_strong > s_medium && s_medium > s_weak);
+    }
+
     #[tokio::test]
     async fn table_columns_are_not_indexed() {
         let store = SemanticStore::open(":memory:").await.unwrap();
@@ -402,7 +569,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn keyword_and_hybrid_find_dimension() {
+    async fn keyword_and_hybrid_find_dimension_and_filter_by_target() {
         let embedder = Arc::new(HashEmbedder::new(16));
         let store = SemanticStore::open(":memory:")
             .await
@@ -424,12 +591,24 @@ mod tests {
         let hits = store.search_columns("region", "keyword", 10).await.unwrap();
         assert!(
             hits.iter()
-                .any(|h| h.field_name == "region_code" && h.field_role == "dimension"),
+                .any(|h| h.field_name == "region_code" && h.field_role == "dimension" && h.target == "dw"),
             "hits={hits:?}"
         );
+        assert!(hits.iter().all(|h| h.score > 0.0 && h.score.is_finite()));
         assert!(hits.iter().any(|h| h.text.contains("code")));
         let hybrid = store.search_columns("region", "hybrid", 10).await.unwrap();
         assert!(!hybrid.is_empty());
+
+        let filtered_ok = store
+            .search_columns_for_target("region", Some("dw"), "hybrid", 10)
+            .await
+            .unwrap();
+        assert!(!filtered_ok.is_empty());
+        let filtered_empty = store
+            .search_columns_for_target("region", Some("other_target"), "hybrid", 10)
+            .await
+            .unwrap();
+        assert!(filtered_empty.is_empty());
     }
 
     #[tokio::test]

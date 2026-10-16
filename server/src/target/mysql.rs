@@ -141,14 +141,6 @@ impl TargetDb for MysqlTarget {
         limit: usize,
     ) -> Result<Vec<Value>, AppError> {
         let schema = schema.unwrap_or("public");
-        for ident in [schema, table, column] {
-            if !ident
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_')
-            {
-                return Err(AppError::Validation("invalid identifier".into()));
-            }
-        }
         let d = DialectProfile::Mysql;
         let col = d.quote_ident(column)?;
         let sch = d.quote_ident(schema)?;
@@ -164,31 +156,59 @@ impl TargetDb for MysqlTarget {
 }
 
 fn mysql_value_to_json(row: &sqlx::mysql::MySqlRow, idx: usize) -> Result<Value, AppError> {
+    use sqlx::ValueRef;
+
+    if let Ok(raw) = row.try_get_raw(idx) {
+        if raw.is_null() {
+            return Ok(Value::Null);
+        }
+    }
     let col = &row.columns()[idx];
     let type_name = col.type_info().name();
     if let Ok(v) = row.try_get::<Option<bool>, _>(idx) {
-        return Ok(match v {
-            Some(b) => Value::Bool(b),
-            None => Value::Null,
-        });
+        return Ok(v.map(Value::Bool).unwrap_or(Value::Null));
     }
     if let Ok(v) = row.try_get::<Option<i64>, _>(idx) {
-        return Ok(match v {
-            Some(n) => json!(n),
-            None => Value::Null,
-        });
+        return Ok(v.map(|n| json!(n)).unwrap_or(Value::Null));
+    }
+    if let Ok(v) = row.try_get::<Option<u64>, _>(idx) {
+        return Ok(v.map(|n| json!(n)).unwrap_or(Value::Null));
+    }
+    if let Ok(v) = row.try_get::<Option<i32>, _>(idx) {
+        return Ok(v.map(|n| json!(n)).unwrap_or(Value::Null));
+    }
+    if let Ok(v) = row.try_get::<Option<i16>, _>(idx) {
+        return Ok(v.map(|n| json!(n)).unwrap_or(Value::Null));
     }
     if let Ok(v) = row.try_get::<Option<f64>, _>(idx) {
-        return Ok(match v {
-            Some(n) => json!(n),
-            None => Value::Null,
-        });
+        return Ok(v.map(|n| json!(n)).unwrap_or(Value::Null));
+    }
+    if let Ok(v) = row.try_get::<Option<f32>, _>(idx) {
+        return Ok(v.map(|n| json!(n)).unwrap_or(Value::Null));
     }
     if let Ok(v) = row.try_get::<Option<String>, _>(idx) {
-        return Ok(match v {
-            Some(s) => Value::String(s),
-            None => Value::Null,
-        });
+        return Ok(v.map(Value::String).unwrap_or(Value::Null));
+    }
+    if let Ok(v) = row.try_get::<Option<serde_json::Value>, _>(idx) {
+        return Ok(v.unwrap_or(Value::Null));
+    }
+    if let Ok(Some(bytes)) = row.try_get_unchecked::<Option<Vec<u8>>, _>(idx) {
+        if let Ok(s) = std::str::from_utf8(&bytes) {
+            if matches!(
+                type_name.to_ascii_uppercase().as_str(),
+                "DECIMAL" | "NEWDECIMAL"
+            ) {
+                if let Ok(i) = s.parse::<i64>() {
+                    return Ok(json!(i));
+                }
+                if let Ok(f) = s.parse::<f64>() {
+                    if let Some(n) = serde_json::Number::from_f64(f) {
+                        return Ok(Value::Number(n));
+                    }
+                }
+            }
+            return Ok(Value::String(s.to_owned()));
+        }
     }
     if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(idx) {
         return Ok(match v {

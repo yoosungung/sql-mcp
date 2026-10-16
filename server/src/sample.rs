@@ -1,10 +1,15 @@
 //! Resolve cube member → physical sample target (table column or as_code dictionary).
 
-use serde_json::{json, Value};
+use std::collections::HashMap;
 
-use crate::compile::{physical_from, resolve_dim_as_code};
+use serde_json::{Value, json};
+
+use crate::compile::{
+    apply_binds, check_role_access, collect_table_filters, physical_from, resolve_dim_as_code,
+};
 use crate::dialect::DialectProfile;
 use crate::error::AppError;
+use crate::expr_guard::extract_idents;
 
 #[derive(Debug, Clone)]
 pub struct SampleTarget {
@@ -18,13 +23,44 @@ pub struct SampleTarget {
     pub from_as_code: bool,
 }
 
-/// Resolve `cube` + dim/fact `member` to a physical sample target.
+/// Resolve `cube` + dim/fact `member` to a physical sample target (structural resolution + default/scope filters).
 pub fn resolve_sample_target(
     docs: &[Value],
     cube_name: &str,
     member: &str,
 ) -> Result<SampleTarget, AppError> {
+    resolve_sample_target_inner(docs, cube_name, member, None, None, false)
+}
+
+/// Resolve `cube` + dim/fact `member` with full RBAC `role` check, `permission_filters`, and `:bind` substitution.
+pub fn resolve_sample_target_with_context(
+    docs: &[Value],
+    cube_name: &str,
+    member: &str,
+    role: Option<&str>,
+    binds: Option<&HashMap<String, String>>,
+) -> Result<SampleTarget, AppError> {
+    resolve_sample_target_inner(docs, cube_name, member, role, binds, true)
+}
+
+fn resolve_sample_target_inner(
+    docs: &[Value],
+    cube_name: &str,
+    member: &str,
+    role: Option<&str>,
+    binds: Option<&HashMap<String, String>>,
+    enforce_rbac: bool,
+) -> Result<SampleTarget, AppError> {
     let cube = find_doc(docs, "cube", cube_name)?;
+    if enforce_rbac {
+        check_role_access(cube.get("role"), role)?;
+    }
+    let member_doc = find_cube_member(cube, member).ok_or_else(|| {
+        AppError::NotFound(format!("cube {cube_name} has no member {member}"))
+    })?;
+    if enforce_rbac {
+        check_role_access(member_doc.get("role"), role)?;
+    }
     let view_name = cube
         .get("view")
         .and_then(|v| v.as_str())
@@ -33,6 +69,9 @@ pub fn resolve_sample_target(
 
     if let Some((code_table_name, as_code)) = resolve_dim_as_code(docs, cube, view, member)? {
         let code_doc = find_doc(docs, "table", &code_table_name)?;
+        if enforce_rbac {
+            check_role_access(code_doc.get("role"), role)?;
+        }
         let key = as_code
             .get("key_column")
             .and_then(|v| v.as_str())
@@ -43,15 +82,18 @@ pub fn resolve_sample_target(
             .ok_or_else(|| AppError::Validation("as_code.value_column".into()))?;
         let schema = str_field(code_doc, "schema")?;
         let table = str_field(code_doc, "table")?;
+        let mut filters = collect_table_filters(code_doc, role, binds)?;
+        if let Some(w) = as_code.get("where").and_then(|v| v.as_str()) {
+            let resolved = apply_binds(w, binds);
+            filters.push(format!("({resolved})"));
+        }
+        let where_extra = (!filters.is_empty()).then(|| filters.join(" AND "));
         return Ok(SampleTarget {
             schema: schema.to_string(),
             table: table.to_string(),
             column: key.to_string(),
             value_column: Some(value.to_string()),
-            where_extra: as_code
-                .get("where")
-                .and_then(|v| v.as_str())
-                .map(str::to_string),
+            where_extra,
             resolved: json!({
                 "cube": cube_name,
                 "member": member,
@@ -67,11 +109,17 @@ pub fn resolve_sample_target(
         });
     }
 
-    let member_doc = find_cube_member(cube, member).ok_or_else(|| {
-        AppError::NotFound(format!("cube {cube_name} has no member {member}"))
-    })?;
     if member_doc.get("expression").is_some() && member_doc.get("column").is_none() {
-        return resolve_expression_sample(docs, cube_name, view, member_doc, member);
+        return resolve_expression_sample(
+            docs,
+            cube_name,
+            view,
+            member_doc,
+            member,
+            role,
+            binds,
+            enforce_rbac,
+        );
     }
     let view_col = member_doc
         .get("column")
@@ -89,14 +137,19 @@ pub fn resolve_sample_target(
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("mapping.column".into()))?;
     let table_doc = find_doc(docs, "table", source)?;
+    if enforce_rbac {
+        check_role_access(table_doc.get("role"), role)?;
+    }
     let schema = str_field(table_doc, "schema")?;
     let table = str_field(table_doc, "table")?;
+    let filters = collect_table_filters(table_doc, role, binds)?;
+    let where_extra = (!filters.is_empty()).then(|| filters.join(" AND "));
     Ok(SampleTarget {
         schema: schema.to_string(),
         table: table.to_string(),
         column: phys_col.to_string(),
         value_column: None,
-        where_extra: None,
+        where_extra,
         resolved: json!({
             "cube": cube_name,
             "member": member,
@@ -117,27 +170,26 @@ fn resolve_expression_sample(
     view: &Value,
     member_doc: &Value,
     member: &str,
+    role: Option<&str>,
+    binds: Option<&HashMap<String, String>>,
+    enforce_rbac: bool,
 ) -> Result<SampleTarget, AppError> {
     let expr = member_doc
         .get("expression")
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("expression missing".into()))?;
-    // Collect simple idents from expression and require single physical source table.
+    let idents = extract_idents(expr).unwrap_or_default();
     let mut sources: Vec<String> = Vec::new();
-    for tok in expr.split(|c: char| !c.is_ascii_alphanumeric() && c != '_') {
-        if tok.is_empty()
-            || matches!(
-                tok,
-                "date_trunc" | "year" | "month" | "sum" | "count" | "avg" | "day"
-            )
-        {
-            continue;
-        }
+    let mut first_phys_col: Option<String> = None;
+    for tok in &idents {
         if let Ok(Some(m)) = view_first_mapping(view, tok) {
             if let Some(src) = m.get("source").and_then(|v| v.as_str()) {
                 if !sources.iter().any(|s| s == src) {
                     sources.push(src.to_string());
                 }
+            }
+            if first_phys_col.is_none() {
+                first_phys_col = m.get("column").and_then(|v| v.as_str()).map(str::to_string);
             }
         }
     }
@@ -148,27 +200,23 @@ fn resolve_expression_sample(
     }
     let source = &sources[0];
     let table_doc = find_doc(docs, "table", source)?;
+    if enforce_rbac {
+        check_role_access(table_doc.get("role"), role)?;
+    }
     let schema = str_field(table_doc, "schema")?;
     let table = str_field(table_doc, "table")?;
-    // Sample the first mapped physical column referenced in the expression.
-    let phys_col = expr
-        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-        .find_map(|tok| {
-            view_first_mapping(view, tok)
-                .ok()
-                .flatten()
-                .and_then(|m| m.get("column").and_then(|v| v.as_str()).map(str::to_string))
-        })
-        .ok_or_else(|| {
-            AppError::Validation(format!("cannot resolve physical column for {member}"))
-        })?;
+    let phys_col = first_phys_col.ok_or_else(|| {
+        AppError::Validation(format!("cannot resolve physical column for {member}"))
+    })?;
     let _ = physical_from(table_doc)?;
+    let filters = collect_table_filters(table_doc, role, binds)?;
+    let where_extra = (!filters.is_empty()).then(|| filters.join(" AND "));
     Ok(SampleTarget {
         schema: schema.to_string(),
         table: table.to_string(),
         column: phys_col.clone(),
         value_column: None,
-        where_extra: None,
+        where_extra,
         resolved: json!({
             "cube": cube_name,
             "member": member,
@@ -317,5 +365,29 @@ mod tests {
         assert!(my.contains("`sale_amount`"));
         assert!(my.contains("`sales`.`orders`"));
         assert!(!my.contains('"'));
+    }
+
+    #[test]
+    fn sample_with_context_enforces_rbac_and_table_filters() {
+        let docs = example_docs();
+        // sale_amount is restricted to ["finance"]
+        assert!(matches!(
+            resolve_sample_target_with_context(&docs, "sales", "sale_amount", Some("branch"), None),
+            Err(AppError::Forbidden(_))
+        ));
+        let mut binds = HashMap::new();
+        binds.insert("caller_region".into(), "KR".into());
+        // order_date is "all", on orders table which has permission_filter for "branch" and default_filter
+        let t = resolve_sample_target_with_context(
+            &docs,
+            "sales",
+            "order_date",
+            Some("branch"),
+            Some(&binds),
+        )
+        .unwrap();
+        let w = t.where_extra.as_deref().unwrap();
+        assert!(w.contains("region_code = 'KR'"), "expected resolved permission filter in {w}");
+        assert!(w.contains("CANCELLED"), "expected default_filter in {w}");
     }
 }

@@ -386,7 +386,8 @@
         "facts": {
           "type": "array",
           "items": { "$ref": "#/$defs/fact" }
-        }
+        },
+        "role": { "$ref": "#/$defs/role" }
       }
     },
     "dimension": {

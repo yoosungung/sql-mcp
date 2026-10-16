@@ -67,7 +67,8 @@ CREATE TABLE IF NOT EXISTS meta_cubes (
   name TEXT PRIMARY KEY,
   target TEXT NOT NULL,
   view_name TEXT NOT NULL REFERENCES meta_views(name),
-  description TEXT NOT NULL
+  description TEXT NOT NULL,
+  role_json TEXT NOT NULL DEFAULT '"all"'
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS meta_cube_dimensions (
@@ -119,6 +120,7 @@ CREATE TABLE IF NOT EXISTS meta_segments (
 -- D12: 실제 적재는 cube/dim/fact/metric/segment(이름·설명·dim type·fact amount/fx)만. column 역할은 레거시 CHECK용.
 CREATE TABLE IF NOT EXISTS column_index (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  target TEXT NOT NULL DEFAULT 'dw',
   doc_kind TEXT NOT NULL CHECK (
     doc_kind IN ('table', 'view', 'cube', 'metric', 'segment')
   ),

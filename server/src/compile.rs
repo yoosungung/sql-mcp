@@ -2,23 +2,45 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde_json::Value;
 
+use crate::ast_select::{SelectClauses, assemble_select_with_clauses};
 use crate::dialect::DialectProfile;
 use crate::error::AppError;
-use crate::expr_guard::{assert_filter_expr, assert_idents_known, assert_metric_expr};
+use crate::expr_guard::{
+    assert_filter_expr, assert_idents_known, assert_metric_expr, extract_idents,
+};
 use crate::select_guard::assert_select_only;
 
 /// Quote a simple SQL identifier in **canonical ANSI** form (`"…"`).
 /// Delegates to [`DialectProfile::Postgres`]; emit adapts via other profiles (D21).
 pub fn quote_ident(name: &str) -> Result<String, AppError> {
-    // Compile path only emits semantic/simple idents (alphanumeric + `_`).
-    if name.is_empty()
-        || !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
-        return Err(AppError::Validation(format!("invalid identifier: {name}")));
-    }
     DialectProfile::Postgres.quote_ident(name)
+}
+
+/// Enforce RBAC `role` access on any semantic entity (`cube`, `table`, `metric`, `segment`, `dimension`, `fact`).
+pub fn check_role_access(role_val: Option<&Value>, caller: Option<&str>) -> Result<(), AppError> {
+    let Some(role_val) = role_val else {
+        return Ok(());
+    };
+    if role_val.as_str() == Some("all") || role_val.is_null() {
+        return Ok(());
+    }
+    if let Value::Array(arr) = role_val {
+        if arr.iter().any(|v| v.as_str() == Some("all")) {
+            return Ok(());
+        }
+    }
+    let Some(caller) = caller else {
+        return Err(AppError::Forbidden(
+            "caller_role required for restricted resource".into(),
+        ));
+    };
+    match role_val {
+        Value::String(s) if s == "all" || s == caller => Ok(()),
+        Value::Array(arr) if arr.iter().any(|v| v.as_str() == Some(caller)) => Ok(()),
+        _ => Err(AppError::Forbidden(format!(
+            "role {caller} cannot access this resource"
+        ))),
+    }
 }
 
 /// Physical FROM clause for a table registration document.
@@ -44,9 +66,19 @@ pub fn compile_table_select(
     columns: &[&str],
     role: Option<&str>,
 ) -> Result<String, AppError> {
+    compile_table_select_with_binds(table_doc, columns, role, None)
+}
+
+pub fn compile_table_select_with_binds(
+    table_doc: &Value,
+    columns: &[&str],
+    role: Option<&str>,
+    binds: Option<&HashMap<String, String>>,
+) -> Result<String, AppError> {
     if table_doc.get("kind").and_then(|v| v.as_str()) != Some("table") {
         return Err(AppError::Validation("expected table document".into()));
     }
+    check_role_access(table_doc.get("role"), role)?;
     let from = physical_from(table_doc)?;
     let cols = if columns.is_empty() {
         "*".to_string()
@@ -57,28 +89,7 @@ pub fn compile_table_select(
             .collect::<Result<Vec<_>, _>>()?
             .join(", ")
     };
-    let known = table_column_names(table_doc);
-    let mut filters = Vec::new();
-    if let Some(expr) = filter_expr(table_doc.get("scope_filter")) {
-        validate_table_filter(expr, &known)?;
-        filters.push(format!("({expr})"));
-    }
-    if let Some(expr) = filter_expr(table_doc.get("default_filter")) {
-        validate_table_filter(expr, &known)?;
-        filters.push(format!("({expr})"));
-    }
-    if let Some(role) = role {
-        if let Some(pfs) = table_doc.get("permission_filters").and_then(|v| v.as_array()) {
-            for pf in pfs {
-                if pf.get("role").and_then(|v| v.as_str()) == Some(role) {
-                    if let Some(expr) = pf.get("expression").and_then(|v| v.as_str()) {
-                        validate_table_filter(expr, &known)?;
-                        filters.push(format!("({expr})"));
-                    }
-                }
-            }
-        }
-    }
+    let filters = collect_table_filters(table_doc, role, binds)?;
     let mut sql = format!("SELECT {cols} FROM {from}");
     if !filters.is_empty() {
         sql.push_str(" WHERE ");
@@ -86,6 +97,46 @@ pub fn compile_table_select(
     }
     assert_select_only(&sql)?;
     Ok(sql)
+}
+
+pub(crate) fn collect_table_filters(
+    table_doc: &Value,
+    role: Option<&str>,
+    binds: Option<&HashMap<String, String>>,
+) -> Result<Vec<String>, AppError> {
+    let known = table_column_names(table_doc);
+    let mut filters = Vec::new();
+    if let Some(expr) = filter_expr(table_doc.get("scope_filter")) {
+        validate_table_filter(expr, &known)?;
+        let resolved = apply_binds(expr, binds);
+        filters.push(format!("({resolved})"));
+    }
+    if let Some(expr) = filter_expr(table_doc.get("default_filter")) {
+        validate_table_filter(expr, &known)?;
+        let resolved = apply_binds(expr, binds);
+        filters.push(format!("({resolved})"));
+    }
+    if let Some(role) = role {
+        if let Some(pfs) = table_doc.get("permission_filters").and_then(|v| v.as_array()) {
+            for pf in pfs {
+                if pf.get("role").and_then(|v| v.as_str()) == Some(role) {
+                    if let Some(expr) = pf.get("expression").and_then(|v| v.as_str()) {
+                        validate_table_filter(expr, &known)?;
+                        let resolved = apply_binds(expr, binds);
+                        filters.push(format!("({resolved})"));
+                    }
+                }
+            }
+        }
+    }
+    Ok(filters)
+}
+
+pub(crate) fn apply_binds(expr: &str, binds: Option<&HashMap<String, String>>) -> String {
+    match binds {
+        Some(b) if !b.is_empty() => crate::date_range::substitute_binds(expr, b),
+        _ => expr.to_string(),
+    }
 }
 
 fn table_column_names(table_doc: &Value) -> HashSet<String> {
@@ -178,7 +229,7 @@ pub fn compile_view_from_opts(
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("view.combine required".into()))?;
     match combine {
-        "join" => compile_join_view(docs, view, role, used_view_cols),
+        "join" => compile_join_view(docs, view, role, used_view_cols, binds),
         "union" => compile_set_view(docs, view, role, used_view_cols, false, query_preds, binds),
         "minus" => compile_set_view(docs, view, role, used_view_cols, true, query_preds, binds),
         "select" => Err(AppError::Validation(
@@ -225,10 +276,10 @@ fn compile_set_view(
     }
 
     let empty = HashMap::new();
-    let binds = binds.unwrap_or(&empty);
+    let bind_map = binds.unwrap_or(&empty);
     let mut query_dnf = Vec::new();
     for p in query_preds {
-        query_dnf.extend(crate::date_range::extract_dnf_with_binds(p, binds));
+        query_dnf.extend(crate::date_range::extract_dnf_with_binds(p, bind_map));
     }
 
     let op = if is_minus { "EXCEPT" } else { "UNION ALL" };
@@ -243,7 +294,7 @@ fn compile_set_view(
             continue; // prune: sentinel unsatisfiable scope
         }
         if let Some(scope) = filter_expr(table.get("scope_filter")) {
-            let scope_dnf = crate::date_range::extract_dnf_with_binds(scope, binds);
+            let scope_dnf = crate::date_range::extract_dnf_with_binds(scope, bind_map);
             if crate::date_range::is_disjoint_dnf(&scope_dnf, &query_dnf) {
                 continue; // prune: date range disjoint from query
             }
@@ -253,7 +304,7 @@ fn compile_set_view(
             let phys = view_physical_expr_for_source(view, col, tname)?;
             select_parts.push(format!("{phys} AS {}", quote_ident(col)?));
         }
-        let from = inline_table_ref(docs, tname, role)?;
+        let from = inline_table_ref(docs, tname, role, binds)?;
         branches.push(format!("SELECT {} FROM {}", select_parts.join(", "), from));
     }
     if branches.is_empty() {
@@ -371,13 +422,13 @@ pub fn resolve_view_for_cube(
             .get("kind")
             .and_then(|v| v.as_str())
             .unwrap_or("view");
+        let is_summary = src.get("summary").and_then(|v| v.as_bool()).unwrap_or(false);
         let candidate = find_doc(docs, skind, sname)?;
         if skind == "view" && view_covers_cols(candidate, req_cols) {
-            if is_semi_additive {
-                // Semi-additive: only accept if candidate has no finer grain than query.
-                // Without explicit summary grain metadata, require exact column set match.
+            if is_semi_additive && is_summary {
+                // Semi-additive: only accept a summary candidate if its grain matches req_cols exactly.
                 let cand_cols = view_column_name_set(candidate);
-                if cand_cols != *req_cols && !req_cols.is_subset(&cand_cols) {
+                if cand_cols != *req_cols {
                     continue;
                 }
             }
@@ -386,7 +437,6 @@ pub fn resolve_view_for_cube(
         if skind == "table" {
             let tcols = table_column_names(candidate);
             if req_cols.is_subset(&tcols) {
-                // Wrap table as a synthetic join view of one source.
                 return Ok(json_singleton_table_view(sname, candidate)?);
             }
         }
@@ -412,6 +462,7 @@ fn compile_join_view(
     view: &Value,
     role: Option<&str>,
     used_view_cols: Option<&HashSet<String>>,
+    binds: Option<&HashMap<String, String>>,
 ) -> Result<String, AppError> {
     let sources = view
         .get("sources")
@@ -430,11 +481,15 @@ fn compile_join_view(
         .iter()
         .filter_map(|s| source_name(s).ok().map(str::to_string))
         .collect();
-    let t_req = if let Some(cols) = used_view_cols {
+    let mut t_req = if let Some(cols) = used_view_cols {
         tables_for_view_cols(view, cols)
     } else {
         all_names.clone()
     };
+    // Always anchor the primary/fact table (sources[0]) so LEFT JOIN direction is preserved.
+    if let Some(base) = sources.first().and_then(|s| source_name(s).ok()) {
+        t_req.insert(base.to_string());
+    }
     let included = steiner_nodes(&joins, &t_req, &all_names)?;
 
     let mut ordered: Vec<String> = sources
@@ -447,14 +502,18 @@ fn compile_join_view(
     }
 
     let first = ordered.remove(0);
-    let mut sql = format!("{} ", inline_table_ref(docs, &first, role)?);
+    let mut sql = format!("{} ", inline_table_ref(docs, &first, role, binds)?);
     let mut placed: HashSet<String> = HashSet::from([first.clone()]);
 
     // Attach joins whose both ends are included and at least one side already placed.
     let mut pending = joins.clone();
     while placed.len() < included.len() {
         let mut progress = false;
+        let mut join_err: Option<AppError> = None;
         pending.retain(|j| {
+            if join_err.is_some() {
+                return false;
+            }
             let right = j.get("right").and_then(|v| v.as_str()).unwrap_or("");
             let left = j.get("left").and_then(|v| v.as_str()).unwrap_or("");
             if !included.contains(left) || !included.contains(right) {
@@ -469,26 +528,27 @@ fn compile_join_view(
                 return true; // keep for later
             }
             // Attach the missing side.
-            let (anchor, new_side) = if left_in {
-                (left, right)
-            } else {
-                (right, left)
-            };
-            if let Ok(frag) = format_join_fragment(docs, j, new_side, role) {
-                // ON uses original left/right names — ok.
-                let _ = anchor;
-                sql.push_str(&frag);
-                placed.insert(new_side.to_string());
-                progress = true;
+            let new_side = if left_in { right } else { left };
+            match format_join_fragment(docs, j, new_side, role, binds) {
+                Ok(frag) => {
+                    sql.push_str(&frag);
+                    placed.insert(new_side.to_string());
+                    progress = true;
+                }
+                Err(e) => {
+                    join_err = Some(e);
+                }
             }
             false
         });
+        if let Some(e) = join_err {
+            return Err(e);
+        }
         if !progress {
-            // Fallback: add any remaining included table with CROSS (should not happen).
             if let Some(missing) = included.iter().find(|n| !placed.contains(*n)) {
                 sql.push_str(&format!(
                     " CROSS JOIN {} ",
-                    inline_table_ref(docs, missing, role)?
+                    inline_table_ref(docs, missing, role, binds)?
                 ));
                 placed.insert(missing.clone());
             } else {
@@ -504,6 +564,7 @@ fn format_join_fragment(
     j: &Value,
     new_side: &str,
     role: Option<&str>,
+    binds: Option<&HashMap<String, String>>,
 ) -> Result<String, AppError> {
     let left = j
         .get("left")
@@ -514,12 +575,13 @@ fn format_join_fragment(
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("join.right required".into()))?;
     let jtype = j.get("type").and_then(|v| v.as_str()).unwrap_or("inner");
-    let join_kw = match jtype {
-        "inner" => "INNER JOIN",
-        "left" => "LEFT JOIN",
-        "right" => "RIGHT JOIN",
-        "full" => "FULL JOIN",
-        other => {
+    let reversed = new_side == left;
+    let join_kw = match (jtype, reversed) {
+        ("inner", _) => "INNER JOIN",
+        ("left", false) | ("right", true) => "LEFT JOIN",
+        ("right", false) | ("left", true) => "RIGHT JOIN",
+        ("full", _) => "FULL JOIN",
+        (other, _) => {
             return Err(AppError::Validation(format!("unsupported join type {other}")));
         }
     };
@@ -547,7 +609,7 @@ fn format_join_fragment(
     }
     Ok(format!(
         " {join_kw} {} ON {}",
-        inline_table_ref(docs, new_side, role)?,
+        inline_table_ref(docs, new_side, role, binds)?,
         ons.join(" AND ")
     ))
 }
@@ -615,7 +677,6 @@ fn steiner_nodes(
             )));
         }
     }
-    // Also connect any terminal not reachable from root via pairwise from included seed.
     Ok(included)
 }
 
@@ -652,31 +713,16 @@ fn shortest_path(
 }
 
 /// `(SELECT * FROM phys WHERE filters) AS "alias"` — filters unqualified (Step 6).
-fn inline_table_ref(docs: &[Value], alias: &str, role: Option<&str>) -> Result<String, AppError> {
+fn inline_table_ref(
+    docs: &[Value],
+    alias: &str,
+    role: Option<&str>,
+    binds: Option<&HashMap<String, String>>,
+) -> Result<String, AppError> {
     let table = find_doc(docs, "table", alias)?;
+    check_role_access(table.get("role"), role)?;
     let phys = physical_from(table)?;
-    let known = table_column_names(table);
-    let mut filters = Vec::new();
-    if let Some(expr) = filter_expr(table.get("scope_filter")) {
-        validate_table_filter(expr, &known)?;
-        filters.push(format!("({expr})"));
-    }
-    if let Some(expr) = filter_expr(table.get("default_filter")) {
-        validate_table_filter(expr, &known)?;
-        filters.push(format!("({expr})"));
-    }
-    if let Some(role) = role {
-        if let Some(pfs) = table.get("permission_filters").and_then(|v| v.as_array()) {
-            for pf in pfs {
-                if pf.get("role").and_then(|v| v.as_str()) == Some(role) {
-                    if let Some(expr) = pf.get("expression").and_then(|v| v.as_str()) {
-                        validate_table_filter(expr, &known)?;
-                        filters.push(format!("({expr})"));
-                    }
-                }
-            }
-        }
-    }
+    let filters = collect_table_filters(table, role, binds)?;
     let qalias = quote_ident(alias)?;
     if filters.is_empty() {
         Ok(format!("{phys} AS {qalias}"))
@@ -722,6 +768,27 @@ fn view_physical_expr(view: &Value, view_col: &str) -> Result<String, AppError> 
     Ok(format!("{}.{}", quote_ident(source)?, quote_ident(column)?))
 }
 
+#[derive(Debug, Clone)]
+pub struct CubeProjection {
+    pub member: String,
+    pub alias: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CubeQuerySpec {
+    pub projections: Vec<CubeProjection>,
+    pub metrics: Vec<String>,
+    pub dimensions: Vec<String>,
+    pub segments: Vec<String>,
+    pub where_exprs: Vec<String>,
+    pub explicit_group_by: Option<Vec<String>>,
+    pub aggregation: Option<String>,
+    pub having: Option<String>,
+    pub order_by: Vec<String>,
+    pub limit: Option<String>,
+    pub offset: Option<String>,
+}
+
 /// Compile cube metric (+ optional segments) into physical SELECT.
 pub fn compile_metric_select(
     docs: &[Value],
@@ -744,49 +811,197 @@ pub fn compile_metric_select_with_binds(
         .get("cube")
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("metric.cube required".into()))?;
+    let spec = CubeQuerySpec {
+        projections: Vec::new(),
+        metrics: vec![metric_name.to_string()],
+        dimensions: Vec::new(),
+        segments: segment_names.iter().map(|s| (*s).to_string()).collect(),
+        where_exprs: Vec::new(),
+        explicit_group_by: None,
+        aggregation: None,
+        having: None,
+        order_by: Vec::new(),
+        limit: None,
+        offset: None,
+    };
+    compile_cube_query(docs, cube_name, &spec, role, binds)
+}
+
+pub fn compile_cube_query(
+    docs: &[Value],
+    cube_name: &str,
+    spec: &CubeQuerySpec,
+    role: Option<&str>,
+    binds: Option<&HashMap<String, String>>,
+) -> Result<String, AppError> {
+    if spec.metrics.is_empty() {
+        return Err(AppError::Validation(
+            "semantic SELECT must project at least one metric".into(),
+        ));
+    }
     let cube = find_doc(docs, "cube", cube_name)?;
+    check_role_access(cube.get("role"), role)?;
 
-    let metric_expr = metric
-        .get("expression")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::Validation("metric.expression required".into()))?;
-    let is_semi = metric_expr.to_ascii_lowercase().contains("count(distinct")
-        || metric_expr.to_ascii_lowercase().contains("avg(")
-        || metric_expr.to_ascii_lowercase().contains("median(");
+    let members = cube_member_names(cube);
+    let mut metric_docs = Vec::with_capacity(spec.metrics.len());
+    let mut allowed_gb: Vec<String> = Vec::new();
+    let mut is_semi = false;
+    let mut agg_mode: Option<String> = spec.aggregation.clone();
 
-    let group_by = metric
-        .get("group_by")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
+    for m_name in &spec.metrics {
+        let m_doc = find_doc(docs, "metric", m_name)?;
+        if m_doc.get("cube").and_then(|v| v.as_str()) != Some(cube_name) {
+            return Err(AppError::Validation(format!(
+                "metric {m_name} is not on cube {cube_name}"
+            )));
+        }
+        check_role_access(m_doc.get("role"), role)?;
+        let m_expr = m_doc
+            .get("expression")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AppError::Validation("metric.expression required".into()))?;
+        assert_metric_expr(m_expr)?;
+        assert_idents_known(m_expr, &members)?;
+        for id in extract_idents(m_expr)? {
+            if member_encrypted(cube, &id) {
+                return Err(AppError::Validation(format!(
+                    "encrypted member {id} cannot be aggregated in metric {m_name}"
+                )));
+            }
+        }
+        if let Some(f_expr) = filter_expr(m_doc.get("filter")) {
+            assert_filter_expr(f_expr)?;
+            assert_idents_known(f_expr, &members)?;
+            for id in extract_idents(f_expr)? {
+                if member_encrypted(cube, &id) {
+                    return Err(AppError::Validation(format!(
+                        "encrypted member {id} cannot be used in metric filter"
+                    )));
+                }
+            }
+        }
+        let lower = m_expr.to_ascii_lowercase();
+        if lower.contains("count(distinct") || lower.contains("avg(") || lower.contains("median(") {
+            is_semi = true;
+        }
+        if agg_mode.is_none() {
+            agg_mode = m_doc
+                .get("aggregation")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+        }
+        if let Some(gb_arr) = m_doc.get("group_by").and_then(|v| v.as_array()) {
+            for g in gb_arr {
+                if let Some(gs) = g.as_str() {
+                    if !allowed_gb.iter().any(|x| x == gs) {
+                        allowed_gb.push(gs.to_string());
+                    }
+                }
+            }
+        }
+        metric_docs.push((m_name.as_str(), m_doc, m_expr));
+    }
+
+    // Determine effective group_by dimensions.
+    let active_gb: Vec<String> = if let Some(explicit) = &spec.explicit_group_by {
+        for d in explicit {
+            if !allowed_gb.iter().any(|g| g == d) {
+                return Err(AppError::Validation(format!(
+                    "dimension {d} not in metric group_by"
+                )));
+            }
+            check_member_role(cube, d, role)?;
+        }
+        explicit.clone()
+    } else if !spec.dimensions.is_empty() {
+        for d in &spec.dimensions {
+            if !allowed_gb.iter().any(|g| g == d) {
+                return Err(AppError::Validation(format!(
+                    "dimension {d} not in metric group_by"
+                )));
+            }
+            check_member_role(cube, d, role)?;
+        }
+        spec.dimensions.clone()
+    } else {
+        for d in &allowed_gb {
+            check_member_role(cube, d, role)?;
+        }
+        allowed_gb.clone()
+    };
+
+    for d in &spec.dimensions {
+        check_member_role(cube, d, role)?;
+    }
 
     let mut req_cols: HashSet<String> = HashSet::new();
-    for g in &group_by {
-        if let Some(gname) = g.as_str() {
-            req_cols.insert(gname.to_string());
-        }
+    for gname in &active_gb {
+        collect_member_view_cols(cube, gname, &mut req_cols);
     }
-    // Fact/dim names in metric expression → resolve to view columns via member.column.
-    collect_member_view_cols(cube, metric_expr, &mut req_cols);
-    if let Some(expr) = filter_expr(metric.get("filter")) {
-        collect_member_view_cols(cube, expr, &mut req_cols);
+    for d in &spec.dimensions {
+        collect_member_view_cols(cube, d, &mut req_cols);
     }
-    for seg_name in segment_names {
-        let seg = find_doc(docs, "segment", seg_name)?;
-        if let Some(expr) = filter_expr(seg.get("filter")) {
+    for (_, m_doc, m_expr) in &metric_docs {
+        collect_member_view_cols(cube, m_expr, &mut req_cols);
+        if let Some(expr) = filter_expr(m_doc.get("filter")) {
             collect_member_view_cols(cube, expr, &mut req_cols);
         }
     }
+    for seg_name in &spec.segments {
+        let seg = find_doc(docs, "segment", seg_name)?;
+        if seg.get("cube").and_then(|v| v.as_str()) != Some(cube_name) {
+            return Err(AppError::Validation(format!(
+                "segment {seg_name} not on cube {cube_name}"
+            )));
+        }
+        check_role_access(seg.get("role"), role)?;
+        if let Some(expr) = filter_expr(seg.get("filter")) {
+            assert_filter_expr(expr)?;
+            assert_idents_known(expr, &members)?;
+            for id in extract_idents(expr)? {
+                if member_encrypted(cube, &id) {
+                    return Err(AppError::Validation(format!(
+                        "encrypted member {id} cannot be used in segment filter"
+                    )));
+                }
+            }
+            collect_member_view_cols(cube, expr, &mut req_cols);
+        }
+    }
+    for w_expr in &spec.where_exprs {
+        assert_filter_expr(w_expr)?;
+        assert_idents_known(w_expr, &members)?;
+        for id in extract_idents(w_expr)? {
+            check_member_role(cube, &id, role)?;
+            if member_encrypted(cube, &id) {
+                return Err(AppError::Validation(format!(
+                    "encrypted member {id} cannot be used in WHERE filter"
+                )));
+            }
+        }
+        collect_member_view_cols(cube, w_expr, &mut req_cols);
+    }
+
+    // Decide whether metric filters can be shared in outer WHERE or must be injected via CASE WHEN.
+    let first_m_filter = filter_expr(metric_docs[0].1.get("filter"));
+    let shared_metric_filter = metric_docs
+        .iter()
+        .all(|(_, m_doc, _)| filter_expr(m_doc.get("filter")) == first_m_filter);
 
     let mut query_preds: Vec<String> = Vec::new();
-    if let Some(expr) = filter_expr(metric.get("filter")) {
-        query_preds.push(expr.to_string());
+    if shared_metric_filter {
+        if let Some(expr) = first_m_filter {
+            query_preds.push(expr.to_string());
+        }
     }
-    for seg_name in segment_names {
+    for seg_name in &spec.segments {
         let seg = find_doc(docs, "segment", seg_name)?;
         if let Some(expr) = filter_expr(seg.get("filter")) {
             query_preds.push(expr.to_string());
         }
+    }
+    for w_expr in &spec.where_exprs {
+        query_preds.push(w_expr.clone());
     }
 
     let view = resolve_view_for_cube(docs, cube, &req_cols, is_semi)?;
@@ -798,63 +1013,200 @@ pub fn compile_metric_select_with_binds(
         from = format!("{from} AS {}", quote_ident(a)?);
     }
 
-    let mut projections: Vec<(String, String)> = Vec::new();
-    for g in &group_by {
-        let gname = g
-            .as_str()
-            .ok_or_else(|| AppError::Validation("group_by entry".into()))?;
-        let expr = if member_encrypted(cube, gname) {
-            "NULL".to_string()
-        } else {
-            output_col_expr(&view, gname, set_alias)?
-        };
-        projections.push((expr, gname.to_string()));
-    }
-    let members = cube_member_names(cube);
     let view_cols = view_column_name_set(&view);
     validate_cube_member_expressions(cube, &view_cols)?;
 
-    assert_metric_expr(metric_expr)?;
-    assert_idents_known(metric_expr, &members)?;
-    let rewritten = rewrite_metric_expression(metric_expr, cube, &view, set_alias)?;
-    projections.push((rewritten, metric_name.to_string()));
-
-    // Outer WHERE: metric/segment only (table filters pushed down; dim/fact have no default_filter).
-    let mut filters = Vec::new();
-
-    if let Some(expr) = filter_expr(metric.get("filter")) {
-        assert_filter_expr(expr)?;
-        assert_idents_known(expr, &members)?;
-        filters.push(rewrite_view_idents(expr, &view, set_alias)?);
+    let mut rewritten_metrics: HashMap<String, String> = HashMap::new();
+    for (m_name, m_doc, m_expr) in &metric_docs {
+        let mut rewritten = rewrite_metric_expression(m_expr, cube, &view, set_alias)?;
+        if !shared_metric_filter {
+            if let Some(f_expr) = filter_expr(m_doc.get("filter")) {
+                let f_rewritten =
+                    rewrite_member_or_view_idents(f_expr, cube, &view, set_alias, binds)?;
+                rewritten = inject_filter_into_aggregates(&rewritten, &f_rewritten)?;
+            }
+        }
+        rewritten_metrics.insert((*m_name).to_string(), rewritten);
     }
-    for seg_name in segment_names {
+
+    let mut projections: Vec<(String, String)> = Vec::new();
+    let mut as_code_dims: Vec<(String, String)> = Vec::new(); // (dim_name, projected_alias)
+
+    if spec.projections.is_empty() {
+        for gname in &active_gb {
+            let expr = compile_dimension_expr(cube, &view, gname, set_alias)?;
+            projections.push((expr, gname.clone()));
+            as_code_dims.push((gname.clone(), gname.clone()));
+        }
+        for (m_name, _, _) in &metric_docs {
+            let expr = rewritten_metrics.get(*m_name).unwrap().clone();
+            projections.push((expr, (*m_name).to_string()));
+        }
+    } else {
+        // If the user only wrote metrics in SELECT (no explicit dimensions), keep active_gb projected first
+        // so group_by columns and as_code dictionary values are available in the result set.
+        if spec.dimensions.is_empty() {
+            for gname in &active_gb {
+                let expr = compile_dimension_expr(cube, &view, gname, set_alias)?;
+                projections.push((expr, gname.clone()));
+                as_code_dims.push((gname.clone(), gname.clone()));
+            }
+        }
+        for p in &spec.projections {
+            if let Some(m_expr) = rewritten_metrics.get(&p.member) {
+                projections.push((m_expr.clone(), p.alias.clone()));
+            } else {
+                let expr = compile_dimension_expr(cube, &view, &p.member, set_alias)?;
+                projections.push((expr, p.alias.clone()));
+                if !as_code_dims.iter().any(|(d, _)| d == &p.member) {
+                    as_code_dims.push((p.member.clone(), p.alias.clone()));
+                }
+            }
+        }
+    }
+
+    // Outer WHERE: shared metric filter (if applicable) + segments + user ad-hoc WHERE predicates.
+    let mut filters = Vec::new();
+    if shared_metric_filter {
+        if let Some(expr) = first_m_filter {
+            filters.push(rewrite_member_or_view_idents(
+                expr, cube, &view, set_alias, binds,
+            )?);
+        }
+    }
+    for seg_name in &spec.segments {
         let seg = find_doc(docs, "segment", seg_name)?;
-        if seg.get("cube").and_then(|v| v.as_str()) != Some(cube_name) {
-            return Err(AppError::Validation(format!(
-                "segment {seg_name} not on cube {cube_name}"
-            )));
-        }
         if let Some(expr) = filter_expr(seg.get("filter")) {
-            assert_filter_expr(expr)?;
-            assert_idents_known(expr, &members)?;
-            filters.push(rewrite_view_idents(expr, &view, set_alias)?);
+            filters.push(rewrite_member_or_view_idents(
+                expr, cube, &view, set_alias, binds,
+            )?);
         }
+    }
+    for w_expr in &spec.where_exprs {
+        filters.push(rewrite_member_or_view_idents(
+            w_expr, cube, &view, set_alias, binds,
+        )?);
     }
 
     let mut gb = Vec::new();
-    for g in &group_by {
-        let gname = g.as_str().unwrap();
-        gb.push(output_col_expr(&view, gname, set_alias)?);
+    for gname in &active_gb {
+        gb.push(compile_dimension_group_expr(cube, &view, gname, set_alias)?);
     }
-    let sql = crate::ast_select::assemble_select(&projections, &from, &filters, &gb)?;
-    let dim_names: Vec<String> = group_by
-        .iter()
-        .filter_map(|g| g.as_str().map(str::to_string))
-        .collect();
+
+    let has_as_code = as_code_dims.iter().any(|(dim, _)| {
+        !member_encrypted(cube, dim)
+            && resolve_dim_as_code(docs, cube, &view, dim)
+                .ok()
+                .flatten()
+                .is_some()
+    });
+
+    let rewritten_having = if let Some(h) = &spec.having {
+        Some(rewrite_having_expr(
+            h,
+            &rewritten_metrics,
+            cube,
+            &view,
+            set_alias,
+            binds,
+        )?)
+    } else {
+        None
+    };
+
+    let inner_clauses = SelectClauses {
+        aggregation: agg_mode,
+        having: rewritten_having,
+        order_by: if has_as_code {
+            Vec::new()
+        } else {
+            spec.order_by.clone()
+        },
+        limit: if has_as_code {
+            None
+        } else {
+            spec.limit.clone()
+        },
+        offset: if has_as_code {
+            None
+        } else {
+            spec.offset.clone()
+        },
+    };
+
+    let sql = assemble_select_with_clauses(&projections, &from, &filters, &gb, &inner_clauses)?;
     // Step 7: after aggregation, LEFT JOIN code dictionaries for dims with as_code.
-    let sql = wrap_as_code_joins(docs, cube, &view, &dim_names, &sql, role)?;
+    let mut sql =
+        wrap_as_code_joins_with_aliases(docs, cube, &view, &as_code_dims, &sql, role, binds)?;
+    if has_as_code
+        && (!spec.order_by.is_empty() || spec.limit.is_some() || spec.offset.is_some())
+    {
+        if !spec.order_by.is_empty() {
+            sql.push_str(" ORDER BY ");
+            sql.push_str(&spec.order_by.join(", "));
+        }
+        if let Some(lim) = &spec.limit {
+            sql.push_str(" LIMIT ");
+            sql.push_str(lim.trim());
+        }
+        if let Some(off) = &spec.offset {
+            sql.push_str(" OFFSET ");
+            sql.push_str(off.trim());
+        }
+        let dialect = sqlparser::dialect::GenericDialect {};
+        let stmts = sqlparser::parser::Parser::parse_sql(&dialect, &sql)
+            .map_err(|e| AppError::Validation(format!("outer clauses parse: {e}")))?;
+        if stmts.len() != 1 {
+            return Err(AppError::Validation(
+                "outer clauses: expected single statement".into(),
+            ));
+        }
+        sql = stmts[0].to_string();
+    }
     assert_select_only(&sql)?;
     Ok(sql)
+}
+
+fn check_member_role(cube: &Value, name: &str, role: Option<&str>) -> Result<(), AppError> {
+    for key in ["dimensions", "facts"] {
+        if let Some(items) = cube.get(key).and_then(|v| v.as_array()) {
+            for item in items {
+                if item.get("name").and_then(|v| v.as_str()) == Some(name) {
+                    return check_role_access(item.get("role"), role);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn compile_dimension_expr(
+    cube: &Value,
+    view: &Value,
+    dim_name: &str,
+    set_alias: Option<&str>,
+) -> Result<String, AppError> {
+    if member_encrypted(cube, dim_name) {
+        return Ok("NULL".to_string());
+    }
+    compile_dimension_group_expr(cube, view, dim_name, set_alias)
+}
+
+fn compile_dimension_group_expr(
+    cube: &Value,
+    view: &Value,
+    dim_name: &str,
+    set_alias: Option<&str>,
+) -> Result<String, AppError> {
+    if let Some(dim) = find_dimension(cube, dim_name) {
+        if let Some(expr) = dim.get("expression").and_then(|v| v.as_str()) {
+            return rewrite_view_idents(expr, view, set_alias);
+        }
+        if let Some(col) = dim.get("column").and_then(|v| v.as_str()) {
+            return output_col_expr(view, col, set_alias);
+        }
+    }
+    output_col_expr(view, dim_name, set_alias)
 }
 
 /// Step 7: wrap aggregated SELECT with LEFT JOINs to as_code dictionaries.
@@ -866,9 +1218,25 @@ pub fn wrap_as_code_joins(
     inner_sql: &str,
     role: Option<&str>,
 ) -> Result<String, AppError> {
+    let pairs: Vec<(String, String)> = dim_names
+        .iter()
+        .map(|d| (d.clone(), d.clone()))
+        .collect();
+    wrap_as_code_joins_with_aliases(docs, cube, view, &pairs, inner_sql, role, None)
+}
+
+fn wrap_as_code_joins_with_aliases(
+    docs: &[Value],
+    cube: &Value,
+    view: &Value,
+    dim_aliases: &[(String, String)],
+    inner_sql: &str,
+    role: Option<&str>,
+    binds: Option<&HashMap<String, String>>,
+) -> Result<String, AppError> {
     let mut joins = Vec::new();
     let mut extra_proj = Vec::new();
-    for (i, dim) in dim_names.iter().enumerate() {
+    for (i, (dim, out_alias)) in dim_aliases.iter().enumerate() {
         if member_encrypted(cube, dim) {
             continue;
         }
@@ -885,11 +1253,11 @@ pub fn wrap_as_code_joins(
             .ok_or_else(|| AppError::Validation(format!("{dim}: as_code.value_column")))?;
         let alias = format!("_code_{i}");
         let qalias = quote_ident(&alias)?;
-        let derived = table_inline_derived(docs, &code_table, &as_code, role, &alias)?;
+        let derived = table_inline_derived(docs, &code_table, as_code, role, binds, &alias)?;
         joins.push(format!(
             "LEFT JOIN {derived} ON {q_inner}.{q_dim} = {qalias}.{q_key}",
             q_inner = quote_ident("_sem_agg")?,
-            q_dim = quote_ident(dim)?,
+            q_dim = quote_ident(out_alias)?,
             q_key = quote_ident(key_col)?,
         ));
         extra_proj.push(format!(
@@ -933,36 +1301,19 @@ fn table_inline_derived(
     code_table_name: &str,
     as_code: &Value,
     role: Option<&str>,
+    binds: Option<&HashMap<String, String>>,
     alias: &str,
 ) -> Result<String, AppError> {
     let table_doc = find_doc(docs, "table", code_table_name)?;
+    check_role_access(table_doc.get("role"), role)?;
     let phys = physical_from(table_doc)?;
     let known = table_column_names(table_doc);
-    let mut filters = Vec::new();
-    if let Some(expr) = filter_expr(table_doc.get("scope_filter")) {
-        validate_table_filter(expr, &known)?;
-        filters.push(format!("({expr})"));
-    }
-    if let Some(expr) = filter_expr(table_doc.get("default_filter")) {
-        validate_table_filter(expr, &known)?;
-        filters.push(format!("({expr})"));
-    }
-    if let Some(role) = role {
-        if let Some(pfs) = table_doc.get("permission_filters").and_then(|v| v.as_array()) {
-            for pf in pfs {
-                if pf.get("role").and_then(|v| v.as_str()) == Some(role) {
-                    if let Some(expr) = pf.get("expression").and_then(|v| v.as_str()) {
-                        validate_table_filter(expr, &known)?;
-                        filters.push(format!("({expr})"));
-                    }
-                }
-            }
-        }
-    }
+    let mut filters = collect_table_filters(table_doc, role, binds)?;
     if let Some(w) = as_code.get("where").and_then(|v| v.as_str()) {
         assert_filter_expr(w)?;
         assert_idents_known(w, &known)?;
-        filters.push(format!("({w})"));
+        let resolved = apply_binds(w, binds);
+        filters.push(format!("({resolved})"));
     }
     let qalias = quote_ident(alias)?;
     if filters.is_empty() {
@@ -995,7 +1346,6 @@ pub fn resolve_dim_as_code<'a>(
         .get("table")
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation(format!("{dim_name}: as_code.table")))?;
-    // Ensure dictionary table exists in the registration set.
     let _ = find_doc(docs, "table", code_table)?;
     Ok(Some((code_table.to_string(), as_code)))
 }
@@ -1023,6 +1373,7 @@ fn output_col_expr(
 }
 
 fn collect_member_view_cols(cube: &Value, expr: &str, out: &mut HashSet<String>) {
+    let expr_idents = extract_idents(expr).unwrap_or_default();
     for key in ["dimensions", "facts"] {
         if let Some(items) = cube.get(key).and_then(|v| v.as_array()) {
             for item in items {
@@ -1030,24 +1381,13 @@ fn collect_member_view_cols(cube: &Value, expr: &str, out: &mut HashSet<String>)
                 if name.is_empty() {
                     continue;
                 }
-                if expr_has_ident(expr, name) {
+                if expr_idents.contains(name) || expr_has_ident(expr, name) {
                     if let Some(col) = item.get("column").and_then(|v| v.as_str()) {
                         out.insert(col.to_string());
                     } else if let Some(e) = item.get("expression").and_then(|v| v.as_str()) {
-                        // expression dims reference view cols by name
-                        if let Some(vcols) = cube.get("view") {
-                            let _ = vcols;
-                        }
-                        // pull simple idents from expression as view cols
-                        for tok in e.split(|c: char| !c.is_ascii_alphanumeric() && c != '_') {
-                            if !tok.is_empty()
-                                && tok.chars().all(|c| c.is_ascii_lowercase() || c == '_')
-                                && !matches!(
-                                    tok,
-                                    "date_trunc" | "year" | "month" | "sum" | "count" | "avg"
-                                )
-                            {
-                                out.insert(tok.to_string());
+                        if let Ok(inner_ids) = extract_idents(e) {
+                            for id in inner_ids {
+                                out.insert(id);
                             }
                         }
                     } else {
@@ -1109,14 +1449,20 @@ fn validate_cube_member_expressions(
     Ok(())
 }
 
-fn rewrite_metric_expression(
-    expr: &str,
+fn cube_member_to_physical_map(
     cube: &Value,
     view: &Value,
     set_alias: Option<&str>,
-) -> Result<String, AppError> {
-    use std::collections::HashMap;
+) -> Result<HashMap<String, String>, AppError> {
     let mut map = HashMap::new();
+    if let Some(cols) = view.get("columns").and_then(|v| v.as_array()) {
+        for c in cols {
+            let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if !name.is_empty() {
+                map.insert(name.to_string(), output_col_expr(view, name, set_alias)?);
+            }
+        }
+    }
     for key in ["facts", "dimensions"] {
         if let Some(items) = cube.get(key).and_then(|v| v.as_array()) {
             for item in items {
@@ -1125,7 +1471,6 @@ fn rewrite_metric_expression(
                     continue;
                 }
                 let phys = if let Some(e) = item.get("expression").and_then(|v| v.as_str()) {
-                    // nested member expr may still need view rewrite
                     rewrite_view_idents(e, view, set_alias)?
                 } else if let Some(col) = item.get("column").and_then(|v| v.as_str()) {
                     output_col_expr(view, col, set_alias)?
@@ -1136,7 +1481,134 @@ fn rewrite_metric_expression(
             }
         }
     }
+    Ok(map)
+}
+
+fn rewrite_metric_expression(
+    expr: &str,
+    cube: &Value,
+    view: &Value,
+    set_alias: Option<&str>,
+) -> Result<String, AppError> {
+    let map = cube_member_to_physical_map(cube, view, set_alias)?;
     crate::ast_rewrite::rewrite_idents(expr, &map)
+}
+
+fn rewrite_member_or_view_idents(
+    expr: &str,
+    cube: &Value,
+    view: &Value,
+    set_alias: Option<&str>,
+    binds: Option<&HashMap<String, String>>,
+) -> Result<String, AppError> {
+    let resolved = apply_binds(expr, binds);
+    let map = cube_member_to_physical_map(cube, view, set_alias)?;
+    crate::ast_rewrite::rewrite_idents(&resolved, &map)
+}
+
+fn rewrite_having_expr(
+    expr: &str,
+    rewritten_metrics: &HashMap<String, String>,
+    cube: &Value,
+    view: &Value,
+    set_alias: Option<&str>,
+    binds: Option<&HashMap<String, String>>,
+) -> Result<String, AppError> {
+    assert_filter_expr(expr)?;
+    let mut map = cube_member_to_physical_map(cube, view, set_alias)?;
+    for (m_name, m_phys) in rewritten_metrics {
+        map.insert(m_name.clone(), m_phys.clone());
+    }
+    let known: HashSet<String> = map.keys().cloned().collect();
+    assert_idents_known(expr, &known)?;
+    let resolved = apply_binds(expr, binds);
+    crate::ast_rewrite::rewrite_idents(&resolved, &map)
+}
+
+fn inject_filter_into_aggregates(
+    metric_sql: &str,
+    filter_sql: &str,
+) -> Result<String, AppError> {
+    use sqlparser::ast::{
+        Expr, FunctionArg, FunctionArgExpr, FunctionArguments, SelectItem, SetExpr, Statement,
+        VisitMut, VisitorMut,
+    };
+    use sqlparser::dialect::GenericDialect;
+    use sqlparser::parser::Parser;
+
+    struct AggCaseInjector<'a> {
+        filter_sql: &'a str,
+    }
+
+    impl VisitorMut for AggCaseInjector<'_> {
+        type Break = ();
+
+        fn pre_visit_expr(&mut self, expr: &mut Expr) -> std::ops::ControlFlow<Self::Break> {
+            if let Expr::Function(func) = expr {
+                let lower = func.name.to_string().to_ascii_lowercase();
+                if matches!(lower.as_str(), "sum" | "count" | "avg" | "min" | "max") {
+                    if let FunctionArguments::List(list) = &mut func.args {
+                        for arg in &mut list.args {
+                            match arg {
+                                FunctionArg::Unnamed(FunctionArgExpr::Wildcard) => {
+                                    let case_str =
+                                        format!("CASE WHEN ({}) THEN 1 END", self.filter_sql);
+                                    if let Some(parsed) = parse_single_expr(&case_str) {
+                                        *arg = FunctionArg::Unnamed(FunctionArgExpr::Expr(parsed));
+                                    }
+                                }
+                                FunctionArg::Unnamed(FunctionArgExpr::Expr(inner)) => {
+                                    let case_str = format!(
+                                        "CASE WHEN ({}) THEN ({}) END",
+                                        self.filter_sql, inner
+                                    );
+                                    if let Some(parsed) = parse_single_expr(&case_str) {
+                                        *inner = parsed;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    return std::ops::ControlFlow::Continue(());
+                }
+            }
+            std::ops::ControlFlow::Continue(())
+        }
+    }
+
+    fn parse_single_expr(sql: &str) -> Option<Expr> {
+        let wrapped = format!("SELECT {sql}");
+        let dialect = GenericDialect {};
+        let stmts = Parser::parse_sql(&dialect, &wrapped).ok()?;
+        let Statement::Query(q) = stmts.into_iter().next()? else {
+            return None;
+        };
+        let SetExpr::Select(sel) = *q.body else {
+            return None;
+        };
+        match sel.projection.into_iter().next()? {
+            SelectItem::UnnamedExpr(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    let wrapped = format!("SELECT ({metric_sql})");
+    let dialect = GenericDialect {};
+    let mut stmts = Parser::parse_sql(&dialect, &wrapped)
+        .map_err(|e| AppError::Validation(format!("inject_filter parse: {e}")))?;
+    let Some(Statement::Query(q)) = stmts.get_mut(0) else {
+        return Err(AppError::Validation("inject_filter: expected query".into()));
+    };
+    let SetExpr::Select(sel) = q.body.as_mut() else {
+        return Err(AppError::Validation("inject_filter: expected select".into()));
+    };
+    let Some(SelectItem::UnnamedExpr(e)) = sel.projection.get_mut(0) else {
+        return Err(AppError::Validation("inject_filter: bad projection".into()));
+    };
+    let mut v = AggCaseInjector { filter_sql };
+    let _ = e.visit(&mut v);
+    Ok(e.to_string())
 }
 
 fn rewrite_view_idents(
@@ -1144,7 +1616,6 @@ fn rewrite_view_idents(
     view: &Value,
     set_alias: Option<&str>,
 ) -> Result<String, AppError> {
-    use std::collections::HashMap;
     let mut map = HashMap::new();
     if let Some(cols) = view.get("columns").and_then(|v| v.as_array()) {
         for c in cols {
@@ -1155,7 +1626,6 @@ fn rewrite_view_idents(
             map.insert(name.to_string(), output_col_expr(view, name, set_alias)?);
         }
     }
-    // Also map cube-style bare names that equal physical column names on members.
     crate::ast_rewrite::rewrite_idents(expr, &map)
 }
 

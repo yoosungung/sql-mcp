@@ -71,6 +71,19 @@ impl Config {
         Duration::from_millis(self.timeout_ms)
     }
 
+    pub fn readonly_metadata(&self) -> bool {
+        env::var("SQL_MCP_READONLY_METADATA")
+            .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false)
+    }
+
+    pub fn default_role(&self) -> Option<String> {
+        env::var("SQL_MCP_DEFAULT_ROLE")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
     pub fn semantic_path() -> PathBuf {
         env::var("SQL_MCP_SEMANTIC_PATH")
             .map(PathBuf::from)

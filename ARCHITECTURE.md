@@ -21,22 +21,22 @@
 컴파일할 때 아래 필터를 모두 AND로 붙인다.
 
 1. 선택된 view가 닿는 각 table의 `scope_filter`
-2. 호출자 role과 같은 table `permission_filters`
+2. 호출자 role(`caller_role`, 미지정 시 `SQL_MCP_DEFAULT_ROLE`)과 같은 table `permission_filters`
 3. 각 table의 `default_filter`
-4. 질의에 쓰인 metric의 `filter`
-5. 질의에 쓰인 segment의 `filter`
+4. 질의에 쓰인 metric의 `filter` (단일 metric이면 WHERE, 복수 metric이고 필터가 서로 다르면 `CASE WHEN filter THEN … END` 집계 내부 조건)
+5. 질의에 쓰인 segment의 `filter` 및 사용자 `WHERE`의 일반 dimension/fact 조건식
 
-table, dimension, fact, metric, segment의 `role`을 생략하거나 `all`이면 모든 role이 볼 수 있다. table `permission_filters`의 `role`은 그 행 필터가 적용되는 역할이다. role 이름 배열이면 호출자는 그 중 하나의 role을 가져야 한다. `encryption`이 true인 dimension·fact는 **암·복호화하지 않고** 툴 응답·샘플·로그에서 원문을 내지 않는다 — 셀 값은 `null`(또는 `"***"`)로 마스킹한다(D17). AES·토큰화는 타깃 DW 책임이다.
+table, cube, dimension, fact, metric, segment의 `role`을 생략하거나 `all`이면 모든 role이 볼 수 있다. table `permission_filters`의 `role`은 그 행 필터가 적용되는 역할이다. role 이름 배열이면 호출자는 그 중 하나의 role을 가져야 하며, 질의가 직접 참조하는 모든 계층(cube, table, 직접 조회·필터링·샘플링한 dimension/fact, metric, segment)에 대해 접근 권한을 검증한다(metric 수식 내부의 fact는 metric의 `role`을 따른다). `encryption`이 true인 dimension·fact는 **암·복호화하지 않고** 툴 응답·샘플·로그에서 원문을 내지 않는다 — 프로젝션·집계식·셀 값은 `null`(또는 `"***"`)로 마스킹하고 필터 조건 사용을 거부한다(D17). AES·토큰화는 타깃 DW 책임이다.
 
-식 안의 컬럼/멤버 이름 검사는 **이중**이다(D18). `metadata_*` 저장 시에는 연결 그래프만 검증한다(`column`·`group_by`·cube/view 존재 등; `expression`으로 만든 dimension·fact의 view 컬럼 연결 검사는 하지 않는다). 식 본문의 식별자는 **컴파일 직전** AST에서 알려진 dimension·fact·(해당 시) view/물리 컬럼으로 해석 가능한지 검사하고, 실패하면 `validation`으로 거절한다. `execute_sql`은 시맨틱 컴파일을 반드시 거친다.
+식 안의 컬럼/멤버 이름 검사는 **이중**이다(D18). `metadata_*` 저장 시에는 연결 그래프만 검증한다(`column`·`group_by`·cube/view 존재 등; `expression`으로 만든 dimension·fact의 view 컬럼 연결 검사는 하지 않는다). 식 본문의 식별자는 **컴파일 직전** AST에서 알려진 dimension·fact·(해당 시) view/물리 컬럼으로 해석 가능한지 검사하고, 실패하면 `validation`으로 거절한다. `execute_sql`은 시맨틱 컴파일을 반드시 거친다. 시맨틱 SELECT는 복수 metric, 선택 dimension 부분집합 `GROUP BY`(및 metric `aggregation`에 따른 `ROLLUP`/`CUBE`/`GROUPING SETS`), 일반 `WHERE` 조건식, `HAVING`, `ORDER BY`, `LIMIT`/`OFFSET`, 그리고 `params`를 통한 `:name` 안전 리터럴 치환을 지원한다.
 
 view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은 컬럼은 하나의 view 컬럼으로 묶는다. `mappings`가 둘 이상이면 가리키는 컬럼 이름이 같다.
 
-`combine`이 `select`인 view는 view만 묶는다. 사용자 SQL이 참조한 컬럼을 모두 가진 source 중에서 `summary`가 true인 view를 우선 선택한다. 요약 view로 풀 수 없으면 나머지 source를 쓴다. 어느 source도 컬럼을 덮지 못하면 질의를 거절한다.
+`combine`이 `select`인 view는 view만 묶는다. 사용자 SQL이 참조한 컬럼을 모두 가진 source 중에서 `summary`가 true인 view를 우선 선택한다(단, 반가산성 metric인 경우 요약 view의 컬럼 집합이 질의 요구 컬럼 집합과 정확히 일치할 때만 채택한다). 요약 view로 풀 수 없으면 나머지 source를 쓴다. 어느 source도 컬럼을 덮지 못하면 질의를 거절한다.
 
 `metadata_create`와 `metadata_update`는 문서 하나의 JSON Schema 검증을 통과한 뒤에, 그 문서를 반영한 등록 집합 전체의 연결을 검증한다. `metadata_delete`는 그 문서를 뺀 집합의 연결을 검증한다. 검증이 실패하면 시맨틱 DB를 바꾸지 않는다. `metadata_get`과 `metadata_list`는 저장된 문서를 반환한다.
 
-연결은 `fk.references`, view `sources`와 `mappings`, cube `view`, dimension·fact의 `column`, metric·segment `cube`, metric `group_by`, 그리고 table/view/cube의 **`target` 일치**다. `expression`으로 만든 dimension·fact는 **저장 시** view 컬럼 연결 검사를 하지 않는다(식 식별자 검사는 D18 컴파일 단계). `aggregation`이 `group`이면 `group_by`의 각 이름이 연결된 view 컬럼에 있어야 한다. MCP 저장 계층은 타입별 libSQL `meta_*` 테이블이다(`semantic/libsql/catalog.sql`). `metadata_*` **입출력은 JSON**(`document.schema.json`)이며 저장 시 타입별 행으로 분해·조회 시 JSON으로 재조립한다. 검색 투영은 `column_index`(+embedding)와 FTS5(`column_index_fts`, 순위 `bm25`)다 — keyword는 FTS5이며 vector/hybrid(RRF)를 유지한다.
+연결은 `fk.references`, view `sources`와 `mappings`, cube `view`, dimension·fact의 `column`, metric·segment `cube`, metric `group_by`, 그리고 table/view/cube의 **`target` 일치**다. `expression`으로 만든 dimension·fact는 **저장 시** view 컬럼 연결 검사를 하지 않는다(식 식별자 검사는 D18 컴파일 단계). `aggregation`이 `group`이면 `group_by`의 각 이름이 연결된 view 컬럼에 있어야 한다. MCP 저장 계층은 타입별 libSQL `meta_*` 테이블이다(`semantic/libsql/catalog.sql`). `metadata_*` **입출력은 JSON**(`document.schema.json`)이며 저장 시 타입별 행으로 분해·조회 시 JSON으로 재조립한다. 검색 투영은 `column_index`(+`target`+`embedding`)와 FTS5(`column_index_fts`, 순위 `bm25`)다 — keyword는 FTS5이며 vector/hybrid(RRF)를 유지한다.
 
 ## 2. 컴포넌트
 
@@ -44,7 +44,7 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 |----------|------|------|
 | MCP 서버 | `server/` | **일반 HTTP** · **stdio(로컬)** · 툴 · SELECT 가드 · **libSQL** 시맨틱 · 타깃 DB 클라이언트 |
 | 시맨틱 정의 | `semantic/` | 등록 JSON Schema · 예시 · libSQL 카탈로그 DDL |
-| 시맨틱 DB | 프로세스 내 **libSQL** | 메타·(장차) FTS/벡터. CRUD는 MCP 메타 툴 |
+| 시맨틱 DB | 프로세스 내 **libSQL** | 메타·FTS/벡터. CRUD는 MCP 메타 툴 |
 | 타깃 DB | 외부 DW (N개) | 실제 조회 대상. SELECT only |
 | Frontend / 세션형 Streamable HTTP | — | **취소** |
 
@@ -72,13 +72,13 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 | `list_targets` | 타깃 DB 목록 | — | id·이름·엔진(시크릿 제외) | 설정에서 읽기 |
 | `list_tables` | **cube** 목록 | `target?` | cube 문서 목록 | 시맨틱 `kind=cube` (`target`이면 필터) |
 | `describe_table` | **cube** 상세 | `table`(cube name), `target?` | dimensions·facts·metrics·segments | `target`이면 cube.target 일치 |
-| `search_columns` | 컬럼 검색 | `query`, `target?`, `mode?`, `limit?` | 매칭 메타 | §3.2.2 |
-| `sample_column` | dim/fact 샘플 | `target`, `cube`, `member`, `limit?` | 샘플·`resolved`·`as_code` | §3.4 — **cube.target == target** |
+| `search_columns` | 컬럼 검색 | `query`, `target?`, `mode?`, `limit?` | 매칭 메타(`target` 포함) | §3.5 (`target` 지정 시 해당 타깃만 필터) |
+| `sample_column` | dim/fact 샘플 | `target`, `cube`, `member`, `caller_role?`, `params?`, `limit?` | 샘플·`resolved`·`as_code` | §3.4 — **cube.target == target** · 테이블 보안 필터 적용 |
 | `execute_sql` | 시맨틱 SQL 컴파일·실행 | `target`, `sql`, `caller_role?`, `params?`, `dry_run?` | 행·메타·`sql`(물리); `dry_run=true`면 `{ sql, dry_run: true }`만 | **시맨틱 SELECT만** · **cube.target == target** · `dry_run`이면 타깃 SELECT 생략 |
 
 ### 3.3 Tools — 메타데이터 CRUD (JSON)
 
-임베디드 시맨틱 저장소만. **JSON 바디**로 주고받는다. 페이로드는 `semantic/schema/document.schema.json`의 등록 문서다.
+임베디드 시맨틱 저장소만. **JSON 바디**로 주고받는다. 페이로드는 `semantic/schema/document.schema.json`의 등록 문서다. `SQL_MCP_READONLY_METADATA=true`(또는 설정 `readonly_metadata = true`)이면 DW 에이전트 모드로 동작하여 `metadata_*` 도구를 노출·실행하지 않는다.
 
 | Tool | 동작 | 입력 | 출력 |
 |------|------|------|------|
@@ -95,13 +95,13 @@ JSON에 DSN/password 금지 — 타깃 연결 비밀은 설정 쪽 id 참조만.
 - 인자: `cube` + `member`(dimension/fact). 서버가 view mappings로 물리 테이블을 고른다(첫 mapping).
 - dimension `as_code`는 **코드사전 객체** `{ table, key_column, value_column, where? }`(D9). boolean 금지. 에이전트 기입·MCP 저장만. fact·table column에는 두지 않는다.
 - `execute_sql` Step 7: 집계 완료 후 SELECT에 있는 dim에 대해 사전을 `dim = key` LEFT JOIN하고 `{dim}__value`를 프로젝션한다.
-- `sample_column`: dim에 `as_code`가 있으면 사전에서 key/value 샘플, 없으면 물리 컬럼 샘플.
+- `sample_column`: dim에 `as_code`가 있으면 사전에서 key/value 샘플, 없으면 물리 컬럼 샘플. 두 경우 모두 대상 테이블의 `scope_filter` · `default_filter` · `permission_filters` 및 `role` 접근 권한을 강제한다.
 
 ### 3.5 `search_columns`
 
-- 목표 모드: `keyword`(BM25) · `vector` · `hybrid`(RRF). 기본 `hybrid` 권장.
+- 목표 모드: `keyword`(BM25) · `vector` · `hybrid`(RRF). 기본 `hybrid` 권장. `target` 인자가 주어지면 해당 타깃의 cube/member/metric/segment만 반환한다.
 - JSON 교환·검증 정본은 `semantic/schema/document.schema.json`. 저장은 타입별 `meta_*`. 검색 인덱스(`column_index` / FTS5)는 등록 JSON의 **투영**이며 규칙은 [semantic/DESIGN.md](semantic/DESIGN.md)(D12). 파이프라인 상세는 [server/spec.md](server/spec.md).
-- **D14:** 임베딩은 외부 OpenAI-호환 HTTP API(`SQL_MCP_EMBEDDING_URL` + `API_KEY`)로만 생성하고 libSQL에 저장한다. API가 없으면 embedder를 두지 않으며, `vector`/`hybrid` 요청은 **keyword(BM25)로 폴백**한다. 오프라인 검색 품질은 BM25 강화(한글 토큰 유지, 문자 bigram)로 올린다. 로컬 ONNX·운영용 HashEmbedder는 쓰지 않는다. 투영 범위는 [semantic/DESIGN.md](semantic/DESIGN.md) D12.
+- **D14:** 임베딩은 외부 OpenAI-호환 HTTP API(`SQL_MCP_EMBEDDING_URL` + `API_KEY`)로만 생성하고 libSQL에 저장한다. CRUD 시 텍스트가 변경된 항목만 증분 임베딩한다. API가 없으면 embedder를 두지 않으며, `vector`/`hybrid` 요청은 **keyword(BM25)로 폴백**한다. 오프라인 검색 품질은 BM25 강화(한글 토큰 유지, 문자 bigram)로 올린다. 로컬 ONNX·운영용 HashEmbedder는 쓰지 않는다. 투영 범위는 [semantic/DESIGN.md](semantic/DESIGN.md) D12.
 
 ### 3.6 Resources
 
@@ -114,7 +114,7 @@ JSON에 DSN/password 금지 — 타깃 연결 비밀은 설정 쪽 id 참조만.
 
 ### 3.7 에러
 
-`code`: `not_select` | `timeout` | `row_limit` | `sql_parse` | `not_found` | `validation` | `connection` | `internal`. 시크릿·풀 DSN 금지.
+`code`: `not_select` | `timeout` | `row_limit` | `sql_parse` | `not_found` | `validation` | `forbidden` | `connection` | `internal`. 시크릿·풀 DSN 금지(DB 에러 메시지는 DSN/비밀번호 마스킹 후 전달).
 
 ## 4. 시맨틱 등록 문서
 
@@ -139,17 +139,17 @@ semantic/examples/
 | --- | --- |
 | table | `kind`, `name`, `target`, `db`, `schema`, `table`, `columns`, `pk`, `fk`, `permission_filters`, `scope_filter`, `default_filter` |
 | view | `kind`, `name`, `target`, `combine`, `sources`, `columns`. join은 `joins`, select는 `prefer` |
-| cube | `kind`, `name`, `target`, `view`, `description`, `dimensions`, `facts` |
+| cube | `kind`, `name`, `target`, `view`, `description`, `dimensions`, `facts` (+ 선택 `role`) |
 | metric | `kind`, `name`, `description`, `cube`, `expression`, `aggregation`, `filter` |
 | segment | `kind`, `name`, `description`, `cube`, `filter` |
 
-table `role`의 기본값은 `all`이다. `columns`는 `name`, `type`, `nullable`이다. `pk`는 그 컬럼 이름이다. `fk.columns`는 이 테이블 컬럼이고 `fk.references`는 다른 논리 테이블과 그 컬럼이다.
+table, cube `role`의 기본값은 `all`이다. `columns`는 `name`, `type`, `nullable`이다. `pk`는 그 컬럼 이름이다. `fk.columns`는 이 테이블 컬럼이고 `fk.references`는 다른 논리 테이블과 그 컬럼이다.
 
 view `combine`은 `join`, `union`, `minus`, `select` 중 하나다. `combine`이 없으면 view가 아니다. `join`, `union`, `minus`의 source는 테이블이고, `select`의 source는 view다. union과 minus는 첫 source가 기준이고 각 view 컬럼이 모든 source를 가리킨다. join의 `type`은 `inner`, `left`, `right`, `full`이다.
 
 dimension `type`은 `code`, `date`, `time`, `datetime`, `string` 중 하나다(취급 방식). fact `type`은 `amount`, `fx`, `quantity` 중 하나다(금액·환율·일반 수량). 둘 다 **필수 `description`**(검색 투영)과 `encryption`(D17 마스킹)을 가진다. dimension만 선택 `as_code`(D9 코드사전)를 가진다. `role`의 기본값은 `all`이다. 값은 view 컬럼 `column`이거나, view 컬럼 이름을 쓰는 스칼라 `expression`이다. 둘 중 하나만 둔다.
 
-metric `expression`은 연결된 cube의 view 컬럼 연산이다. `aggregation`은 `group`, `rollup`, `cube`, `grouping_sets` 중 하나이고, 질의의 그룹 기준을 그 방식으로 묶는다. `group`이면 `group_by`에 GROUP BY로 쓰는 view 컬럼을 둔다. cube·dimension·fact·metric·segment의 `description`은 모두 필수다(`search_columns` D12). metric과 segment `role`의 기본값은 `all`이다. segment `filter`는 비울 수 없다.
+metric `expression`은 연결된 cube의 dimension/fact 연산이다. `aggregation`은 `group`, `rollup`, `cube`, `grouping_sets` 중 하나이고, 질의의 그룹 기준을 그 방식으로 묶는다. `group`이면 `group_by`에 GROUP BY로 쓰는 view 컬럼을 둔다. cube·dimension·fact·metric·segment의 `description`은 모두 필수다(`search_columns` D12). metric과 segment `role`의 기본값은 `all`이다. segment `filter`는 비울 수 없다.
 
 예시는 `semantic/examples/`에 있다. libSQL 카탈로그 DDL은 `semantic/libsql/catalog.sql`이다.
 
@@ -157,9 +157,9 @@ metric `expression`은 연결된 cube의 view 컬럼 연산이다. `aggregation`
 
 ```
 HTTP ▶ rmcp tools
-          ├─ metadata_*  ──▶ libSQL semantic
-          ├─ search_*    ──▶ (장차) FTS/vector
-          └─ list/describe/sample/execute ──▶ target DB (by id)
+          ├─ metadata_*  ──▶ libSQL semantic (in-memory snapshot + single write tx)
+          ├─ search_*    ──▶ FTS5(bm25) / vector / hybrid (target-filtered)
+          └─ list/describe/sample/execute ──▶ target DB (by id, with timeout)
 ```
 
 ### 5.1 타깃 DialectProfile (형태, D21)
@@ -174,9 +174,9 @@ HTTP ▶ rmcp tools
 | `wrap_row_limit` | 행 상한 래퍼 | `LIMIT n` · Oracle `FETCH FIRST n ROWS ONLY` |
 | `emit_physical_sql` | rewrite + quote adapt | `pipeline` Step 8 |
 
-`compile`은 canonical만 낸다. pruning용 `:name`은 컴파일 전용이며 실행 bind rewrite와 무관하다.
+`compile`은 canonical만 낸다. `:name` 바인드 파라미터는 `params` 제공 시 이스케이프된 리터럴로 치환하며, 드라이버 prepared bind rewrite는 하지 않는다.
 
-## 6. 설정 형태 (초안)
+## 6. 설정 형태
 
 | 변수 / 설정 | 의미 |
 |-------------|------|
@@ -185,3 +185,5 @@ HTTP ▶ rmcp tools
 | `SQL_MCP_MAX_ROWS` | `execute_sql` 행 상한 |
 | `SQL_MCP_SAMPLE_LIMIT` | 샘플 기본 개수 |
 | `SQL_MCP_TIMEOUT_MS` | 타깃 쿼리 타임아웃 |
+| `SQL_MCP_READONLY_METADATA` | `true`/`1`이면 DW 에이전트용 메타 CRUD 비활성화 |
+| `SQL_MCP_DEFAULT_ROLE` | 호출자가 `caller_role`을 생략했을 때 기본 적용할 역할 |

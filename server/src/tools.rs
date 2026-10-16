@@ -26,6 +26,8 @@ pub struct SqlMcp {
     pub store: SemanticStore,
     pub targets: TargetRegistry,
     pub cfg: Arc<Config>,
+    pub readonly_metadata: bool,
+    pub default_role: Option<String>,
     #[allow(dead_code)] // read by rmcp #[tool_handler] generated code
     tool_router: rmcp::handler::server::router::tool::ToolRouter<Self>,
 }
@@ -84,6 +86,12 @@ pub struct SampleColumnArgs {
     /// Dimension or fact name on the cube.
     pub member: String,
     pub limit: Option<u32>,
+    /// Optional caller role for permission_filters / member RBAC checks.
+    #[serde(default)]
+    pub caller_role: Option<String>,
+    /// Optional bind values for `:name` placeholders in table filters.
+    #[serde(default)]
+    pub params: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -101,12 +109,30 @@ pub struct ExecuteSqlArgs {
 
 impl SqlMcp {
     pub fn new(store: SemanticStore, targets: TargetRegistry, cfg: Config) -> Self {
+        let readonly_metadata = cfg.readonly_metadata();
+        let default_role = cfg.default_role();
         Self {
             store,
             targets,
             cfg: Arc::new(cfg),
+            readonly_metadata,
+            default_role,
             tool_router: Self::tool_router(),
         }
+    }
+
+    pub fn with_readonly_metadata(mut self, readonly: bool) -> Self {
+        self.readonly_metadata = readonly;
+        self
+    }
+
+    pub fn with_default_role(mut self, role: impl Into<String>) -> Self {
+        self.default_role = Some(role.into());
+        self
+    }
+
+    fn effective_role<'a>(&'a self, caller_role: Option<&'a str>) -> Option<&'a str> {
+        caller_role.or(self.default_role.as_deref())
     }
 }
 
@@ -134,6 +160,11 @@ impl SqlMcp {
         &self,
         Parameters(args): Parameters<MetadataBodyArgs>,
     ) -> Result<CallToolResult, McpError> {
+        if self.readonly_metadata {
+            return tool_err(AppError::Forbidden(
+                "metadata mutation is disabled (readonly mode)".into(),
+            ));
+        }
         if let Some(kind) = args.kind.as_deref() {
             if args.body.get("kind").and_then(|v| v.as_str()) != Some(kind) {
                 return tool_err(AppError::Validation(
@@ -169,6 +200,11 @@ impl SqlMcp {
         &self,
         Parameters(args): Parameters<MetadataUpdateArgs>,
     ) -> Result<CallToolResult, McpError> {
+        if self.readonly_metadata {
+            return tool_err(AppError::Forbidden(
+                "metadata mutation is disabled (readonly mode)".into(),
+            ));
+        }
         map_result(
             self.store
                 .update(&args.kind, &args.name, args.body)
@@ -181,6 +217,11 @@ impl SqlMcp {
         &self,
         Parameters(args): Parameters<KindNameArgs>,
     ) -> Result<CallToolResult, McpError> {
+        if self.readonly_metadata {
+            return tool_err(AppError::Forbidden(
+                "metadata mutation is disabled (readonly mode)".into(),
+            ));
+        }
         match self.store.delete(&args.kind, &args.name).await {
             Ok(()) => ok_json(json!({ "deleted": true })),
             Err(e) => tool_err(e),
@@ -256,12 +297,14 @@ impl SqlMcp {
     ) -> Result<CallToolResult, McpError> {
         let mode = args.mode.as_deref().unwrap_or("hybrid");
         let limit = args.limit.map(|n| n as usize).unwrap_or(20);
-        let hits = match self.store.search_columns(&args.query, mode, limit).await {
+        let hits = match self
+            .store
+            .search_columns_for_target(&args.query, args.target.as_deref(), mode, limit)
+            .await
+        {
             Ok(h) => h,
             Err(e) => return tool_err(e),
         };
-        // optional target filter is reserved for target-catalog search; semantic index has no target id
-        let _ = args.target;
         ok_json(crate::search::hits_to_json(&hits))
     }
 
@@ -287,8 +330,14 @@ impl SqlMcp {
             .limit
             .map(|n| n as usize)
             .unwrap_or(self.cfg.sample_limit);
-        let target = match crate::sample::resolve_sample_target(&docs, &args.cube, &args.member)
-        {
+        let role = self.effective_role(args.caller_role.as_deref());
+        let target = match crate::sample::resolve_sample_target_with_context(
+            &docs,
+            &args.cube,
+            &args.member,
+            role,
+            args.params.as_ref(),
+        ) {
             Ok(t) => t,
             Err(e) => return tool_err(e),
         };
@@ -300,11 +349,17 @@ impl SqlMcp {
             Ok(s) => s,
             Err(e) => return tool_err(e),
         };
-        let result = match db.execute_select(&sql, limit).await {
-            Ok(r) => r,
-            Err(e) => return tool_err(e),
+        let result = match tokio::time::timeout(self.cfg.timeout(), db.execute_select(&sql, limit)).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => return tool_err(e),
+            Err(_) => {
+                return tool_err(AppError::Connection(anyhow::anyhow!(
+                    "target query timed out after {}ms",
+                    self.cfg.timeout_ms
+                )));
+            }
         };
-        let encrypted = crate::mask::is_encrypted_column(&docs, &args.member);
+        let encrypted = crate::mask::is_encrypted_member(&docs, &args.cube, &args.member);
         let values: Value = if target.from_as_code {
             let rows: Vec<Value> = result
                 .rows
@@ -373,10 +428,11 @@ impl SqlMcp {
             Ok(d) => d,
             Err(e) => return tool_err(e),
         };
+        let role = self.effective_role(args.caller_role.as_deref());
         let physical = match crate::pipeline::compile_semantic_sql_with_binds(
             &docs,
             &args.sql,
-            args.caller_role.as_deref(),
+            role,
             args.params.as_ref(),
             dialect,
         ) {
@@ -389,11 +445,22 @@ impl SqlMcp {
                 "dry_run": true,
             }));
         }
-        let result = match db.execute_select(&physical, self.cfg.max_rows).await {
-            Ok(r) => r,
-            Err(e) => return tool_err(e),
+        let result = match tokio::time::timeout(
+            self.cfg.timeout(),
+            db.execute_select(&physical, self.cfg.max_rows),
+        )
+        .await
+        {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => return tool_err(e),
+            Err(_) => {
+                return tool_err(AppError::Connection(anyhow::anyhow!(
+                    "target query timed out after {}ms",
+                    self.cfg.timeout_ms
+                )));
+            }
         };
-        let encrypted = crate::mask::encrypted_names(&docs);
+        let encrypted = crate::mask::encrypted_names_for_cubes(&docs, &cube_names);
         let rows = crate::mask::mask_result_rows(&result.columns, result.rows, &encrypted);
         ok_json(json!({
             "columns": result.columns,
@@ -720,5 +787,61 @@ mod tests {
             .unwrap();
         assert_eq!(err.is_error, Some(true));
         assert_eq!(boom.selects.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn readonly_metadata_and_default_role_are_enforced() {
+        let store = SemanticStore::open(":memory:").await.unwrap();
+        seed_examples(&store).await;
+        let cfg = Config {
+            listen: "127.0.0.1:0".into(),
+            max_rows: 100,
+            sample_limit: 10,
+            timeout_ms: 1000,
+            targets: vec![],
+        };
+        let boom = Arc::new(CountingBoomTarget {
+            info: TargetInfo {
+                id: "dw".into(),
+                name: "boom".into(),
+                engine: "sqlite".into(),
+            },
+            selects: AtomicUsize::new(0),
+        });
+        let mut targets = TargetRegistry::empty();
+        targets.insert_for_test(boom);
+        let mcp = SqlMcp::new(store, targets, cfg)
+            .with_readonly_metadata(true)
+            .with_default_role("branch");
+
+        // metadata_delete is forbidden when readonly_metadata is true
+        let res = mcp
+            .metadata_delete(Parameters(KindNameArgs {
+                kind: "segment".into(),
+                name: "paid".into(),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(res.is_error, Some(true));
+
+        // default_role ("branch") is applied when caller_role is None
+        let mut params = std::collections::HashMap::new();
+        params.insert("caller_region".into(), "KR".into());
+        let dry = mcp
+            .execute_sql(Parameters(ExecuteSqlArgs {
+                target: "dw".into(),
+                sql: "SELECT revenue FROM sales".into(),
+                caller_role: None,
+                params: Some(params),
+                dry_run: Some(true),
+            }))
+            .await
+            .unwrap();
+        let body = tool_json(dry);
+        let sql = body["sql"].as_str().unwrap();
+        assert!(
+            sql.contains("'KR'"),
+            "expected default_role 'branch' permission filter in compiled SQL: {sql}"
+        );
     }
 }

@@ -38,10 +38,7 @@ pub fn assert_filter_expr(expr: &str) -> Result<(), AppError> {
 
 /// Identifiers in `expr` must be subset of `known` (D18). `:bind` placeholders ignored.
 pub fn assert_idents_known(expr: &str, known: &HashSet<String>) -> Result<(), AppError> {
-    let (normalized, _binds) = replace_binds(expr);
-    let e = parse_expr_loose(&normalized)?;
-    let mut found = HashSet::new();
-    collect_idents(&e, &mut found);
+    let found = extract_idents(expr)?;
     for id in &found {
         if !known.contains(id) {
             return Err(AppError::Validation(format!(
@@ -50,6 +47,15 @@ pub fn assert_idents_known(expr: &str, known: &HashSet<String>) -> Result<(), Ap
         }
     }
     Ok(())
+}
+
+/// Extract all bare/compound column identifiers from `expr` via AST (ignoring `:bind` placeholders).
+pub fn extract_idents(expr: &str) -> Result<HashSet<String>, AppError> {
+    let (normalized, _binds) = replace_binds(expr);
+    let e = parse_expr_loose(&normalized)?;
+    let mut found = HashSet::new();
+    collect_idents(&e, &mut found);
+    Ok(found)
 }
 
 /// Replace `:name` bind params with NULL so sqlparser accepts them.
@@ -76,6 +82,11 @@ fn replace_binds(expr: &str) -> (String, HashSet<String>) {
             && i + 1 < chars.len()
             && (chars[i + 1].is_ascii_alphabetic() || chars[i + 1] == '_')
         {
+            if i > 0 && chars[i - 1] == ':' {
+                out.push(':');
+                i += 1;
+                continue;
+            }
             i += 1;
             let start = i;
             while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
@@ -184,6 +195,28 @@ fn walk_value_expr(expr: &Expr, allow_agg: bool) -> Result<(), AppError> {
         }
         Expr::Nested(inner) => walk_value_expr(inner, allow_agg),
         Expr::Cast { expr, .. } => walk_value_expr(expr, allow_agg),
+        Expr::Case {
+            operand,
+            conditions,
+            else_result,
+            ..
+        } => {
+            if let Some(op) = operand {
+                walk_value_expr(op, allow_agg)?;
+            }
+            for cw in conditions {
+                if operand.is_some() {
+                    walk_value_expr(&cw.condition, allow_agg)?;
+                } else {
+                    walk_bool_expr(&cw.condition)?;
+                }
+                walk_value_expr(&cw.result, allow_agg)?;
+            }
+            if let Some(el) = else_result {
+                walk_value_expr(el, allow_agg)?;
+            }
+            Ok(())
+        }
         Expr::Function(func) => {
             let name = func.name.to_string();
             let lower = name.to_ascii_lowercase();
@@ -352,6 +385,23 @@ fn collect_idents(expr: &Expr, out: &mut HashSet<String>) {
             collect_idents(expr, out);
             collect_idents(low, out);
             collect_idents(high, out);
+        }
+        Expr::Case {
+            operand,
+            conditions,
+            else_result,
+            ..
+        } => {
+            if let Some(op) = operand {
+                collect_idents(op, out);
+            }
+            for cw in conditions {
+                collect_idents(&cw.condition, out);
+                collect_idents(&cw.result, out);
+            }
+            if let Some(el) = else_result {
+                collect_idents(el, out);
+            }
         }
         _ => {}
     }

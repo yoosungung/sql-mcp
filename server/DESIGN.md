@@ -42,7 +42,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 1. `document.schema.json`으로 문서 하나 검증
 2. 반영 후 등록 집합 연결 검증(실패 시 저장소 불변)
 3. `metadata_update`는 **전체 replace**(D15)
-4. CRUD 성공 후 `column_index` 재구축
+4. CRUD 시 변경된 텍스트만 증분 임베딩한 뒤 **단일 Write 트랜잭션**으로 `meta_*`와 `column_index`/`column_index_fts`를 함께 갱신하고, 인메모리 카탈로그 캐시를 갱신
 
 ## DialectProfile (D21)
 
@@ -57,11 +57,11 @@ Cube.js `*Query` 어댑터와 같은 역할: **생성기 쪽 방언**, 자유 SQ
 
 `execute_sql` / `sample_column`은 `TargetConfig.engine` → `DialectProfile::for_engine`.
 
-## 타깃 탐색
+## 타깃 탐색 및 보안
 
 - `list_tables` / `describe_table`: 시맨틱 **cube** 조회(툴 이름 유지). `list_tables(target?)`는 cube 목록, `describe_table(table, target?)`는 cube + dimensions/facts + 연결 metric/segment. 물리 `information_schema` 경로 없음.
-- `search_columns`: `keyword` | `vector` | `hybrid`(기본). 임베더 없으면 vector/hybrid→keyword.
-- `sample_column` / `execute_sql`: 해석된 **cube.target**이 툴 인자 `target`과 같아야 한다(SQL에 cube가 여러 개면 **전부** 동일 target이고 인자와도 일치). `execute_sql`은 동일 target cube **JOIN/UNION** 허용. `dry_run=true`면 컴파일 후 타깃 SELECT를 건너뛰고 `{ sql, dry_run: true }`만 반환. `sample_column`은 mappings 또는 dimension `as_code` 해석 후 타깃 샘플. encryption 마스킹(D17).
+- `search_columns`: `keyword` | `vector` | `hybrid`(기본). `target` 지정 시 해당 타깃 항목만 반환. 임베더 없으면 vector/hybrid→keyword.
+- `sample_column` / `execute_sql`: 해석된 **cube.target**이 툴 인자 `target`과 같아야 한다(SQL에 cube가 여러 개면 **전부** 동일 target이고 인자와도 일치). `execute_sql`은 동일 target cube **JOIN/UNION**·복수 metric·동적 `GROUP BY`(`ROLLUP`/`CUBE`/`GROUPING SETS`)·일반 `WHERE`·`HAVING`·`ORDER BY`·`LIMIT`/`OFFSET`·`:name` 바인드 치환을 허용한다. `dry_run=true`면 컴파일 후 타깃 SELECT를 건너뛰고 `{ sql, dry_run: true }`만 반환. `sample_column`은 mappings 또는 dimension `as_code` 해석 후 인라인 보안 필터를 적용해 타깃 샘플. 큐브 스코프 `encryption` 마스킹(D17) 및 전 계층 `role` 검증.
 - Skills extension: capabilities에 `io.modelcontextprotocol/skills` (빈 설정). `skills/list` · `skills/get` → `skills_ext` (Resource URI·내용과 동일, SHA-256 digest). `resources/directory/read` 없음.
 
 ## 설정
@@ -72,7 +72,9 @@ Cube.js `*Query` 어댑터와 같은 역할: **생성기 쪽 방언**, 자유 SQ
 | `SQL_MCP_CONFIG` | TOML 설정 경로 |
 | `SQL_MCP_LISTEN` | 바인드 주소(기본 `127.0.0.1:8080`, HTTP 모드) |
 | `SQL_MCP_TRANSPORT` | `stdio`면 stdio 모드(`--stdio`와 동일). 미설정·기타는 HTTP |
-| `SQL_MCP_MAX_ROWS` / `SQL_MCP_SAMPLE_LIMIT` / `SQL_MCP_TIMEOUT_MS` | 상한 |
+| `SQL_MCP_MAX_ROWS` / `SQL_MCP_SAMPLE_LIMIT` / `SQL_MCP_TIMEOUT_MS` | 상한 및 쿼리 타임아웃 |
+| `SQL_MCP_READONLY_METADATA` | `true`/`1`이면 DW 에이전트 모드로 `metadata_*` CRUD 비활성화 |
+| `SQL_MCP_DEFAULT_ROLE` | `caller_role` 미지정 시 기본 적용할 역할 |
 | `SQL_MCP_EMBEDDING_URL` / `SQL_MCP_EMBEDDING_API_KEY` | 둘 다 있으면 임베딩·vector/hybrid. 없으면 keyword(BM25)만(D14) |
 | `SQL_MCP_EMBEDDING_MODEL` | 기본 `text-embedding-3-small` |
 

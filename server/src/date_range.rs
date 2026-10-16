@@ -30,8 +30,8 @@ impl DateInterval {
 /// Conjunction of per-column intervals (AND).
 pub type AndClause = Vec<DateInterval>;
 
-/// Substitute `:name` bind placeholders with quoted date literals from `binds`.
-/// String literals are left untouched. Unknown binds are left as-is.
+/// Substitute `:name` bind placeholders with safely escaped single-quoted SQL literals from `binds`.
+/// String literals and `::` casts are left untouched. Unknown binds are left as-is.
 pub fn substitute_binds(expr: &str, binds: &HashMap<String, String>) -> String {
     if binds.is_empty() {
         return expr.to_string();
@@ -40,17 +40,29 @@ pub fn substitute_binds(expr: &str, binds: &HashMap<String, String>) -> String {
     let mut out = String::new();
     let mut i = 0;
     while i < chars.len() {
-        if chars[i] == '\'' {
-            out.push('\'');
+        if chars[i] == '\'' || chars[i] == '"' {
+            let quote = chars[i];
+            out.push(quote);
             i += 1;
             while i < chars.len() {
-                out.push(chars[i]);
-                if chars[i] == '\'' {
-                    i += 1;
+                let ch = chars[i];
+                out.push(ch);
+                i += 1;
+                if ch == quote {
+                    if i < chars.len() && chars[i] == quote {
+                        out.push(quote);
+                        i += 1;
+                        continue;
+                    }
                     break;
                 }
-                i += 1;
             }
+            continue;
+        }
+        // Ignore Postgres `::` type cast
+        if chars[i] == ':' && i + 1 < chars.len() && chars[i + 1] == ':' {
+            out.push_str("::");
+            i += 2;
             continue;
         }
         if chars[i] == ':'
@@ -65,7 +77,13 @@ pub fn substitute_binds(expr: &str, binds: &HashMap<String, String>) -> String {
             let name: String = chars[start..i].iter().collect();
             if let Some(val) = binds.get(&name) {
                 out.push('\'');
-                out.push_str(val);
+                for vc in val.chars() {
+                    if vc == '\'' {
+                        out.push_str("''");
+                    } else if vc != '\0' {
+                        out.push(vc);
+                    }
+                }
                 out.push('\'');
             } else {
                 out.push(':');
@@ -77,6 +95,47 @@ pub fn substitute_binds(expr: &str, binds: &HashMap<String, String>) -> String {
         i += 1;
     }
     out
+}
+
+/// Return the first unresolved `:name` bind parameter outside string/identifier quotes, if any.
+pub fn find_unresolved_bind(sql: &str) -> Option<String> {
+    let chars: Vec<char> = sql.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if matches!(chars[i], '\'' | '"' | '`') {
+            let quote = chars[i];
+            i += 1;
+            while i < chars.len() {
+                let ch = chars[i];
+                i += 1;
+                if ch == quote {
+                    if i < chars.len() && chars[i] == quote {
+                        i += 1;
+                        continue;
+                    }
+                    break;
+                }
+            }
+            continue;
+        }
+        if chars[i] == ':' && i + 1 < chars.len() && chars[i + 1] == ':' {
+            i += 2;
+            continue;
+        }
+        if chars[i] == ':'
+            && i + 1 < chars.len()
+            && (chars[i + 1].is_ascii_alphabetic() || chars[i + 1] == '_')
+        {
+            i += 1;
+            let start = i;
+            while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            return Some(chars[start..i].iter().collect());
+        }
+        i += 1;
+    }
+    None
 }
 
 /// True when every AND-clause pair across DNFs is date-disjoint (safe to prune).
@@ -340,5 +399,28 @@ mod tests {
             "(order_date >= '2018-01-01' AND order_date < '2019-01-01') OR (order_date >= '2024-01-01' AND order_date < '2025-01-01')",
         );
         assert!(is_disjoint_dnf(&scope, &query2));
+    }
+
+    #[test]
+    fn substitute_binds_escapes_single_quotes_and_preserves_cast() {
+        let mut binds = HashMap::new();
+        binds.insert("evil".into(), "KR' OR '1'='1".into());
+        let out = substitute_binds("region_code = :evil AND amt::numeric > 0", &binds);
+        assert_eq!(
+            out,
+            "region_code = 'KR'' OR ''1''=''1' AND amt::numeric > 0"
+        );
+    }
+
+    #[test]
+    fn find_unresolved_bind_detects_missing_and_ignores_strings_and_casts() {
+        assert_eq!(
+            find_unresolved_bind("SELECT \"a\"::text, ':not_a_bind' FROM t WHERE r = :caller_region"),
+            Some("caller_region".to_string())
+        );
+        assert_eq!(
+            find_unresolved_bind("SELECT \"a\"::text, ':not_a_bind' FROM t WHERE r = 'KR'"),
+            None
+        );
     }
 }

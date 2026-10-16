@@ -458,8 +458,8 @@ async fn insert_cube(conn: &Connection, body: &Value) -> Result<(), AppError> {
     let view = str_field(body, "view")?;
     let description = str_field(body, "description")?;
     conn.execute(
-        "INSERT INTO meta_cubes (name, target, view_name, description) VALUES (?1,?2,?3,?4)",
-        params![name, target, view, description],
+        "INSERT INTO meta_cubes (name, target, view_name, description, role_json) VALUES (?1,?2,?3,?4,?5)",
+        params![name, target, view, description, role_json(body)],
     )
     .await
     .map_err(|e| AppError::Internal(e.into()))?;
@@ -542,7 +542,7 @@ async fn insert_cube_member(
 async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut rows = conn
         .query(
-            "SELECT target, view_name, description FROM meta_cubes WHERE name = ?1",
+            "SELECT target, view_name, description, role_json FROM meta_cubes WHERE name = ?1",
             params![name],
         )
         .await
@@ -555,6 +555,7 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let target: String = row.get(0).map_err(|e| AppError::Internal(e.into()))?;
     let view: String = row.get(1).map_err(|e| AppError::Internal(e.into()))?;
     let description: String = row.get(2).map_err(|e| AppError::Internal(e.into()))?;
+    let role_s: String = row.get(3).unwrap_or_else(|_| "\"all\"".to_string());
 
     let mut dimensions = Vec::new();
     let mut drows = conn
@@ -590,7 +591,7 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
         facts.push(load_member_fact(&r)?);
     }
 
-    Ok(json!({
+    let mut out = json!({
         "kind": "cube",
         "name": name,
         "target": target,
@@ -598,7 +599,12 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
         "description": description,
         "dimensions": dimensions,
         "facts": facts,
-    }))
+    });
+    let role_val = serde_json::from_str::<Value>(&role_s).unwrap_or(json!("all"));
+    if role_val != json!("all") {
+        out["role"] = role_val;
+    }
+    Ok(out)
 }
 
 fn load_member_dim(r: &libsql::Row) -> Result<Value, AppError> {

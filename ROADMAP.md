@@ -69,11 +69,11 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 
 ### M1 — 타깃 조회 + 메타 CRUD (일반 HTTP)
 
-1. [x] `server/` + **libSQL** 임베디드 + HTTP 리스너 + `DESIGN.md` / Commands
-2. [x] `metadata_*` CRUD — `document.schema.json` 검증 + `document` 테이블 저장 · update=전체 replace(D15)
-3. [x] `list_targets` · 타깃 SELECT 가드 · `list_tables` / `describe_table` / `execute_sql` / `sample_column` · 엔진 Postgres·SQLite(D13)
-4. [x] `search_columns`는 스텁 또는 no-op 허용 — 인덱스 본구현은 M2
-5. [x] HTTP 클라이언트로 스모크 (`cargo test -p sql-mcp`)
+- [x] `server/` + **libSQL** 임베디드 + HTTP 리스너 + `DESIGN.md` / Commands
+- [x] `metadata_*` CRUD — `document.schema.json` 검증 + `document` 테이블 저장 · update=전체 replace(D15)
+- [x] `list_targets` · 타깃 SELECT 가드 · `list_tables` / `describe_table` / `execute_sql` / `sample_column` · 엔진 Postgres·SQLite(D13)
+- [x] `search_columns`는 스텁 또는 no-op 허용 — 인덱스 본구현은 M2
+- [x] HTTP 클라이언트로 스모크 (`cargo test -p sql-mcp`)
 
 **완료 기준:** 타깃 SELECT·탐색 + 메타 JSON CRUD가 **일반 HTTP**로 동작. (Postgres 실연결 스모크는 `http_smoke` ignore 테스트·DSN 환경 선택)
 
@@ -97,7 +97,7 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 - [x] Agent Skills 정본 `skills/` + MCP Resource 노출(`https://sql-mcp.local/skills/…`); Cursor용 `.cursor/skills` 심볼릭
 - [x] MCP Skills extension: `skills/list` · `skills/get` + capabilities `io.modelcontextprotocol/skills` (`directoryRead` 미구현)
 - [x] 타깃 MySQL(`sqlx`) · Oracle(`oracledb` thin) (D13; ADBC 비채택)
-- [ ] 운영 하드닝(인증·rate limit 등)은 필요 시 후속
+- [x] 운영 하드닝(전 계층 RBAC·타임아웃·읽기 전용 메타 모드·에러 마스킹)
 
 ### M4 — 시맨틱 컴파일러 · 타입별 카탈로그
 
@@ -125,6 +125,17 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 - [x] Postgres·SQLite·MySQL·Oracle 골든 테스트(quote · MySQL adapt · `LIMIT`/`FETCH`)
 - [x] `date_trunc` rewrite (`year`/`month`/`day`/`hour`) · `emit_physical_sql`
 - [x] 실행 bind rewrite **비채택**(ad-hoc OLAP)
+
+### M5 — 컴파일러 완결성 · 전 계층 보안(RBAC) · 카탈로그/엔진 하드닝
+
+- [x] 시맨틱 SELECT 전체 절 지원: 복수 metric · 선택 dimension 동적 `GROUP BY` · `ROLLUP`/`CUBE`/`GROUPING SETS` · 일반 `WHERE` 조건식 보존 · `HAVING` / `ORDER BY` / `LIMIT` / `OFFSET`
+- [x] `:name` 바인드 파라미터 안전 리터럴 치환(쿼트 이스케이프) 및 실행 시 미해석 `:param` 거절
+- [x] Cube JOIN `ON` 식 AST 검증·치환 및 Join Pruning 기준 테이블(`sources[0]`) 고정·Outer Join 방향 보존
+- [x] 반가산(Semi-additive) metric 요약 뷰 그레뉼러리티 일치 검증 수정
+- [x] 전 계층(`cube`·`table`·`dimension`·`fact`·`metric`·`segment`) `role` 접근 제어 + `permission_filters` Fail-Closed + `sample_column` 인라인 보안 필터 + 큐브 스코프 `encryption` 마스킹·수식/필터 차단
+- [x] FTS5 `bm25()` 음수 랭크 점수 정규화 · `column_index.target` 및 `search_columns(target)` 필터링
+- [x] 인메모리 카탈로그 스냅샷 캐시 + 단일 Write 트랜잭션 내 증분 임베딩 갱신
+- [x] `SQL_MCP_TIMEOUT_MS` 타깃 쿼리 타임아웃 강제 · Postgres/MySQL `NUMERIC`/`DECIMAL`/`DATE`/`TIMESTAMP` 디코딩 · DSN 마스킹 상세 에러 · `SQL_MCP_READONLY_METADATA`
 
 ## 구현 시 작업 규칙
 
