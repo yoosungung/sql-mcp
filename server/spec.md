@@ -225,10 +225,11 @@ CREATE VIRTUAL TABLE meta_search_fts USING fts5(
 
 ### Step 8 (실행 경계): DialectProfile emit · 행 상한 (D21)
 
-- Step 1–7은 엔진 중립 **canonical** 물리 SQL(식별자 `"…"`). `pipeline` 말미에서 `DialectProfile::adapt_compiled_sql`(MySQL은 `` `…` ``, 문자열 리터럴은 유지).
-- 타깃 `execute_select`는 `wrap_row_limit`(Postgres/MySQL/SQLite=`LIMIT`, Oracle=`FETCH FIRST …`). `sample_column`/`sample_sql`은 프로필 `quote_ident`를 직접 쓴다.
-- (선택·후속) 실행 bind · 날짜 함수 rewrite. pruning용 `:name`과 실행 bind는 분리.
-- **하지 않음:** 자유 SQL 트랜스파일 · `sqlparser` `Display`에 방언 위임.
+- Step 1–7은 엔진 중립 **canonical** 물리 SQL(식별자 `"…"` · `date_trunc`).
+- `pipeline` 말미: `DialectProfile::emit_physical_sql` = `rewrite_date_trunc` → `adapt_compiled_sql`(MySQL backticks).
+  - `date_trunc('year'|'month'|'day'|'hour', expr)` → MySQL `DATE_FORMAT`/`DATE` · Oracle `TRUNC` · SQLite `datetime(…, 'start of …')` · Postgres 유지. 미지원 단위 → `validation`.
+- 타깃 `execute_select`는 `wrap_row_limit`. `sample_sql`은 프로필 quote + `rewrite_date_trunc`.
+- **하지 않음:** 자유 SQL 트랜스파일 · 실행 bind rewrite · `sqlparser` Display 방언 위임.
 
 ## 4. 개발 시 주의사항 (Checklist)
 

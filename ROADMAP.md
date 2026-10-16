@@ -55,7 +55,7 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 | D18 | expression/filter 컬럼 검사 시점 | **결정: 이중 검사.** `metadata_*` = 연결 그래프 · 컴파일=AST 식별자. `execute_sql`은 시맨틱 컴파일 필수 |
 | D19 | `execute_sql` 입력 | **결정: 시맨틱 SELECT만.** 툴명 유지. 자유 물리 SELECT 경로 없음 |
 | D20 | table/view/cube `target` | **결정:** 등록 JSON에 MCP `target` id 필수. leaf table·view·cube 동일 target 강제. `list_tables`/`describe_table`=cube 표면. 같은 target cube JOIN/UNION 허용(다른 target 거절) |
-| D21 | 타깃 SQL 방언(dialect) | **결정: Cube식 DialectProfile emit.** 시맨틱 파이프라인(Step 1–6)은 엔진 중립. 물리 문자열·행상한·바인드 스타일은 **emit 직전·실행 래퍼**에서 `TargetConfig.engine`별 어댑터가 담당(식별자 quote · LIMIT/`FETCH` · bind placeholder · 필요 시 날짜 함수 rewrite). **비채택:** 자유 SQL 트랜스파일(SQLGlot식)·`sqlparser` `Display`에 방언 위임(파서 Dialect는 입력 파싱용). 신뢰된 식(D16)의 방언 의존 함수는 화이트리스트 + rewrite 또는 등록 시 엔진 표기. 상세 [ARCHITECTURE.md](ARCHITECTURE.md) · [server/DESIGN.md](server/DESIGN.md) · [server/spec.md](server/spec.md) |
+| D21 | 타깃 SQL 방언(dialect) | **결정: Cube식 DialectProfile emit.** 컴파일은 엔진 중립(canonical ANSI `"…"` · `date_trunc`). emit: `date_trunc`→엔진별 식 · quote adapt · `wrap_row_limit`. **비채택:** 자유 SQL 트랜스파일 · `sqlparser` Display 방언 위임 · **실행 bind 스타일 rewrite**(ad-hoc OLAP만, 드라이버 prepared bind 경로 없음). 상세 [ARCHITECTURE.md](ARCHITECTURE.md) · [server/DESIGN.md](server/DESIGN.md) · [server/spec.md](server/spec.md) |
 
 (제거: D5 세션형 Streamable HTTP, D10/D11 Frontend. stdio는 로컬용으로 복원)
 
@@ -123,7 +123,8 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 - [x] `DialectProfile`: `quote_ident` · `adapt_compiled_sql` · `wrap_row_limit` — `TargetConfig.engine`으로 선택
 - [x] `pipeline`/`sample`/`tools`에 프로필 주입 · 타깃 LIMIT은 `wrap_row_limit`
 - [x] Postgres·SQLite·MySQL·Oracle 골든 테스트(quote · MySQL adapt · `LIMIT`/`FETCH`)
-- [ ] (선택) 실행 bind 스타일 · 날짜 함수 rewrite
+- [x] `date_trunc` rewrite (`year`/`month`/`day`/`hour`) · `emit_physical_sql`
+- [x] 실행 bind rewrite **비채택**(ad-hoc OLAP)
 
 ## 구현 시 작업 규칙
 

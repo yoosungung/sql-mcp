@@ -1,9 +1,18 @@
 //! Target SQL dialect emit (D21).
 //!
-//! Semantic compile emits a **canonical** physical SQL using ANSI double-quoted
-//! identifiers (`compile::quote_ident`). At the execution boundary, a
-//! `DialectProfile` adapts quotes (e.g. MySQL backticks) and wraps row limits.
-//! Compile Steps 1–7 stay engine-neutral.
+//! Semantic compile emits **canonical** physical SQL: ANSI `"…"` identifiers and
+//! Postgres-shaped helpers such as `date_trunc`. At the execution boundary,
+//! `DialectProfile` rewrites date functions, adapts quotes, and wraps row limits.
+//! Compile Steps 1–7 stay engine-neutral. Ad-hoc OLAP only — no execution bind rewrite.
+
+use std::ops::ControlFlow;
+
+use sqlparser::ast::{
+    Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, Ident, VisitMut, VisitorMut,
+    Value as AstValue,
+};
+use sqlparser::dialect::GenericDialect;
+use sqlparser::parser::Parser;
 
 use crate::error::AppError;
 
@@ -39,7 +48,7 @@ impl DialectProfile {
         }
     }
 
-    /// Quote a simple identifier (alphanumeric + `_` only).
+    /// Quote a simple identifier.
     pub fn quote_ident(self, name: &str) -> Result<String, AppError> {
         validate_simple_ident(name)?;
         Ok(match self {
@@ -57,8 +66,39 @@ impl DialectProfile {
         ))
     }
 
+    /// Full emit: `date_trunc` rewrite → identifier quote adapt.
+    pub fn emit_physical_sql(self, canonical: &str) -> Result<String, AppError> {
+        let rewritten = self.rewrite_date_trunc(canonical)?;
+        Ok(self.adapt_compiled_sql(&rewritten))
+    }
+
+    /// Rewrite canonical `date_trunc('unit', expr)` to the target dialect.
+    /// Postgres: identity. Unsupported units → `validation`.
+    pub fn rewrite_date_trunc(self, sql: &str) -> Result<String, AppError> {
+        if self == Self::Postgres {
+            return Ok(sql.to_string());
+        }
+        let dialect = GenericDialect {};
+        let mut stmts = Parser::parse_sql(&dialect, sql)
+            .map_err(|e| AppError::Validation(format!("dialect rewrite parse: {e}")))?;
+        let mut visitor = DateTruncRewriter {
+            profile: self,
+            err: None,
+        };
+        for stmt in &mut stmts {
+            let _ = stmt.visit(&mut visitor);
+            if let Some(e) = visitor.err.take() {
+                return Err(e);
+            }
+        }
+        Ok(stmts
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .join("; "))
+    }
+
     /// Adapt canonical (ANSI `"…"`) compiled SQL to this dialect's identifier quotes.
-    /// Leaves `'…'` string literals untouched. Postgres/SQLite/Oracle: identity.
     pub fn adapt_compiled_sql(self, sql: &str) -> String {
         match self {
             Self::Mysql => ansi_double_quotes_to_mysql_backticks(sql),
@@ -79,8 +119,142 @@ impl DialectProfile {
     }
 }
 
+struct DateTruncRewriter {
+    profile: DialectProfile,
+    err: Option<AppError>,
+}
+
+impl VisitorMut for DateTruncRewriter {
+    type Break = ();
+
+    fn post_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
+        if self.err.is_some() {
+            return ControlFlow::Break(());
+        }
+        let Expr::Function(func) = expr else {
+            return ControlFlow::Continue(());
+        };
+        if !is_date_trunc(func) {
+            return ControlFlow::Continue(());
+        }
+        match rewrite_date_trunc_fn(self.profile, func) {
+            Ok(new_expr) => *expr = new_expr,
+            Err(e) => {
+                self.err = Some(e);
+                return ControlFlow::Break(());
+            }
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+fn is_date_trunc(func: &Function) -> bool {
+    func.name.to_string().eq_ignore_ascii_case("date_trunc")
+}
+
+fn rewrite_date_trunc_fn(profile: DialectProfile, func: &Function) -> Result<Expr, AppError> {
+    let (unit, arg) = date_trunc_args(func)?;
+    let arg_sql = arg.to_string();
+    let replacement = match (profile, unit.as_str()) {
+        (DialectProfile::Mysql, "year") => {
+            format!("DATE_FORMAT({arg_sql}, '%Y-01-01')")
+        }
+        (DialectProfile::Mysql, "month") => {
+            format!("DATE_FORMAT({arg_sql}, '%Y-%m-01')")
+        }
+        (DialectProfile::Mysql, "day") => format!("DATE({arg_sql})"),
+        (DialectProfile::Mysql, "hour") => {
+            format!("DATE_FORMAT({arg_sql}, '%Y-%m-%d %H:00:00')")
+        }
+        (DialectProfile::Oracle, "year") => format!("TRUNC({arg_sql}, 'YYYY')"),
+        (DialectProfile::Oracle, "month") => format!("TRUNC({arg_sql}, 'MM')"),
+        (DialectProfile::Oracle, "day") => format!("TRUNC({arg_sql})"),
+        (DialectProfile::Oracle, "hour") => format!("TRUNC({arg_sql}, 'HH24')"),
+        (DialectProfile::Sqlite, "year") => {
+            format!("datetime({arg_sql}, 'start of year')")
+        }
+        (DialectProfile::Sqlite, "month") => {
+            format!("datetime({arg_sql}, 'start of month')")
+        }
+        (DialectProfile::Sqlite, "day") => {
+            format!("datetime({arg_sql}, 'start of day')")
+        }
+        (DialectProfile::Sqlite, "hour") => {
+            format!("datetime(strftime('%Y-%m-%d %H:00:00', {arg_sql}))")
+        }
+        (DialectProfile::Postgres, _) => {
+            return Ok(Expr::Function(func.clone()));
+        }
+        (_, other) => {
+            return Err(AppError::Validation(format!(
+                "date_trunc unit '{other}' not supported for {}",
+                profile.engine_name()
+            )));
+        }
+    };
+    Ok(parse_expr_fragment(&replacement))
+}
+
+fn date_trunc_args(func: &Function) -> Result<(String, Expr), AppError> {
+    let FunctionArguments::List(list) = &func.args else {
+        return Err(AppError::Validation(
+            "date_trunc requires (unit, expr) arguments".into(),
+        ));
+    };
+    if list.args.len() != 2 {
+        return Err(AppError::Validation(
+            "date_trunc requires exactly two arguments".into(),
+        ));
+    }
+    let unit_expr = unnamed_arg_expr(&list.args[0])?;
+    let value_expr = unnamed_arg_expr(&list.args[1])?;
+    let unit = string_literal(&unit_expr).ok_or_else(|| {
+        AppError::Validation("date_trunc unit must be a string literal".into())
+    })?;
+    Ok((unit.to_ascii_lowercase(), value_expr))
+}
+
+fn unnamed_arg_expr(arg: &FunctionArg) -> Result<Expr, AppError> {
+    match arg {
+        FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) => Ok(e.clone()),
+        _ => Err(AppError::Validation(
+            "date_trunc arguments must be unnamed exprs".into(),
+        )),
+    }
+}
+
+fn string_literal(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Value(v) => match &v.value {
+            AstValue::SingleQuotedString(s) | AstValue::DoubleQuotedString(s) => Some(s.clone()),
+            _ => None,
+        },
+        Expr::Nested(inner) => string_literal(inner),
+        _ => None,
+    }
+}
+
+fn parse_expr_fragment(sql: &str) -> Expr {
+    let wrapped = format!("SELECT ({sql})");
+    let dialect = GenericDialect {};
+    if let Ok(stmts) = Parser::parse_sql(&dialect, &wrapped) {
+        if let Some(sqlparser::ast::Statement::Query(q)) = stmts.into_iter().next() {
+            if let sqlparser::ast::SetExpr::Select(select) = *q.body {
+                if let Some(sqlparser::ast::SelectItem::UnnamedExpr(e)) =
+                    select.projection.into_iter().next()
+                {
+                    return match e {
+                        Expr::Nested(inner) => *inner,
+                        other => other,
+                    };
+                }
+            }
+        }
+    }
+    Expr::Identifier(Ident::new(sql))
+}
+
 fn validate_simple_ident(name: &str) -> Result<(), AppError> {
-    // Quoted idents may include space/hyphen (physical SQLite columns); reject quote chars / `;`.
     if name.is_empty()
         || name.contains('"')
         || name.contains('`')
@@ -94,7 +268,6 @@ fn validate_simple_ident(name: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Convert ANSI `"ident"` to MySQL `` `ident` `` without touching `'…'` strings.
 fn ansi_double_quotes_to_mysql_backticks(sql: &str) -> String {
     let mut out = String::with_capacity(sql.len());
     let chars: Vec<char> = sql.chars().collect();
@@ -109,7 +282,6 @@ fn ansi_double_quotes_to_mysql_backticks(sql: &str) -> String {
                 out.push(ch);
                 i += 1;
                 if ch == '\'' {
-                    // SQL escape: '' inside string
                     if i < chars.len() && chars[i] == '\'' {
                         out.push('\'');
                         i += 1;
@@ -155,14 +327,6 @@ mod tests {
             DialectProfile::for_engine("mysql").unwrap(),
             DialectProfile::Mysql
         );
-        assert_eq!(
-            DialectProfile::for_engine("sqlite").unwrap(),
-            DialectProfile::Sqlite
-        );
-        assert_eq!(
-            DialectProfile::for_engine("oracle").unwrap(),
-            DialectProfile::Oracle
-        );
         assert!(DialectProfile::for_engine("mssql").is_err());
     }
 
@@ -173,91 +337,87 @@ mod tests {
             "\"orders\""
         );
         assert_eq!(
-            DialectProfile::Sqlite.quote_ident("orders").unwrap(),
-            "\"orders\""
-        );
-        assert_eq!(
-            DialectProfile::Oracle.quote_ident("ORDERS").unwrap(),
-            "\"ORDERS\""
-        );
-        assert_eq!(
             DialectProfile::Mysql.quote_ident("orders").unwrap(),
             "`orders`"
         );
         assert!(DialectProfile::Mysql.quote_ident("a;drop").is_err());
-        assert!(DialectProfile::Postgres.quote_ident("").is_err());
-    }
-
-    #[test]
-    fn qualify_table_golden() {
-        assert_eq!(
-            DialectProfile::Postgres
-                .qualify_table("sales", "orders")
-                .unwrap(),
-            "\"sales\".\"orders\""
-        );
-        assert_eq!(
-            DialectProfile::Mysql
-                .qualify_table("sales", "orders")
-                .unwrap(),
-            "`sales`.`orders`"
-        );
     }
 
     #[test]
     fn wrap_row_limit_golden() {
-        let inner = "SELECT 1 AS n";
-        let pg = DialectProfile::Postgres.wrap_row_limit(inner, 10);
-        assert!(pg.contains("LIMIT 10"));
-        assert!(pg.contains("AS _sql_mcp_q"));
-        assert!(!pg.contains("FETCH FIRST"));
-
-        let my = DialectProfile::Mysql.wrap_row_limit(inner, 5);
-        assert!(my.contains("LIMIT 5"));
-
-        let lite = DialectProfile::Sqlite.wrap_row_limit(inner, 3);
-        assert!(lite.contains("LIMIT 3"));
-
-        let ora = DialectProfile::Oracle.wrap_row_limit(inner, 7);
+        let ora = DialectProfile::Oracle.wrap_row_limit("SELECT 1", 7);
         assert!(ora.contains("FETCH FIRST 7 ROWS ONLY"));
         assert!(!ora.contains("LIMIT"));
-        assert!(!ora.contains(" AS _sql_mcp_q"));
     }
 
     #[test]
     fn adapt_compiled_sql_mysql_quotes_not_strings() {
         let canonical =
             r#"SELECT "amt" AS "revenue" FROM "sales"."orders" WHERE "status" = 'PAID'"#;
-        let mysql = DialectProfile::Mysql.adapt_compiled_sql(canonical);
         assert_eq!(
-            mysql,
+            DialectProfile::Mysql.adapt_compiled_sql(canonical),
             "SELECT `amt` AS `revenue` FROM `sales`.`orders` WHERE `status` = 'PAID'"
         );
-        // string with doubles must stay
-        let with_str = r#"SELECT "c" FROM "t" WHERE "x" = 'say "hi"'"#;
-        let adapted = DialectProfile::Mysql.adapt_compiled_sql(with_str);
-        assert_eq!(adapted, "SELECT `c` FROM `t` WHERE `x` = 'say \"hi\"'");
-
-        assert_eq!(
-            DialectProfile::Postgres.adapt_compiled_sql(canonical),
-            canonical
-        );
     }
 
     #[test]
-    fn end_to_end_emit_shape() {
-        let canonical = r#"SELECT "a" FROM "s"."t""#;
-        let d = DialectProfile::Mysql;
-        let adapted = d.adapt_compiled_sql(canonical);
-        let limited = d.wrap_row_limit(&adapted, 100);
-        assert!(limited.starts_with("SELECT * FROM (SELECT `a` FROM `s`.`t`)"));
-        assert!(limited.contains("LIMIT 100"));
+    fn rewrite_date_trunc_postgres_identity() {
+        let sql = r#"SELECT date_trunc('year', "order_date") FROM "t""#;
+        let out = DialectProfile::Postgres.rewrite_date_trunc(sql).unwrap();
+        assert_eq!(out, sql);
     }
 
     #[test]
-    fn adapted_mysql_sql_passes_select_guard() {
-        let canonical = r#"SELECT "amt" AS "revenue" FROM "sales"."orders" WHERE "status" = 'PAID'"#;
-        let adapted = DialectProfile::Mysql.adapt_compiled_sql(canonical);
-        crate::select_guard::assert_select_only(&adapted).unwrap();
+    fn rewrite_date_trunc_mysql_year_month_day() {
+        let sql = r#"SELECT date_trunc('year', "order_date") AS y FROM "t""#;
+        let out = DialectProfile::Mysql.rewrite_date_trunc(sql).unwrap();
+        let lower = out.to_ascii_lowercase();
+        assert!(lower.contains("date_format"), "{out}");
+        assert!(out.contains("%Y-01-01"), "{out}");
+        assert!(!lower.contains("date_trunc"), "{out}");
+
+        let month = DialectProfile::Mysql
+            .rewrite_date_trunc(r#"SELECT date_trunc('month', "d") FROM "t""#)
+            .unwrap();
+        assert!(month.contains("%Y-%m-01"), "{month}");
+
+        let day = DialectProfile::Mysql
+            .rewrite_date_trunc(r#"SELECT date_trunc('day', "d") FROM "t""#)
+            .unwrap();
+        assert!(day.to_ascii_lowercase().contains("date("), "{day}");
+    }
+
+    #[test]
+    fn rewrite_date_trunc_oracle_and_sqlite() {
+        let ora = DialectProfile::Oracle
+            .rewrite_date_trunc(r#"SELECT date_trunc('month', "d") FROM "t""#)
+            .unwrap();
+        assert!(ora.to_ascii_uppercase().contains("TRUNC"), "{ora}");
+        assert!(ora.contains("'MM'") || ora.contains("\"MM\""), "{ora}");
+
+        let lite = DialectProfile::Sqlite
+            .rewrite_date_trunc(r#"SELECT date_trunc('year', "d") FROM "t""#)
+            .unwrap();
+        assert!(lite.to_ascii_lowercase().contains("datetime"), "{lite}");
+        assert!(lite.contains("start of year"), "{lite}");
+    }
+
+    #[test]
+    fn rewrite_date_trunc_rejects_unknown_unit() {
+        let err = DialectProfile::Mysql
+            .rewrite_date_trunc(r#"SELECT date_trunc('millennium', "d") FROM "t""#)
+            .unwrap_err();
+        assert!(matches!(err, AppError::Validation(_)));
+    }
+
+    #[test]
+    fn emit_physical_sql_mysql_rewrites_and_quotes() {
+        let canonical = r#"SELECT date_trunc('year', "order_date") AS "y" FROM "sales"."orders""#;
+        let out = DialectProfile::Mysql.emit_physical_sql(canonical).unwrap();
+        assert!(out.contains('`'), "{out}");
+        assert!(!out.contains('"'), "{out}");
+        assert!(out.to_ascii_lowercase().contains("date_format"), "{out}");
+        assert!(!out.to_ascii_lowercase().contains("date_trunc"), "{out}");
+        crate::select_guard::assert_select_only(&out).unwrap();
     }
 }

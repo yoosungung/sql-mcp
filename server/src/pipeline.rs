@@ -63,11 +63,11 @@ pub fn compile_semantic_sql_with_binds(
         let cube = find_doc(docs, "cube", c)?;
         check_role_access(cube.get("role"), role)?;
     }
-    // Steps 1–7: engine-neutral canonical SQL (ANSI "…").
+    // Steps 1–7: engine-neutral canonical SQL (ANSI "…" · date_trunc).
     let physical = compile_set_expr(docs, query.body.as_ref(), role, binds)?;
     assert_select_only(&physical)?;
-    // Step 8 (D21): dialect adapt (e.g. MySQL backticks).
-    Ok(dialect.adapt_compiled_sql(&physical))
+    // Step 8 (D21): date_trunc rewrite + quote adapt.
+    dialect.emit_physical_sql(&physical)
 }
 
 fn parse_query(sql: &str) -> Result<Query, AppError> {
@@ -791,4 +791,5 @@ mod tests {
         );
         assert!(sql.to_ascii_lowercase().contains("sum("));
     }
+
 }

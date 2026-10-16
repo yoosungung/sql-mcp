@@ -10,7 +10,7 @@
 4. **언어.** MCP 서버는 **Rust** + [`rmcp`](https://crates.io/crates/rmcp) (MCP spec `2026-07-28`).
 5. **범위.** **MCP 서버만.** Frontend·Admin UI·Admin API·**세션형 Streamable HTTP**는 **취소(범위 밖)**. Transport는 **일반 HTTP**(배포·원격)와 **stdio**(로컬 자식 프로세스). 둘 다 동일 툴 표면.
 6. **타깃 SQL = 시맨틱 SELECT만.** `execute_sql` 입력은 **시맨틱 SQL**(cube FROM · metric/dimension/segment)이며, 서버가 6단계 파이프라인으로 물리 SELECT를 만든 뒤에만 타깃에 실행한다. **자유 물리 SELECT 경로는 없다.** 컴파일·실행 결과는 단일 SELECT(읽기 CTE 허용)만. INSERT/UPDATE/DELETE/DDL/다중 문장/쓰기 CTE 거부. 행 상한·타임아웃 강제. (문서상 `execute_semantic_sql`은 `execute_sql` 이명.)
-7. **타깃 방언은 emit 어댑터(D21).** 시맨틱 컴파일(파싱·전개·pruning·식별자 치환·필터 푸시다운)은 **엔진 중립**이다. 엔진별 차이는 `TargetConfig.engine`에 묶인 **DialectProfile**이 물리 문자열을 낼 때·행 상한 래퍼·(해당 시) bind/날짜 함수 rewrite에서만 반영한다. 자유 SQL 트랜스파일과 `sqlparser` `Display`에 방언을 맡기지 않는다(파서 Dialect는 입력 파싱용).
+7. **타깃 방언은 emit 어댑터(D21).** 시맨틱 컴파일은 **엔진 중립**(canonical ANSI `"…"` · `date_trunc`). `DialectProfile`이 emit에서 `date_trunc` rewrite · quote adapt · 행 상한 래퍼를 적용한다. 자유 SQL 트랜스파일·`sqlparser` Display 방언 위임·**실행 bind rewrite는 하지 않는다**(ad-hoc OLAP SELECT만).
 8. **메타데이터 CRUD (예외).** 임베디드 시맨틱 저장소에 한해 MCP 툴로 **CRUD**를 제공한다. 요청/응답 바디는 **JSON**. 타깃 DB 쓰기가 아니다.
 9. **MCP 제공 능력.** (1) 타깃 목록 · **cube** 목록/상세(`list_tables`/`describe_table`) (2) 컬럼 검색(BM25/벡터/hybrid) (3) 컬럼 샘플(+code) (4) 타깃 SELECT SQL (5) **메타데이터 CRUD(JSON)** (6) **Resource:** 등록 문서 JSON Schema(`document.schema.json`) · **Agent Skills**(`skills/` 트리를 Resource로 제공). 그 외 툴·Resource는 기본 표면에 넣지 않는다. DW 에이전트에게는 메타 CRUD 도구를 주지 않는다. 이 에이전트에게 테이블은 cube이고 컬럼은 dimension, fact, metric이다.
 10. **시크릿.** 로그·에러·툴 응답에 DSN/비밀번호를 실지 않는다. 타깃 자격 증명은 기동 설정으로만 주입(채팅으로 비밀번호 받지 않음). 메타 CRUD JSON에도 시크릿 필드를 넣지 않는다.
@@ -169,11 +169,12 @@ HTTP ▶ rmcp tools
 | 능력 | 역할 | 엔진 예 |
 |------|------|---------|
 | `quote_ident` | 식별자 인용(샘플·타깃 직접 SQL) | Postgres/SQLite/Oracle `"…"` · MySQL `` `…` `` |
-| `adapt_compiled_sql` | canonical `"…"` → 엔진 quote | MySQL backticks(문자열 리터럴 보존) · 나머지 identity |
+| `rewrite_date_trunc` | canonical `date_trunc` → 엔진 식 | MySQL `DATE_FORMAT`/`DATE` · Oracle `TRUNC` · SQLite `datetime(…, 'start of …')` · PG identity |
+| `adapt_compiled_sql` | canonical `"…"` → 엔진 quote | MySQL backticks · 나머지 identity |
 | `wrap_row_limit` | 행 상한 래퍼 | `LIMIT n` · Oracle `FETCH FIRST n ROWS ONLY` |
-| bind/함수 rewrite (선택) | 후속 | pruning `:name`과 실행 bind는 분리 |
+| `emit_physical_sql` | rewrite + quote adapt | `pipeline` Step 8 |
 
-`compile`은 canonical ANSI만 낸다. `pipeline` 말미·`sample`·타깃 래퍼가 프로필을 쓴다.
+`compile`은 canonical만 낸다. pruning용 `:name`은 컴파일 전용이며 실행 bind rewrite와 무관하다.
 
 ## 6. 설정 형태 (초안)
 

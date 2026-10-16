@@ -19,7 +19,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `select_guard` | SQL 단일 SELECT(읽기 CTE 허용) AST 검사 |
 | `expr_guard` | D16 식 AST 제한 · D18 컴파일 시 식별자 검사 |
 | `mask` | D17 `encryption` 응답 마스킹(null) |
-| `dialect` | **D21** `DialectProfile`: `quote_ident` · `adapt_compiled_sql` · `wrap_row_limit`. `engine` → 프로필 |
+| `dialect` | **D21** `DialectProfile`: `quote_ident` · `rewrite_date_trunc` · `adapt_compiled_sql` · `wrap_row_limit` · `emit_physical_sql` |
 | `compile` | table/metric → 물리 SQL: 요약뷰·join/union pruning·필터 푸시다운·encryption NULL |
 | `ast_rewrite` | sqlparser VisitorMut로 식 식별자 → 물리 식 치환 |
 | `ast_select` | SELECT/WHERE/GROUP BY AST 조립·파서 정규화 |
@@ -50,11 +50,10 @@ Cube.js `*Query` 어댑터와 같은 역할: **생성기 쪽 방언**, 자유 SQ
 
 | 원칙 | 내용 |
 |------|------|
-| 중립 컴파일 | Step 1–7은 **canonical ANSI** `"…"` (`compile::quote_ident` → `DialectProfile::Postgres`) — `engine`에 의존하지 않음 |
-| emit만 분기 | `adapt_compiled_sql`(MySQL → `` `…` ``) · `sample_sql`/타깃 샘플 quote · 타깃이 `wrap_row_limit` 직접 호출(`target/limit` 없음) |
-| sqlparser | `GenericDialect`로 **파싱**. `Display`에 방언을 맡기지 않음 |
-| 신뢰 식 | D16 화이트리스트. 방언 의존 함수 rewrite는 후속(선택) |
-| 비채택 | SQLGlot식 전체 트랜스파일 · 엔진마다 파이프라인 복제 · ADBC/JDBC |
+| 중립 컴파일 | Step 1–7은 **canonical** `"…"` + `date_trunc` — `engine`에 의존하지 않음 |
+| emit만 분기 | `emit_physical_sql` = `date_trunc` rewrite + quote adapt · 샘플 quote · `wrap_row_limit` |
+| `date_trunc` | 단위 `year`/`month`/`day`/`hour`. MySQL·Oracle·SQLite로 치환, PG는 유지. 그 외 단위 → `validation` |
+| 비채택 | SQLGlot 전체 트랜스파일 · 실행 bind rewrite · ADBC/JDBC |
 
 `execute_sql` / `sample_column`은 `TargetConfig.engine` → `DialectProfile::for_engine`.
 
