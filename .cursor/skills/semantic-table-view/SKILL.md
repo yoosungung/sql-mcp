@@ -9,7 +9,7 @@ description: >-
 
 # Semantic table · view from DW
 
-코딩 에이전트 전용. DW 에이전트 워크플로가 아니다.
+코딩 에이전트 전용.
 
 규칙·필드: [contract.md](contract.md). 형태 예시: [examples/](examples/).
 
@@ -55,4 +55,3 @@ Progress:
 
 - 타깃 DW 탐색에 MCP `list_tables` / `describe_table` / `sample_column` / `execute_sql`에 의존하지 않는다.
 - cube / metric / segment는 `semantic-cube-metric`.
-- 외부 레포 경로(`ARCHITECTURE.md` 등)를 정본으로 삼지 않는다 — 이 스킬 폴더만.
