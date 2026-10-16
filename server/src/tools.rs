@@ -292,7 +292,11 @@ impl SqlMcp {
             Ok(t) => t,
             Err(e) => return tool_err(e),
         };
-        let sql = match crate::sample::sample_sql(&target, limit) {
+        let dialect = match crate::dialect::DialectProfile::for_engine(&db.info().engine) {
+            Ok(d) => d,
+            Err(e) => return tool_err(e),
+        };
+        let sql = match crate::sample::sample_sql(&target, limit, dialect) {
             Ok(s) => s,
             Err(e) => return tool_err(e),
         };
@@ -365,11 +369,16 @@ impl SqlMcp {
                 return tool_err(e);
             }
         }
+        let dialect = match crate::dialect::DialectProfile::for_engine(&db.info().engine) {
+            Ok(d) => d,
+            Err(e) => return tool_err(e),
+        };
         let physical = match crate::pipeline::compile_semantic_sql_with_binds(
             &docs,
             &args.sql,
             args.caller_role.as_deref(),
             args.params.as_ref(),
+            dialect,
         ) {
             Ok(s) => s,
             Err(e) => return tool_err(e),

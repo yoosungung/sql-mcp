@@ -2,7 +2,8 @@
 
 use serde_json::{json, Value};
 
-use crate::compile::{physical_from, quote_ident, resolve_dim_as_code};
+use crate::compile::{physical_from, resolve_dim_as_code};
+use crate::dialect::DialectProfile;
 use crate::error::AppError;
 
 #[derive(Debug, Clone)]
@@ -229,12 +230,17 @@ fn str_field<'a>(doc: &'a Value, key: &str) -> Result<&'a str, AppError> {
 }
 
 /// Build SELECT for sampling; used when value_column / where need custom SQL.
-pub fn sample_sql(target: &SampleTarget, _limit: usize) -> Result<String, AppError> {
-    let schema = quote_ident(&target.schema)?;
-    let table = quote_ident(&target.table)?;
-    let col = quote_ident(&target.column)?;
+/// Identifiers use `dialect` quoting (D21). Row limit is applied by `TargetDb::execute_select`.
+pub fn sample_sql(
+    target: &SampleTarget,
+    _limit: usize,
+    dialect: DialectProfile,
+) -> Result<String, AppError> {
+    let schema = dialect.quote_ident(&target.schema)?;
+    let table = dialect.quote_ident(&target.table)?;
+    let col = dialect.quote_ident(&target.column)?;
     let mut sql = if let Some(ref vc) = target.value_column {
-        let vq = quote_ident(vc)?;
+        let vq = dialect.quote_ident(vc)?;
         format!("SELECT {col} AS k, {vq} AS v FROM {schema}.{table} WHERE {col} IS NOT NULL")
     } else {
         format!("SELECT {col} AS v FROM {schema}.{table} WHERE {col} IS NOT NULL")
@@ -244,7 +250,6 @@ pub fn sample_sql(target: &SampleTarget, _limit: usize) -> Result<String, AppErr
         sql.push_str(w);
         sql.push(')');
     }
-    // Row limit: TargetDb::execute_select engine wrapper (LIMIT / FETCH FIRST).
     Ok(sql)
 }
 
@@ -287,5 +292,25 @@ mod tests {
         assert!(!t.from_as_code);
         assert_eq!(t.table, "orders");
         assert_eq!(t.column, "sale_amount");
+    }
+
+    #[test]
+    fn sample_sql_uses_dialect_quotes() {
+        let t = SampleTarget {
+            schema: "sales".into(),
+            table: "orders".into(),
+            column: "sale_amount".into(),
+            value_column: None,
+            where_extra: None,
+            resolved: json!({}),
+            from_as_code: false,
+        };
+        let pg = sample_sql(&t, 10, DialectProfile::Postgres).unwrap();
+        assert!(pg.contains("\"sale_amount\""));
+        assert!(pg.contains("\"sales\".\"orders\""));
+        let my = sample_sql(&t, 10, DialectProfile::Mysql).unwrap();
+        assert!(my.contains("`sale_amount`"));
+        assert!(my.contains("`sales`.`orders`"));
+        assert!(!my.contains('"'));
     }
 }

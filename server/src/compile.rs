@@ -2,12 +2,15 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde_json::Value;
 
+use crate::dialect::DialectProfile;
 use crate::error::AppError;
 use crate::expr_guard::{assert_filter_expr, assert_idents_known, assert_metric_expr};
 use crate::select_guard::assert_select_only;
 
-/// Quote a simple SQL identifier.
+/// Quote a simple SQL identifier in **canonical ANSI** form (`"…"`).
+/// Delegates to [`DialectProfile::Postgres`]; emit adapts via other profiles (D21).
 pub fn quote_ident(name: &str) -> Result<String, AppError> {
+    // Compile path only emits semantic/simple idents (alphanumeric + `_`).
     if name.is_empty()
         || !name
             .chars()
@@ -15,7 +18,7 @@ pub fn quote_ident(name: &str) -> Result<String, AppError> {
     {
         return Err(AppError::Validation(format!("invalid identifier: {name}")));
     }
-    Ok(format!("\"{name}\""))
+    DialectProfile::Postgres.quote_ident(name)
 }
 
 /// Physical FROM clause for a table registration document.

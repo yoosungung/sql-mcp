@@ -4,6 +4,7 @@ pub mod code_detect;
 pub mod compile;
 pub mod config;
 pub mod date_range;
+pub mod dialect;
 pub mod embed;
 pub mod error;
 pub mod expr_guard;

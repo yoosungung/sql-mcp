@@ -120,10 +120,10 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 
 ### 후속 — 타깃 DialectProfile (D21)
 
-- [ ] `DialectProfile` 추상화: `quote_ident` · `wrap_row_limit` · (선택) bind/날짜 함수 rewrite — `TargetConfig.engine`으로 선택
-- [ ] 컴파일/파이프라인에 `engine` 주입: emit·`sample_column`·타깃 LIMIT 래퍼가 동일 프로필을 쓰도록 통일
-- [ ] Postgres·SQLite·MySQL·Oracle 프로필 + 골든 SQL 테스트(엔진별 quote/`LIMIT`/`FETCH`)
-- [ ] 현황 부채: 지금은 ANSI `"…"` + `LIMIT` 한 방언으로 emit — MySQL 백틱·Oracle `FETCH` 등은 D21 구현으로 이전
+- [x] `DialectProfile`: `quote_ident` · `adapt_compiled_sql` · `wrap_row_limit` — `TargetConfig.engine`으로 선택
+- [x] `pipeline`/`sample`/`tools`에 프로필 주입 · 타깃 LIMIT은 `wrap_row_limit`
+- [x] Postgres·SQLite·MySQL·Oracle 골든 테스트(quote · MySQL adapt · `LIMIT`/`FETCH`)
+- [ ] (선택) 실행 bind 스타일 · 날짜 함수 rewrite
 
 ## 구현 시 작업 규칙
 

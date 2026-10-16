@@ -19,7 +19,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `select_guard` | SQL 단일 SELECT(읽기 CTE 허용) AST 검사 |
 | `expr_guard` | D16 식 AST 제한 · D18 컴파일 시 식별자 검사 |
 | `mask` | D17 `encryption` 응답 마스킹(null) |
-| `dialect` | **(D21, 예정)** `DialectProfile`: `quote_ident` · `wrap_row_limit` · 선택 bind/함수 rewrite. `engine` → 프로필 |
+| `dialect` | **D21** `DialectProfile`: `quote_ident` · `adapt_compiled_sql` · `wrap_row_limit`. `engine` → 프로필 |
 | `compile` | table/metric → 물리 SQL: 요약뷰·join/union pruning·필터 푸시다운·encryption NULL |
 | `ast_rewrite` | sqlparser VisitorMut로 식 식별자 → 물리 식 치환 |
 | `ast_select` | SELECT/WHERE/GROUP BY AST 조립·파서 정규화 |
@@ -46,17 +46,17 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 
 ## DialectProfile (D21)
 
-Cube.js `*Query` 어댑터와 같은 역할: **생성기 쪽 방언**, 자유 SQL 트랜스파일이 아니다.
+Cube.js `*Query` 어댑터와 같은 역할: **생성기 쪽 방언**, 자유 SQL 트랜스파일이 아니다. 모듈 `dialect`.
 
 | 원칙 | 내용 |
 |------|------|
-| 중립 컴파일 | Step 1–6(파싱·metric/segment·요약뷰·pruning·치환·필터)은 `engine`에 의존하지 않음 |
-| emit만 분기 | `quote_ident` · FROM/식별자 조립 · Step 7 조인 문자열 · `sample_column` SQL · 타깃 `wrap_row_limit` |
-| sqlparser | `GenericDialect`(또는 입력용 Dialect)로 **파싱**. `Statement::to_string()`/`Display`에 방언을 맡기지 않음 |
-| 신뢰 식 | D16 화이트리스트. 방언 의존 함수는 프로필 rewrite 또는 등록 시 엔진 표기. 미지원이면 `validation` |
+| 중립 컴파일 | Step 1–7은 **canonical ANSI** `"…"` (`compile::quote_ident` → `DialectProfile::Postgres`) — `engine`에 의존하지 않음 |
+| emit만 분기 | `adapt_compiled_sql`(MySQL → `` `…` ``) · `sample_sql`/타깃 샘플 quote · 타깃이 `wrap_row_limit` 직접 호출(`target/limit` 없음) |
+| sqlparser | `GenericDialect`로 **파싱**. `Display`에 방언을 맡기지 않음 |
+| 신뢰 식 | D16 화이트리스트. 방언 의존 함수 rewrite는 후속(선택) |
 | 비채택 | SQLGlot식 전체 트랜스파일 · 엔진마다 파이프라인 복제 · ADBC/JDBC |
 
-**현황:** `compile::quote_ident`·타깃 LIMIT 래퍼가 ANSI `"…"` + `LIMIT`로 고정. D21 구현 시 프로필로 이전(ROADMAP 후속).
+`execute_sql` / `sample_column`은 `TargetConfig.engine` → `DialectProfile::for_engine`.
 
 ## 타깃 탐색
 

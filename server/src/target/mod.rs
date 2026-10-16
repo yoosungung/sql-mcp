@@ -1,4 +1,3 @@
-mod limit;
 mod mysql;
 mod oracle;
 mod postgres;

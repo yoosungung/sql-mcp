@@ -13,16 +13,18 @@ use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
 use crate::compile::{compile_metric_select_with_binds, quote_ident};
+use crate::dialect::DialectProfile;
 use crate::error::AppError;
 use crate::select_guard::assert_select_only;
 
 /// Compile semantic SQL to physical SELECT. `role` applies table permission_filters.
+/// Defaults to Postgres dialect emit (ANSI quotes).
 pub fn compile_semantic_sql(
     docs: &[Value],
     sql: &str,
     role: Option<&str>,
 ) -> Result<String, AppError> {
-    compile_semantic_sql_with_binds(docs, sql, role, None)
+    compile_semantic_sql_with_binds(docs, sql, role, None, DialectProfile::Postgres)
 }
 
 /// All FROM cube names in a semantic SELECT (including JOIN/UNION arms).
@@ -46,6 +48,7 @@ pub fn compile_semantic_sql_with_binds(
     sql: &str,
     role: Option<&str>,
     binds: Option<&HashMap<String, String>>,
+    dialect: DialectProfile,
 ) -> Result<String, AppError> {
     let query = parse_query(sql)?;
     let mut cubes = Vec::new();
@@ -60,9 +63,11 @@ pub fn compile_semantic_sql_with_binds(
         let cube = find_doc(docs, "cube", c)?;
         check_role_access(cube.get("role"), role)?;
     }
+    // Steps 1–7: engine-neutral canonical SQL (ANSI "…").
     let physical = compile_set_expr(docs, query.body.as_ref(), role, binds)?;
     assert_select_only(&physical)?;
-    Ok(physical)
+    // Step 8 (D21): dialect adapt (e.g. MySQL backticks).
+    Ok(dialect.adapt_compiled_sql(&physical))
 }
 
 fn parse_query(sql: &str) -> Result<Query, AppError> {
@@ -766,5 +771,24 @@ mod tests {
     fn rejects_bare_physical_select() {
         let docs = example_docs();
         assert!(compile_semantic_sql(&docs, "SELECT 1", None).is_err());
+    }
+
+    #[test]
+    fn mysql_dialect_adapts_identifier_quotes() {
+        let docs = example_docs();
+        let sql = compile_semantic_sql_with_binds(
+            &docs,
+            "SELECT revenue FROM sales WHERE paid",
+            Some("branch"),
+            None,
+            DialectProfile::Mysql,
+        )
+        .unwrap();
+        assert!(sql.contains('`'), "expected MySQL backticks in {sql}");
+        assert!(
+            !sql.contains('"'),
+            "canonical double quotes should be adapted away: {sql}"
+        );
+        assert!(sql.to_ascii_lowercase().contains("sum("));
     }
 }

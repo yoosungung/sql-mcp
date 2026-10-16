@@ -3,10 +3,10 @@ use serde_json::{Value, json};
 use sqlx::mysql::MySqlPoolOptions;
 use sqlx::{Column, MySqlPool, Row, TypeInfo};
 
+use crate::dialect::DialectProfile;
 use crate::error::AppError;
 use crate::select_guard::assert_select_only;
 
-use super::limit::wrap_select;
 use super::registry::TargetInfo;
 use super::{ColumnInfo, QueryResult, TableInfo, TargetDb};
 
@@ -20,11 +20,6 @@ impl MysqlTarget {
         let pool = MySqlPoolOptions::new()
             .max_connections(5)
             .connect(url)
-            .await
-            .map_err(|e| AppError::Connection(e.into()))?;
-        // Match compile/sample double-quoted identifiers (Postgres-style).
-        sqlx::query(r#"SET SESSION sql_mode = CONCAT(@@sql_mode, ',ANSI_QUOTES')"#)
-            .execute(&pool)
             .await
             .map_err(|e| AppError::Connection(e.into()))?;
         Ok(Self { info, pool })
@@ -108,7 +103,7 @@ impl TargetDb for MysqlTarget {
 
     async fn execute_select(&self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError> {
         assert_select_only(sql)?;
-        let limited = wrap_select("mysql", sql, max_rows);
+        let limited = DialectProfile::Mysql.wrap_row_limit(sql, max_rows);
         let rows = sqlx::query(sqlx::AssertSqlSafe(limited))
             .fetch_all(&self.pool)
             .await
@@ -154,10 +149,11 @@ impl TargetDb for MysqlTarget {
                 return Err(AppError::Validation("invalid identifier".into()));
             }
         }
-        // ANSI_QUOTES session: double quotes are identifiers.
-        let sql = format!(
-            r#"SELECT "{column}" AS v FROM "{schema}"."{table}" WHERE "{column}" IS NOT NULL"#
-        );
+        let d = DialectProfile::Mysql;
+        let col = d.quote_ident(column)?;
+        let sch = d.quote_ident(schema)?;
+        let tbl = d.quote_ident(table)?;
+        let sql = format!("SELECT {col} AS v FROM {sch}.{tbl} WHERE {col} IS NOT NULL");
         let result = self.execute_select(&sql, limit).await?;
         Ok(result
             .rows

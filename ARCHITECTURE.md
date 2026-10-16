@@ -168,12 +168,12 @@ HTTP ▶ rmcp tools
 
 | 능력 | 역할 | 엔진 예 |
 |------|------|---------|
-| `quote_ident` | 식별자 인용 | Postgres/SQLite `"…"` · MySQL `` `…` `` · Oracle `"…"` |
-| `wrap_row_limit` | 행 상한 래퍼 | `LIMIT n` · Oracle `FETCH FIRST n ROWS ONLY` 등 |
-| bind 스타일 (선택) | 실행 바인드 placeholder | `$1` · `?` · `:name` — pruning용 `:name`과 실행 bind는 단계를 분리 |
-| 함수 rewrite (선택) | 신뢰된 식의 방언 의존 함수 | 예: `date_trunc` → MySQL/Oracle 대응식. 화이트리스트 밖은 거절 |
+| `quote_ident` | 식별자 인용(샘플·타깃 직접 SQL) | Postgres/SQLite/Oracle `"…"` · MySQL `` `…` `` |
+| `adapt_compiled_sql` | canonical `"…"` → 엔진 quote | MySQL backticks(문자열 리터럴 보존) · 나머지 identity |
+| `wrap_row_limit` | 행 상한 래퍼 | `LIMIT n` · Oracle `FETCH FIRST n ROWS ONLY` |
+| bind/함수 rewrite (선택) | 후속 | pruning `:name`과 실행 bind는 분리 |
 
-`pipeline`/`compile`은 엔진 중립 AST·조각을 만들고, **최종 물리 문자열·샘플 SQL·실행 래퍼**만 프로필을 통과한다.
+`compile`은 canonical ANSI만 낸다. `pipeline` 말미·`sample`·타깃 래퍼가 프로필을 쓴다.
 
 ## 6. 설정 형태 (초안)
 

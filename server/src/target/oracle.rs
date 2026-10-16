@@ -5,10 +5,10 @@ use oracledb::{Pool, PoolConfig};
 use serde_json::{Value, json};
 use tokio::task;
 
+use crate::dialect::DialectProfile;
 use crate::error::AppError;
 use crate::select_guard::assert_select_only;
 
-use super::limit::wrap_select;
 use super::registry::TargetInfo;
 use super::{ColumnInfo, QueryResult, TableInfo, TargetDb};
 
@@ -220,7 +220,7 @@ impl TargetDb for OracleTarget {
 
     async fn execute_select(&self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError> {
         assert_select_only(sql)?;
-        let limited = wrap_select("oracle", sql, max_rows);
+        let limited = DialectProfile::Oracle.wrap_row_limit(sql, max_rows);
         let pool = Arc::clone(&self.pool);
         task::spawn_blocking(move || run_select(&pool, &limited))
             .await
@@ -244,12 +244,14 @@ impl TargetDb for OracleTarget {
                 return Err(AppError::Validation("invalid identifier".into()));
             }
         }
+        let d = DialectProfile::Oracle;
+        let col = d.quote_ident(column)?;
         let sql = if schema.is_empty() {
-            format!(r#"SELECT "{column}" AS v FROM "{table}" WHERE "{column}" IS NOT NULL"#)
+            let tbl = d.quote_ident(table)?;
+            format!("SELECT {col} AS v FROM {tbl} WHERE {col} IS NOT NULL")
         } else {
-            format!(
-                r#"SELECT "{column}" AS v FROM "{schema}"."{table}" WHERE "{column}" IS NOT NULL"#
-            )
+            let from = d.qualify_table(schema, table)?;
+            format!("SELECT {col} AS v FROM {from} WHERE {col} IS NOT NULL")
         };
         let result = self.execute_select(&sql, limit).await?;
         Ok(result
