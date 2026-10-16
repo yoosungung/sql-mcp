@@ -6,7 +6,7 @@
 
 1. **임베디드 시맨틱 DB (libSQL).** 시맨틱 저장소는 **MCP 서버(`rmcp`/process) 안에 libSQL로 임베드**한다(별도 원격 시맨틱 서버 없음). 파일 경로 등은 기동 설정. (장차) BM25/벡터 인덱스는 이 DB에 둔다.
 2. **시맨틱 등록 문서.** 코딩 에이전트가 등록하는 JSON은 `table`, `view`, `cube`, `metric`, `segment`다. 문서 하나의 정본은 `semantic/schema/document.schema.json`이다. 코딩 에이전트는 그 스키마와 이 계약의 연결 규칙을 보고 검증한다. MCP `metadata_*`도 같은 스키마로 검증한다.
-3. **타깃 DB (복수).** 실제 DW/조회 대상은 **타깃 DB**라 부른다. **복수 등록**을 허용한다. `execute_sql`·샘플 등 데이터 조회는 타깃 DB로 간다. `table` · `view` · `cube` 등록 문서에 MCP 연결 id인 **`target`**을 둔다(설정 `TargetConfig.id`와 동일). view·cube가 닿는 모든 leaf table의 `target`은 서로·문서와 **같아야** 한다. table의 `db`는 그 타깃 *안*의 물리 DB 이름이다. 같은 `target`인 cube끼리 semantic JOIN/UNION은 **후속**(현재는 단일 cube FROM; view 안 table join/union만).
+3. **타깃 DB (복수).** 실제 DW/조회 대상은 **타깃 DB**라 부른다. **복수 등록**을 허용한다. `execute_sql`·샘플 등 데이터 조회는 타깃 DB로 간다. `table` · `view` · `cube` 등록 문서에 MCP 연결 id인 **`target`**을 둔다(설정 `TargetConfig.id`와 동일). view·cube가 닿는 모든 leaf table의 `target`은 서로·문서와 **같아야** 한다. table의 `db`는 그 타깃 *안*의 물리 DB 이름이다. 같은 `target`인 cube끼리만 semantic **JOIN / UNION**(·EXCEPT/INTERSECT)을 허용한다. target이 다르면 거절한다. view 안 table join/union은 기존과 같다.
 4. **언어.** MCP 서버는 **Rust** + [`rmcp`](https://crates.io/crates/rmcp) (MCP spec `2026-07-28`).
 5. **범위.** **MCP 서버만.** Frontend·Admin UI·Admin API·**세션형 Streamable HTTP**는 **취소(범위 밖)**. Transport는 **일반 HTTP**(배포·원격)와 **stdio**(로컬 자식 프로세스). 둘 다 동일 툴 표면.
 6. **타깃 SQL = 시맨틱 SELECT만.** `execute_sql` 입력은 **시맨틱 SQL**(cube FROM · metric/dimension/segment)이며, 서버가 6단계 파이프라인으로 물리 SELECT를 만든 뒤에만 타깃에 실행한다. **자유 물리 SELECT 경로는 없다.** 컴파일·실행 결과는 단일 SELECT(읽기 CTE 허용)만. INSERT/UPDATE/DELETE/DDL/다중 문장/쓰기 CTE 거부. 행 상한·타임아웃 강제. (문서상 `execute_semantic_sql`은 `execute_sql` 이명.)
@@ -109,7 +109,7 @@ JSON에 DSN/password 금지 — 타깃 연결 비밀은 설정 쪽 id 참조만.
 | `https://sql-mcp.local/semantic/document.schema.json` | `document.schema.json` | `application/schema+json` | 등록 문서 JSON Schema 정본(`semantic/schema/document.schema.json`). `$id`와 동일 |
 | `https://sql-mcp.local/skills/{skill}/…` | `{skill}/…` (상대 경로) | 확장자별 (`text/markdown` · `application/json` · `application/schema+json`) | Agent Skills 정본(`skills/`). 서버 바이너리에 embed. `SKILL.md`·계약·예시 포함 |
 
-코딩 에이전트는 `resources/list` · `resources/read`로 스키마와 스킬 파일을 읽는다. 스킬 정본은 제품 비종속 `skills/`이며, Cursor 로컬 발견용으로 `.cursor/skills` → `../skills` 심볼릭을 둔다. MCP Skills extension(`skills/list` 등)은 클라이언트 지원 시 후속.
+코딩 에이전트는 `resources/list` · `resources/read`로 스키마와 스킬 파일을 읽는다. 스킬 정본은 제품 비종속 `skills/`이며, Cursor 로컬 발견용으로 `.cursor/skills` → `../skills` 심볼릭을 둔다. 서버는 MCP Skills extension(`io.modelcontextprotocol/skills`)을 광고하며 `skills/list` · `skills/get`을 구현한다(URI는 기존 Resource와 동일 `https://sql-mcp.local/skills/…`). `resources/directory/read`는 미구현(`directoryRead` 미광고).
 
 ### 3.7 에러
 

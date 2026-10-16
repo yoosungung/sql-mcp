@@ -182,6 +182,10 @@ async fn document_schema_and_skill_resources_list_and_read() {
         init["result"]["capabilities"]["resources"].is_object(),
         "resources capability missing: {init}"
     );
+    assert!(
+        init["result"]["capabilities"]["extensions"]["io.modelcontextprotocol/skills"].is_object(),
+        "skills extension missing: {init}"
+    );
 
     let _ = post_rpc(
         &url,
@@ -283,6 +287,51 @@ async fn document_schema_and_skill_resources_list_and_read() {
     assert_eq!(
         skill_read["result"]["contents"][0]["mimeType"],
         "text/markdown"
+    );
+
+    let (status, body) = post_rpc(
+        &url,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "skills/list",
+            "params": {}
+        }),
+    )
+    .await;
+    assert_eq!(status, 200, "skills/list status body={body}");
+    let skills_list: serde_json::Value =
+        serde_json::from_str(&body).expect(&format!("skills/list json: {body}"));
+    assert!(
+        skills_list.get("error").is_none(),
+        "skills/list error: {skills_list}"
+    );
+    let skills = skills_list["result"]["skills"]
+        .as_array()
+        .expect("skills array");
+    assert_eq!(skills.len(), 3, "{skills_list}");
+    assert_eq!(skills_list["result"]["resultType"], "complete");
+
+    let (status, body) = post_rpc(
+        &url,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "skills/get",
+            "params": {"uri": skill_uri}
+        }),
+    )
+    .await;
+    assert_eq!(status, 200, "skills/get status body={body}");
+    let skill_get: serde_json::Value =
+        serde_json::from_str(&body).expect(&format!("skills/get json: {body}"));
+    assert!(
+        skill_get.get("error").is_none(),
+        "skills/get error: {skill_get}"
+    );
+    assert_eq!(
+        skill_get["result"]["skill"]["frontmatter"]["name"],
+        "semantic-register"
     );
 
     handle.abort();

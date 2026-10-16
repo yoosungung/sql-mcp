@@ -6,7 +6,7 @@ use rmcp::model::Resource;
 /// URI prefix for embedded skill files (not an HTTP download URL).
 pub const SKILLS_URI_PREFIX: &str = "https://sql-mcp.local/skills/";
 
-static SKILLS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../skills");
+pub(crate) static SKILLS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../skills");
 
 pub fn list_skill_resources() -> Vec<Resource> {
     let mut out = Vec::new();

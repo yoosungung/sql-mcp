@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolResult, ContentBlock, ListResourcesResult, PaginatedRequestParams, ReadResourceRequestParams,
-    ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, ServerCapabilities,
-    ServerConfig,
+    CallToolResult, ContentBlock, CustomRequest, CustomResult, ExtensionCapabilities,
+    ListResourcesResult, PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResponse,
+    ReadResourceResult, Resource, ResourceContents, ServerCapabilities, ServerConfig,
 };
 use rmcp::service::RequestContext;
 use rmcp::{
@@ -16,8 +16,9 @@ use serde_json::{Value, json};
 use crate::config::Config;
 use crate::error::AppError;
 use crate::semantic::schema::{DOCUMENT_SCHEMA_JSON, DOCUMENT_SCHEMA_URI};
-use crate::skill_resources::{list_skill_resources, read_skill_resource};
 use crate::semantic::SemanticStore;
+use crate::skill_resources::{list_skill_resources, read_skill_resource};
+use crate::skills_ext::{self, SKILLS_EXTENSION_ID};
 use crate::target::TargetRegistry;
 
 #[derive(Clone)]
@@ -353,12 +354,14 @@ impl SqlMcp {
             Ok(d) => d,
             Err(e) => return tool_err(e),
         };
-        let cube_name = match crate::pipeline::cube_name_from_semantic_sql(&args.sql) {
+        let cube_names = match crate::pipeline::cube_names_from_semantic_sql(&args.sql) {
             Ok(n) => n,
             Err(e) => return tool_err(e),
         };
-        if let Err(e) = assert_cube_target(&docs, &cube_name, &args.target) {
-            return tool_err(e);
+        for cube_name in &cube_names {
+            if let Err(e) = assert_cube_target(&docs, cube_name, &args.target) {
+                return tool_err(e);
+            }
         }
         let physical = match crate::pipeline::compile_semantic_sql_with_binds(
             &docs,
@@ -386,16 +389,38 @@ impl SqlMcp {
 #[tool_handler(name = "sql-mcp", version = "0.1.0", instructions = "Embedded libSQL semantic metadata + Postgres/SQLite target SELECT")]
 impl ServerHandler for SqlMcp {
     fn get_info(&self) -> ServerConfig {
+        let mut extensions = ExtensionCapabilities::new();
+        extensions.insert(
+            SKILLS_EXTENSION_ID.to_string(),
+            skills_ext::skills_extension_settings(),
+        );
         ServerConfig::new(
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
+                .enable_extensions_with(extensions)
                 .build(),
         )
         .with_server_info(rmcp::model::Implementation::new("sql-mcp", "0.1.0"))
         .with_instructions(
             "Embedded libSQL semantic metadata + Postgres/SQLite target SELECT".to_string(),
         )
+    }
+
+    async fn on_custom_request(
+        &self,
+        request: CustomRequest,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<CustomResult, McpError> {
+        match skills_ext::handle_skills_custom(request.method.as_str(), request.params.as_ref()) {
+            Some(Ok(v)) => Ok(CustomResult::new(v)),
+            Some(Err(msg)) => Err(McpError::invalid_params(msg, None)),
+            None => Err(McpError::new(
+                rmcp::model::ErrorCode::METHOD_NOT_FOUND,
+                request.method,
+                None,
+            )),
+        }
     }
 
     async fn list_resources(
