@@ -1,38 +1,52 @@
 # NL2SQL 시멘틱 컴파일러 & MCP 서버 개발 명세서
 
+시맨틱 컴파일 파이프라인·타입별 libSQL 카탈로그의 **상세 설계**다.  
+컴포넌트 간 계약은 [ARCHITECTURE.md](../ARCHITECTURE.md), 마일스톤은 [ROADMAP.md](../ROADMAP.md), 서버 모듈/Commands는 [DESIGN.md](DESIGN.md).
+
+## 0. 확정 전제 (계획과 동일)
+
+1. **카탈로그는 타입별 `meta_*` 테이블**에 저장한다. `document(kind,name,body)` 단일 blob 정본은 쓰지 않는다. MCP `metadata_*` **입출력은 JSON**(`document.schema.json`)이며, 저장 시 타입별 행으로 분해·조회 시 JSON으로 재조립한다.
+2. **타깃 질의는 시맨틱 SELECT만.** 자유 물리 SELECT 경로는 없다. 공개 툴 `execute_sql`의 입력은 시맨틱 SQL이고, 6단계 컴파일 후에만 물리 SQL이 생성·실행된다. (문서·다이어그램의 `execute_semantic_sql`은 **이명** — 공개 툴명을 바꾸지 않는다.)
+3. **툴 표면 유지:** `execute_sql`, `sample_column`, `search_columns`, `metadata_*` 등 현행 이름. `sample_cube_data`는 `sample_column`의 이명이다.
+4. **타깃 접속:** `sqlx` Postgres·SQLite. JDBC/ODBC는 쓰지 않는다.
+5. **검색:** keyword는 **FTS5**(순위는 `bm25()` — 별도 BM25 엔진이 아님). **vector + hybrid(RRF) 유지.** 구조화 FTS(`meta_search_fts`)와 embedding side table을 쓰며, FTS를 이중으로 두지 않는다.
+
 ## 1. 개요 및 아키텍처 목적
 
-본 문서는 Rust(axum) 기반 HTTP MCP 서버와 내장 libSQL 시멘틱 카탈로그를 바탕으로, 자연어 질의 에이전트(DW Agent)의 가상 SQL(Semantic SQL)을 안전하고 최적화된 물리 DW SQL로 변환·실행하는 컴파일러 구현 명세서입니다.
+Rust(axum + `rmcp`) HTTP MCP 서버와 임베디드 libSQL 시맨틱 카탈로그로, DW Agent의 **시맨틱 SQL**을 안전·최적화된 **물리 DW SQL**로 변환·실행한다.
 
 ```
-[DW Query Agent]                [Coding Agent (Git)]
+[DW Query Agent]                [Coding Agent]
        │                                 │
-       ▼ (execute_semantic_sql)          ▼ (JSON Schema 검증/동기화)
+       ▼ (execute_sql)                   ▼ (metadata_* JSON)
 ┌─────────────────────────────────────────────────────────────────┐
-│ Rust HTTP MCP Server (axum + sqlparser-rs)                      │
+│ Rust HTTP MCP Server (axum + rmcp + sqlparser-rs)               │
 │                                                                 │
 │  [Embedded libSQL]                                              │
-│   ├─ Git JSON 역정규화 카탈로그 (Tables, Views, Cubes, Metrics) │
-│   └─ FTS5 자연어 컬럼/지표 검색 가상 테이블                     │
+│   ├─ 타입별 meta_* 카탈로그 (table/view/cube/metric/segment)    │
+│   ├─ meta_search_fts (FTS5 keyword / bm25)                      │
+│   └─ embedding side table (vector; hybrid = FTS ∪ vector RRF) │
 │                                                                 │
 │  [Semantic SQL Compilation Pipeline (6 Steps)]                  │
 │   1. AST Select 점검 & 인가 검증                                │
 │   2. Metric/Segment 전개 & 필터/가산성(Additivity) 추출          │
 │   3. View 라우팅 (요약 뷰 우선 선택 & 컬럼 커버리지 검증)       │
-│   4. 테이블 가지치기 (Join 그래프 MST 추적 & Union Pruning)     │
+│   4. 테이블 가지치기 (Join 그래프 최소 경로 & Union Pruning)    │
 │   5. 물리 Table/Column 치환                                     │
 │   6. 보안/격리 필터 주입(푸시다운) & Encryption 마스킹          │
 └─────────────────────────────────────────────────────────────────┘
                                │
-                               ▼ (Connection Pool: JDBC/ODBC)
+                               ▼ (sqlx pool)
                      [Target Data Warehouse]
 ```
 
+`execute_sql` → 파이프라인(필수) → 컴파일된 물리 SQL만 타깃에 전달. 클라이언트가 넘긴 문자열을 SELECT 가드만 하고 타깃에 넣는 경로는 없다.
+
 ## 2. 임베디드 libSQL 카탈로그 스키마
 
-Git 저장소 내 document.schema.json을 준수하는 JSON 파일들을 파싱하여 아래 libSQL 테이블에 동기화합니다.
+`metadata_*`로 받은 JSON(`document.schema.json`)을 검증·연결 검사한 뒤, **단일 Write 트랜잭션**으로 아래 타입별 테이블에 반영한다. CRUD 성공 시 FTS·embedding 인덱스를 같은 트랜잭션(또는 동일 성공 경로)에서 재구축한다.
 
-``` SQL
+```sql
 -- 1. Table 계층
 CREATE TABLE meta_tables (
     name TEXT PRIMARY KEY,
@@ -143,85 +157,73 @@ CREATE TABLE meta_segments (
     role_json TEXT DEFAULT '"all"'
 );
 
--- 5. 자연어 탐색용 FTS5 가상 테이블
+-- 5. keyword 검색용 FTS5 (순위: bm25()). vector embedding은 별도 side table.
 CREATE VIRTUAL TABLE meta_search_fts USING fts5(
     cube_name,
     column_name,
-    kind, -- 'dimension', 'fact', 'metric'
+    kind, -- 'dimension', 'fact', 'metric', …
     type_info,
     description,
     tokenize = 'unicode61'
 );
 ```
 
+`search_columns` 모드: `keyword`(FTS5/`bm25`) · `vector` · `hybrid`(RRF). 임베더 없으면 vector/hybrid → keyword 폴백(D14).
+
 ## 3. 시맨틱 SQL 컴파일 파이프라인 명세 (6단계)
 
-개발자는 sqlparser-rs를 활용하여 아래 단계를 순차적으로 실행하는 파이프라인을 작성해야 합니다.
+`execute_sql`이 sqlparser-rs로 아래를 **순차** 실행한다. 자유 물리 SQL 우회는 없다.
 
 ### Step 1: 시맨틱 SQL의 SELECT 및 호출자 Role 점검
 
-- 입력: caller_role, semantic_sql
+- 입력: `caller_role`, 시맨틱 SQL(`execute_sql`의 `sql`)
 - 동작:
-  - sqlparser::parser::Parser::parse_sql(&GenericDialect, sql) 실행.
-  - AST 최상위 노드가 Statement::Query 형태인지 확인하고, DDL/DML, 세션 변경문, 파일 시스템 접근문 발견 시 즉시 McpError::Forbidden 반환.
-  - FROM 절의 대상 Cube를 식별하고, 호출자의 caller_role이 해당 Cube에 접근 가능한지 검증.
+  - `Parser::parse_sql(&GenericDialect, sql)` 실행.
+  - AST 최상위가 `Statement::Query`인지 확인하고, DDL/DML·세션 변경·파일 접근 등은 즉시 거절.
+  - FROM의 Cube를 식별하고 `caller_role` 접근 가능 여부를 검증.
 - 출력: 정제된 시맨틱 Query AST
 
 ### Step 2: 래핑(Metric, Segment) 전개 및 가산성(Additivity) 분석
 
 - 동작:
-  - Segment 치환: WHERE 절 내 세그먼트 식별자를 해당 meta_segments.filter_expression으로 치환.
-  - Metric 전개:
-    - meta_metrics.expression으로 SELECT/HAVING 절 치환.
-    - meta_metrics.filter_expression이 존재할 경우, 이를 별도 컴파일 컨텍스트(Metric Filter Context)에 수집 (WHERE 절 AND 병합 또는 FILTER (WHERE ...) 절 생성 준비).
-  - 가산성 플래그 설정: Metric의 집계 함수가 비가산적(COUNT(DISTINCT), AVG, MEDIAN)인지 판별하여, 요약 뷰 선택 시 집계 그레뉼러리티 불일치가 발생하지 않도록 플래그(is_semi_additive) 설정.
-- 출력: Dimension과 Fact 기준으로 풀린 큐브 SQL AST + 추출된 Metric/Segment 필터 목록
+  - Segment 치환: WHERE의 세그먼트 식별자 → `meta_segments.filter_expression`.
+  - Metric 전개: SELECT/HAVING → `meta_metrics.expression`; `filter_expression`은 Metric Filter Context에 수집(WHERE AND 또는 `FILTER (WHERE …)` 준비).
+  - 가산성: `COUNT(DISTINCT)` / `AVG` / `MEDIAN` 등이면 `is_semi_additive` — 요약 뷰 그레뉼러리티 불일치 방지.
+- 출력: Dimension·Fact 기준 큐브 SQL AST + Metric/Segment 필터 목록
 
 ### Step 3: 요약 뷰(Summary View) 우선 라우팅 및 커버리지 검증
 
 - 동작:
-  - 대상 Cube의 View가 combine: "select"이고 prefer: "summary"인 경우, 연결된 N개의 View 중 summary: true인 View 목록을 우선 추출.
-  - 필수 컬럼 집합(Required Columns) 계산:
-    - ReqCols=Projection Cols∪GROUP BY Cols∪WHERE Cols∪Metric Filter Cols
-  - 커버리지 및 가산성 검증:
-    - 요약 뷰의 meta_view_columns가 를 모두 포함하는지 확인.
-    - 쿼리에 비가산적 메트릭이 포함된 경우, 요약 뷰의 사전 정의된 Group By 단위가 쿼리의 Group By 단위와 완전 일치하는지 검증 (불일치 시 해당 요약 뷰 탈락).
-  - 조건을 만족하는 가장 세분화된(최적의) 요약 뷰를 선택. 만족하는 요약 뷰가 없으면 기본(원천) View 채택.
-- 출력: 선택된 단일 View (join 또는 union 뷰)
+  - Cube의 View가 `combine: "select"`이고 `prefer: "summary"`이면 `summary: true` source를 우선.
+  - ReqCols = Projection ∪ GROUP BY ∪ WHERE ∪ Metric Filter 컬럼.
+  - 요약 뷰의 `meta_view_columns`가 ReqCols를 커버하는지 확인. 비가산 metric이면 요약 뷰 Group By 단위가 질의와 완전 일치할 때만 채택.
+  - 조건을 만족하는 최적 요약 뷰를 고르고, 없으면 기본(원천) View.
+- 출력: 선택된 단일 View (join 또는 union)
 
 ### Step 4: 테이블 가지치기 (Join 그래프 최소 경로 & Union Pruning)
 
-- Join View 처리 시:
-  - 필요한 컬럼을 가진 물리 테이블 집합 $T_{req}$​ 도출.
-  - meta_view_joins를 간선(Edge)으로 하는 그래프 구축.
-  - $T_{req}$의 모든 노드를 연결하는 최소 신장 트리(Steiner Tree / Shortest Path)를 탐색하여 필요한 경유 테이블(Bridge Table)을 누락 없이 포함.
-- Union View 처리 시:
-  - WHERE 절의 조건식(예: 날짜 범위)과 각 Table의 scope_filter를 비교.
-  - 조건이 겹치지 않는(Disjoint) 물리 테이블은 UNION ALL 브랜치에서 사전 제외.
-- 출력: 최적화된 물리 테이블 집합 및 결합 관계 정의
+- Join: 필요 컬럼의 \(T_{req}\) + `meta_view_joins` 그래프로 연결 최소 집합(Steiner / Shortest Path 근사) — bridge table 누락 금지.
+- Union: WHERE와 각 table `scope_filter`가 disjoint이면 해당 UNION 브랜치 제외.
+- 출력: 최적화된 물리 테이블 집합·결합 관계
 
 ### Step 5: 물리 Table / Column 치환
 
-- 동작:
-  - AST 상의 시맨틱 Dimension/Fact/Metric 별칭을 실제 물리 식별자인 {db}.{schema}.{table}.{column} 또는 물리 스칼라 표현식(expression)으로 1:1 치환.
-- 출력: 물리 DW 식별자로 변환된 AST
+- AST의 Dimension/Fact/Metric을 `{db}.{schema}.{table}.{column}` 또는 물리 스칼라 `expression`으로 치환(Visitor/Folder — 누락 식별자 0).
+- 출력: 물리 식별자 AST
 
-### Step 6: 보안 격리 필터 주입(서브쿼리 푸시다운) & 마스킹 처리
+### Step 6: 보안 격리 필터 주입(서브쿼리 푸시다운) & 마스킹
 
-- 동작:
-  - 인라인 뷰(Derived Table) 푸시다운:
-    - 테이블별 permission_filters (호출자 role 매칭식), scope_filter, default_filter를 바깥쪽 WHERE 절이 아닌 물리 테이블의 인라인 서브쿼리 내부로 주입하여 Outer Join 왜곡 및 옵티마이저 보안 유출 차단:
-      - FROM (SELECT ∗ FROM db.schema.tbl WHERE [filters]) alias
-  - Cube 레벨 필터 병합: Dimension/Fact에 정의된 default_filter를 메인 AST의 WHERE 절에 AND로 결합.
-  - 마스킹(Encryption): encryption: true인 컬럼에 대해 호출자 권한이 없거나 마스킹 대상인 경우 프로젝션 표현식을 NULL 또는 '***'로 래핑.
-- 출력: DW로 전달할 최종 물리 SQL 문자열
+- 테이블별 `permission_filters`(role 매칭) · `scope_filter` · `default_filter`를 바깥 WHERE가 아니라  
+  `FROM (SELECT * FROM db.schema.tbl WHERE [filters]) alias` 인라인 뷰로 주입 (Outer Join 왜곡·보안 유출 방지).
+- Dimension/Fact `default_filter`는 메인 WHERE에 AND.
+- `encryption: true`면 프로젝션을 `NULL` 또는 `'***'`로 래핑. 응답·`sample_column`에서도 평문 금지(D17).
+- 출력: 타깃으로 보낼 최종 물리 SQL 문자열
 
 ## 4. 개발 시 주의사항 (Checklist)
 
-[ ] sqlparser-rs AST 조작 시 변환 누락된 식별자 노드가 없도록 Visitor 패턴 또는 재귀 순회(Folder 패턴)를 적용할 것.
-
-[ ] LEFT/RIGHT Outer Join 발생 시 Table 레벨 필터를 메인 WHERE 절에 넣지 말고 반드시 인라인 뷰(Derived Table) 서브쿼리로 격리할 것.
-
-[ ] encryption: true인 필드는 sample_cube_data 및 최종 응답 결과에서 평문이 노출되지 않도록 AST 레벨에서 마스킹 표현식으로 치환할 것.
-
-[ ] libSQL 동기화 작업은 동시성 읽기 요청과 충돌하지 않도록 단일 Write 트랜잭션으로 처리할 것.
+- [ ] sqlparser AST 변환 시 Visitor/Folder로 식별자 누락 없이 순회할 것.
+- [ ] LEFT/RIGHT Outer Join에서 table 필터는 메인 WHERE가 아니라 인라인 뷰로 격리할 것.
+- [ ] `encryption: true`는 `sample_column`·최종 응답에서 평문 노출 금지(AST 마스킹 + 응답 마스킹).
+- [ ] meta_* / FTS / embedding 재구축은 동시성 읽기와 충돌하지 않도록 **단일 Write 트랜잭션**으로 처리할 것.
+- [ ] `execute_sql`에 자유 물리 SQL 우회 경로를 두지 말 것.
+- [ ] JDBC/ODBC를 도입하지 말 것 — 타깃은 `sqlx`만.
