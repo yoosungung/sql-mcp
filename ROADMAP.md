@@ -103,7 +103,7 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 - [x] union/minus 컴파일 · union pruning(`1=0` scope · 미매핑 source 제거)
 - [x] metric/view 식별자 치환을 sqlparser `VisitorMut` AST 경로로 이관 (`ast_rewrite`)
 - [x] metric SELECT AST 조립(`ast_select`) · 날짜 리터럴 구간 union disjoint(`date_range`)
-- [ ] bind-param scope와의 구간 비교 · OR/복잡한 날짜식 확장(필요 시)
+- [x] bind-param 구간 비교(`params` → `:name` 치환) · OR(DNF) 날짜식 · `execute_sql.params`
 
 ## 구현 시 작업 규칙
 

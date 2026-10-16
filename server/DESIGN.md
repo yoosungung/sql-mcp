@@ -20,7 +20,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `compile` | table/metric → 물리 SQL: 요약뷰·join/union pruning·필터 푸시다운·encryption NULL |
 | `ast_rewrite` | sqlparser VisitorMut로 식 식별자 → 물리 식 치환 |
 | `ast_select` | SELECT/WHERE/GROUP BY AST 조립·파서 정규화 |
-| `date_range` | 필터 날짜 구간 추출·union disjoint 판정 |
+| `date_range` | 날짜 구간 추출(리터럴·`:bind`·OR/DNF)·union disjoint 판정 |
 | `pipeline` | 시맨틱 SQL AST → `compile_*` → 물리 SELECT (`execute_sql` 유일한 실행 경로) |
 | `semantic/typed` | JSON ↔ 타입별 `meta_*` 분해/재조립 |
 | `semantic` | 스키마·연결 검증 · libSQL CRUD · 검색 인덱스 재구축 |
@@ -43,7 +43,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 - `list_tables` / `describe_table`: 타깃 카탈로그(`information_schema`) 우선. `target` 생략 시 시맨틱 `table` 등록분.
 - `search_columns`: `keyword` | `vector` | `hybrid`(기본). 임베더 없으면 vector/hybrid→keyword.
 - `sample_column`: D9 휴리스틱으로 `is_code`(+선택 `language`). 등록 `as_code`는 에이전트 기입·CRUD 저장만. `encryption` 컬럼은 값 마스킹(D17, `masked: true`)
-- `execute_sql`: **시맨틱 SQL만** 수용 → `pipeline` 컴파일 → 타깃 실행. 응답에 물리 `sql` 포함. encryption 컬럼 마스킹(D17). 자유 물리 SELECT 없음.
+- `execute_sql`: **시맨틱 SQL만** 수용 → `pipeline` 컴파일 → 타깃 실행. `caller_role`·`params`(`:bind`·union 날짜 pruning). 응답에 물리 `sql` 포함. encryption 마스킹(D17).
 
 ## 설정
 

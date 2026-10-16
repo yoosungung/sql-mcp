@@ -89,6 +89,8 @@ pub struct ExecuteSqlArgs {
     pub sql: String,
     /// Caller role for permission_filters / cube role checks.
     pub caller_role: Option<String>,
+    /// Bind values for `:name` placeholders (used in compiled SQL and union date pruning).
+    pub params: Option<std::collections::HashMap<String, String>>,
 }
 
 impl SqlMcp {
@@ -315,10 +317,11 @@ impl SqlMcp {
             Ok(d) => d,
             Err(e) => return tool_err(e),
         };
-        let physical = match crate::pipeline::compile_semantic_sql(
+        let physical = match crate::pipeline::compile_semantic_sql_with_binds(
             &docs,
             &args.sql,
             args.caller_role.as_deref(),
+            args.params.as_ref(),
         ) {
             Ok(s) => s,
             Err(e) => return tool_err(e),

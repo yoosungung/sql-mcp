@@ -73,7 +73,7 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 | `describe_table` | 테이블 상세 | `target?`, `table`, `schema?` | 컬럼·키 요약 | |
 | `search_columns` | 컬럼 검색 | `query`, `target?`, `mode?`, `limit?` | 매칭 메타 | §3.2.2 |
 | `sample_column` | 컬럼 샘플 | `target`, `table`, `column`, `limit?` | 샘플·`is_code` | §3.2.1 — **타깃** |
-| `execute_sql` | 시맨틱 SQL 컴파일·실행 | `target`, `sql`, `caller_role?` | 행·메타·`sql`(물리) | **시맨틱 SELECT만** → 물리 SELECT |
+| `execute_sql` | 시맨틱 SQL 컴파일·실행 | `target`, `sql`, `caller_role?`, `params?` | 행·메타·`sql`(물리) | **시맨틱 SELECT만** → 물리 SELECT |
 
 ### 3.3 Tools — 메타데이터 CRUD (JSON)
 

@@ -1,6 +1,8 @@
 //! Semantic SQL → physical SQL (spec 6-step pipeline entry).
 //! Free physical SELECT is not supported — input must reference a cube.
 
+use std::collections::HashMap;
+
 use serde_json::Value;
 use sqlparser::ast::{
     Expr, GroupByExpr, Query, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
@@ -8,7 +10,7 @@ use sqlparser::ast::{
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
-use crate::compile::compile_metric_select;
+use crate::compile::compile_metric_select_with_binds;
 use crate::error::AppError;
 use crate::select_guard::assert_select_only;
 
@@ -17,6 +19,15 @@ pub fn compile_semantic_sql(
     docs: &[Value],
     sql: &str,
     role: Option<&str>,
+) -> Result<String, AppError> {
+    compile_semantic_sql_with_binds(docs, sql, role, None)
+}
+
+pub fn compile_semantic_sql_with_binds(
+    docs: &[Value],
+    sql: &str,
+    role: Option<&str>,
+    binds: Option<&HashMap<String, String>>,
 ) -> Result<String, AppError> {
     assert_select_only(sql)?;
     let dialect = GenericDialect {};
@@ -53,7 +64,8 @@ pub fn compile_semantic_sql(
     let _is_semi_additive = is_semi_additive_metric(docs, metric_name)?;
 
     let seg_refs: Vec<&str> = segments.iter().map(String::as_str).collect();
-    let physical = compile_metric_select(docs, metric_name, &seg_refs, role)?;
+    let physical =
+        compile_metric_select_with_binds(docs, metric_name, &seg_refs, role, binds)?;
 
     // If caller listed dimensions, ensure they appear (compile_metric_select uses metric group_by).
     if !dims.is_empty() {

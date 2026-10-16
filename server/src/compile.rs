@@ -159,7 +159,7 @@ fn find_doc<'a>(
 /// Table filters are pushed into derived-table subqueries (spec Step 6).
 /// When `used_view_cols` is set, join graph is pruned to a Steiner approx (Step 4).
 pub fn compile_view_from(docs: &[Value], view: &Value) -> Result<String, AppError> {
-    compile_view_from_opts(docs, view, None, None, &[])
+    compile_view_from_opts(docs, view, None, None, &[], None)
 }
 
 pub fn compile_view_from_opts(
@@ -168,6 +168,7 @@ pub fn compile_view_from_opts(
     role: Option<&str>,
     used_view_cols: Option<&HashSet<String>>,
     query_preds: &[String],
+    binds: Option<&HashMap<String, String>>,
 ) -> Result<String, AppError> {
     let combine = view
         .get("combine")
@@ -175,8 +176,8 @@ pub fn compile_view_from_opts(
         .ok_or_else(|| AppError::Validation("view.combine required".into()))?;
     match combine {
         "join" => compile_join_view(docs, view, role, used_view_cols),
-        "union" => compile_set_view(docs, view, role, used_view_cols, false, query_preds),
-        "minus" => compile_set_view(docs, view, role, used_view_cols, true, query_preds),
+        "union" => compile_set_view(docs, view, role, used_view_cols, false, query_preds, binds),
+        "minus" => compile_set_view(docs, view, role, used_view_cols, true, query_preds, binds),
         "select" => Err(AppError::Validation(
             "combine=select must be resolved before compile_view_from".into(),
         )),
@@ -194,6 +195,7 @@ fn compile_set_view(
     used_view_cols: Option<&HashSet<String>>,
     is_minus: bool,
     query_preds: &[String],
+    binds: Option<&HashMap<String, String>>,
 ) -> Result<String, AppError> {
     let sources = view
         .get("sources")
@@ -219,10 +221,12 @@ fn compile_set_view(
         ));
     }
 
-    let query_ivs: Vec<_> = query_preds
-        .iter()
-        .flat_map(|p| crate::date_range::extract_intervals(p))
-        .collect();
+    let empty = HashMap::new();
+    let binds = binds.unwrap_or(&empty);
+    let mut query_dnf = Vec::new();
+    for p in query_preds {
+        query_dnf.extend(crate::date_range::extract_dnf_with_binds(p, binds));
+    }
 
     let op = if is_minus { "EXCEPT" } else { "UNION ALL" };
     let mut branches = Vec::new();
@@ -236,8 +240,8 @@ fn compile_set_view(
             continue; // prune: sentinel unsatisfiable scope
         }
         if let Some(scope) = filter_expr(table.get("scope_filter")) {
-            let scope_ivs = crate::date_range::extract_intervals(scope);
-            if crate::date_range::is_disjoint(&scope_ivs, &query_ivs) {
+            let scope_dnf = crate::date_range::extract_dnf_with_binds(scope, binds);
+            if crate::date_range::is_disjoint_dnf(&scope_dnf, &query_dnf) {
                 continue; // prune: date range disjoint from query
             }
         }
@@ -722,6 +726,16 @@ pub fn compile_metric_select(
     segment_names: &[&str],
     role: Option<&str>,
 ) -> Result<String, AppError> {
+    compile_metric_select_with_binds(docs, metric_name, segment_names, role, None)
+}
+
+pub fn compile_metric_select_with_binds(
+    docs: &[Value],
+    metric_name: &str,
+    segment_names: &[&str],
+    role: Option<&str>,
+    binds: Option<&HashMap<String, String>>,
+) -> Result<String, AppError> {
     let metric = find_doc(docs, "metric", metric_name)?;
     let cube_name = metric
         .get("cube")
@@ -775,7 +789,8 @@ pub fn compile_metric_select(
     let view = resolve_view_for_cube(docs, cube, &req_cols, is_semi)?;
     let combine = view.get("combine").and_then(|v| v.as_str()).unwrap_or("");
     let set_alias = matches!(combine, "union" | "minus").then_some("_sem_uv");
-    let mut from = compile_view_from_opts(docs, &view, role, Some(&req_cols), &query_preds)?;
+    let mut from =
+        compile_view_from_opts(docs, &view, role, Some(&req_cols), &query_preds, binds)?;
     if let Some(a) = set_alias {
         from = format!("{from} AS {}", quote_ident(a)?);
     }
@@ -1143,6 +1158,84 @@ mod tests {
             }
         }
         assert!(compile_metric_select(&docs, "revenue", &[], None).is_err());
+    }
+
+    #[test]
+    fn prunes_union_branch_with_bind_params() {
+        let mut docs = example_docs();
+        for d in &mut docs {
+            if d.get("kind").and_then(|v| v.as_str()) == Some("table")
+                && d.get("name").and_then(|v| v.as_str()) == Some("orders")
+            {
+                d["scope_filter"] = json!({
+                    "expression": "order_date >= '2020-01-01' AND order_date < '2021-01-01'"
+                });
+            }
+            if d.get("kind").and_then(|v| v.as_str()) == Some("table")
+                && d.get("name").and_then(|v| v.as_str()) == Some("orders_month")
+            {
+                d["scope_filter"] = json!({
+                    "expression": "order_date >= '2024-01-01' AND order_date < '2025-01-01'"
+                });
+            }
+        }
+        docs.push(json!({
+            "kind": "view",
+            "name": "orders_union",
+            "combine": "union",
+            "sources": [
+                {"kind": "table", "name": "orders"},
+                {"kind": "table", "name": "orders_month"}
+            ],
+            "columns": [
+                {"name": "region_code", "mappings": [
+                    {"source": "orders", "column": "region_code"},
+                    {"source": "orders_month", "column": "region_code"}
+                ]},
+                {"name": "order_date", "mappings": [
+                    {"source": "orders", "column": "order_date"},
+                    {"source": "orders_month", "column": "order_month"}
+                ]},
+                {"name": "sale_amount", "mappings": [
+                    {"source": "orders", "column": "sale_amount"},
+                    {"source": "orders_month", "column": "sale_amount"}
+                ]},
+                {"name": "status_code", "mappings": [
+                    {"source": "orders", "column": "status_code"},
+                    {"source": "orders_month", "column": "status_code"}
+                ]},
+                {"name": "fx_rate", "mappings": [
+                    {"source": "orders", "column": "fx_rate"},
+                    {"source": "orders_month", "column": "fx_rate"}
+                ]},
+                {"name": "customer_id", "mappings": [
+                    {"source": "orders", "column": "customer_id"},
+                    {"source": "orders_month", "column": "region_code"}
+                ]}
+            ]
+        }));
+        for d in &mut docs {
+            if d.get("kind").and_then(|v| v.as_str()) == Some("cube") {
+                d["view"] = json!("orders_union");
+            }
+            if d.get("kind").and_then(|v| v.as_str()) == Some("metric")
+                && d.get("name").and_then(|v| v.as_str()) == Some("revenue")
+            {
+                d["filter"] = json!({
+                    "expression": "order_date >= :q_from AND order_date < :q_to"
+                });
+            }
+        }
+        let mut binds = HashMap::new();
+        binds.insert("q_from".into(), "2020-06-01".into());
+        binds.insert("q_to".into(), "2020-07-01".into());
+        let sql =
+            compile_metric_select_with_binds(&docs, "revenue", &[], Some("branch"), Some(&binds))
+                .unwrap();
+        assert!(
+            !sql.contains("orders_month"),
+            "bind-resolved 2020 window should prune 2024 branch: {sql}"
+        );
     }
 
     #[test]
