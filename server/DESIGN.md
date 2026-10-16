@@ -7,7 +7,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 - **일반 HTTP**: `rmcp` `StreamableHttpService`를 **stateless + JSON response**로 기동. 세션 ID·장수 SSE는 쓰지 않는다(계약의 “세션형 Streamable HTTP 취소”와 동일 취지).
 - **시맨틱**: 프로세스 내 `libsql` 0.9(`core`) · 타입별 `meta_*` + `column_index`/FTS5 · `metadata_*` JSON
 - **컴파일**: `pipeline` (시맨틱 SQL → 물리 SELECT). 상세 [spec.md](spec.md)
-- **타깃**: `sqlx` 0.9 · 엔진 **Postgres** · **SQLite** · SELECT only
+- **타깃**: 엔진 **Postgres**(`sqlx` 0.9) · **SQLite**(`libsql` 로컬, 시맨틱과 동일 C 라이브러리) · SELECT only
 - **로컬 테스트 DB**: BIRD Mini-Dev SQLite → 저장소 루트 `target_db/` ([target_db/README.md](../target_db/README.md))
 
 ## 모듈
@@ -27,7 +27,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `search` | BM25(FTS5) · 벡터 · hybrid(RRF) |
 | `embed` | D14: OpenAI-호환 HTTP만. 없으면 None → BM25만. `HashEmbedder`는 테스트 전용 |
 | `code_detect` | D9 `sample_column` 런타임 `is_code` 휴리스틱(메타 `as_code`와 무관·미기록) |
-| `target` | 타깃 레지스트리 · Postgres / SQLite 클라이언트 |
+| `target` | 타깃 레지스트리 · Postgres(`sqlx`) / SQLite(`libsql`) |
 | `tools` | MCP 툴 표면 · Resource(`document.schema.json`) |
 | `http` | axum 리스너 `/mcp` |
 

@@ -48,7 +48,7 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 | D7 | 배포 | **결정(M3): release 바이너리 + 컨테이너 이미지**. Kustomize 베이스는 `deploy/k8s/base/` |
 | D9 | code 판정 | **결정:** `sample_column`의 `is_code`는 런타임 휴리스틱(컬럼명·샘플). **`as_code` 메타는 코딩 에이전트가 등록 JSON에 기입**하고 MCP는 **준 그대로 저장만**(추론·덮어쓰기 없음) |
 | D12 | 등록 스키마 ↔ 저장·검색 | **결정: JSON 교환=`document.schema.json` · 저장=타입별 `meta_*` · 검색 투영=`column_index`+FTS5(`bm25`)+embedding(hybrid RRF). 규칙은 `semantic/DESIGN.md`·`server/spec.md`** |
-| D13 | 타깃 엔진 | **결정: Postgres + SQLite** (`sqlx`). 테스트 타깃은 BIRD Mini-Dev SQLite (`target_db/`) |
+| D13 | 타깃 엔진 | **결정: Postgres(`sqlx`) + SQLite(`libsql` 로컬)**. sqlx에 `sqlite` feature를 넣지 않는다(번들 SQLite 이중 링크 방지). 테스트 타깃은 BIRD Mini-Dev SQLite (`target_db/`) |
 | D15 | `metadata_update` | **결정: 전체 replace** (merge-patch 아님). `body`는 문서 JSON 전체 |
 | D16 | metric·segment 식 문법 | **결정: 새 DSL 없음.** `sqlparser`로 파싱한 **신뢰된 SQL 조각** + AST 제한. metric `expression` = 스칼라/집계식만 · segment·filter = 단일 boolean 식만. 서브쿼리·다중 문장·쓰기·CTE 거부. 식별자: table 필터=물리 컬럼 · cube/metric/segment=dimension·fact 이름 |
 | D17 | `encryption: true` | **결정: 암·복호화 아님 → 응답 마스킹.** SELECT/샘플/로그에서 해당 셀을 `null`(또는 `"***"`)로 치환. AES·토큰화는 타깃 DW 책임 |
@@ -84,7 +84,7 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 - [x] OpenAI-호환 임베딩 HTTP 클라이언트 배선 (`SQL_MCP_EMBEDDING_*`, 미설정 시 BM25만 · D14)
 - [x] cube/metric/segment → 물리 SQL 컴파일 (`compile_metric_select`)
 - [x] D16 식 AST 제한 · D18 컴파일 식별자 검사 · D17 encryption 마스킹
-- [x] 타깃 엔진 SQLite (`sqlx`) · BIRD Mini-Dev → `target_db/`
+- [x] 타깃 엔진 SQLite (`libsql`) · BIRD Mini-Dev → `target_db/`
 
 ### M3 — 배포·하드닝
 

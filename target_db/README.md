@@ -42,4 +42,5 @@ export SQL_MCP_SEMANTIC_PATH=./data/semantic.db
 cargo run -p sql-mcp
 ```
 
-DSN 형식: `sqlite:<절대또는상대경로>?mode=ro`
+DSN 형식: `sqlite:<절대또는상대경로>?mode=ro`  
+(서버는 SQLite 타깃을 `libsql`로 연다 — `sqlx` sqlite feature와 이중 링크하지 않음.)

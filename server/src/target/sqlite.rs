@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
+use libsql::{Builder, Connection};
 use serde_json::{Value, json};
-use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::{Column, Row, SqlitePool, TypeInfo};
+use tokio::sync::Mutex;
 
 use crate::error::AppError;
 use crate::select_guard::assert_select_only;
@@ -11,17 +13,28 @@ use super::{ColumnInfo, QueryResult, TableInfo, TargetDb};
 
 pub struct SqliteTarget {
     info: TargetInfo,
-    pool: SqlitePool,
+    conn: Arc<Mutex<Connection>>,
 }
 
 impl SqliteTarget {
     pub async fn connect(info: TargetInfo, url: &str) -> Result<Self, AppError> {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(5)
-            .connect(url)
+        let (path, readonly) = parse_sqlite_url(url)?;
+        let db = Builder::new_local(&path)
+            .build()
             .await
             .map_err(|e| AppError::Connection(e.into()))?;
-        Ok(Self { info, pool })
+        let conn = db
+            .connect()
+            .map_err(|e| AppError::Connection(e.into()))?;
+        if readonly {
+            conn.execute("PRAGMA query_only=ON;", ())
+                .await
+                .map_err(|e| AppError::Connection(e.into()))?;
+        }
+        Ok(Self {
+            info,
+            conn: Arc::new(Mutex::new(conn)),
+        })
     }
 }
 
@@ -37,26 +50,33 @@ impl TargetDb for SqliteTarget {
                 return Ok(vec![]);
             }
         }
-        let rows = sqlx::query(
-            r#"
-            SELECT name AS table_name
-            FROM sqlite_master
-            WHERE type = 'table'
-              AND name NOT LIKE 'sqlite_%'
-            ORDER BY name
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Connection(e.into()))?;
-
-        Ok(rows
-            .iter()
-            .map(|r| TableInfo {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                r#"
+                SELECT name AS table_name
+                FROM sqlite_master
+                WHERE type = 'table'
+                  AND name NOT LIKE 'sqlite_%'
+                ORDER BY name
+                "#,
+                (),
+            )
+            .await
+            .map_err(|e| AppError::Connection(e.into()))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| AppError::Connection(e.into()))?
+        {
+            let name: String = row.get(0).map_err(|e| AppError::Connection(e.into()))?;
+            out.push(TableInfo {
                 schema: "main".into(),
-                name: r.get::<String, _>("table_name"),
-            })
-            .collect())
+                name,
+            });
+        }
+        Ok(out)
     }
 
     async fn describe_table(
@@ -70,59 +90,73 @@ impl TargetDb for SqliteTarget {
             }
         }
         validate_ident(table)?;
-        // PRAGMA table_info: cid, name, type, notnull, dflt_value, pk
         let sql = format!("PRAGMA table_info(\"{}\")", table.replace('"', "\"\""));
-        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .fetch_all(&self.pool)
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(&sql, ())
             .await
             .map_err(|e| AppError::Connection(e.into()))?;
-        if rows.is_empty() {
+        let mut cols = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| AppError::Connection(e.into()))?
+        {
+            // cid, name, type, notnull, dflt_value, pk
+            let name: String = row.get(1).map_err(|e| AppError::Connection(e.into()))?;
+            let type_name: String = row.get::<Option<String>>(2).ok().flatten().unwrap_or_default();
+            let notnull: i64 = row.get(3).map_err(|e| AppError::Connection(e.into()))?;
+            cols.push(ColumnInfo {
+                name,
+                data_type: if type_name.is_empty() {
+                    "NULL".into()
+                } else {
+                    type_name
+                },
+                nullable: notnull == 0,
+            });
+        }
+        if cols.is_empty() {
             return Err(AppError::NotFound(format!("main.{table}")));
         }
-        Ok(rows
-            .iter()
-            .map(|r| {
-                let notnull: i64 = r.get("notnull");
-                ColumnInfo {
-                    name: r.get::<String, _>("name"),
-                    data_type: {
-                        let t: String = r.get("type");
-                        if t.is_empty() {
-                            "NULL".into()
-                        } else {
-                            t
-                        }
-                    },
-                    nullable: notnull == 0,
-                }
-            })
-            .collect())
+        Ok(cols)
     }
 
     async fn execute_select(&self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError> {
         assert_select_only(sql)?;
         // Audited: outer wrapper only; inner SQL already passed SELECT-only AST guard.
         let limited = format!("SELECT * FROM ({sql}) AS _sql_mcp_q LIMIT {max_rows}");
-        let rows = sqlx::query(sqlx::AssertSqlSafe(limited))
-            .fetch_all(&self.pool)
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(&limited, ())
             .await
             .map_err(|e| AppError::Connection(e.into()))?;
-        if rows.is_empty() {
+        let col_count = rows.column_count();
+        if col_count <= 0 {
             return Ok(QueryResult {
                 columns: vec![],
                 rows: vec![],
             });
         }
-        let columns: Vec<String> = rows[0]
-            .columns()
-            .iter()
-            .map(|c| c.name().to_string())
+        let columns: Vec<String> = (0..col_count)
+            .map(|i| {
+                rows.column_name(i)
+                    .unwrap_or("?")
+                    .to_string()
+            })
             .collect();
-        let mut out_rows = Vec::with_capacity(rows.len());
-        for row in &rows {
+        let mut out_rows = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| AppError::Connection(e.into()))?
+        {
             let mut vals = Vec::with_capacity(columns.len());
-            for (i, _) in columns.iter().enumerate() {
-                vals.push(sqlite_value_to_json(row, i)?);
+            for i in 0..col_count {
+                vals.push(libsql_value_to_json(
+                    row.get_value(i)
+                        .map_err(|e| AppError::Connection(e.into()))?,
+                ));
             }
             out_rows.push(vals);
         }
@@ -158,6 +192,30 @@ impl TargetDb for SqliteTarget {
     }
 }
 
+/// `sqlite:<path>?mode=ro` (sqlx 호환 DSN). `mode=ro`면 `PRAGMA query_only=ON`.
+fn parse_sqlite_url(url: &str) -> Result<(String, bool), AppError> {
+    let rest = url.strip_prefix("sqlite:").ok_or_else(|| {
+        AppError::Validation("sqlite DSN must start with sqlite:".into())
+    })?;
+    let (path, query) = match rest.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (rest, None),
+    };
+    let path = path.strip_prefix("//").unwrap_or(path);
+    if path.is_empty() {
+        return Err(AppError::Validation("sqlite DSN missing path".into()));
+    }
+    let readonly = query
+        .map(|q| {
+            q.split('&').any(|p| {
+                let mut parts = p.splitn(2, '=');
+                parts.next() == Some("mode") && parts.next() == Some("ro")
+            })
+        })
+        .unwrap_or(false);
+    Ok((path.to_string(), readonly))
+}
+
 fn validate_ident(ident: &str) -> Result<(), AppError> {
     if ident.is_empty()
         || !ident
@@ -174,49 +232,21 @@ fn quote_ident(ident: &str) -> Result<String, AppError> {
     Ok(format!("\"{}\"", ident.replace('"', "\"\"")))
 }
 
-fn sqlite_value_to_json(row: &sqlx::sqlite::SqliteRow, idx: usize) -> Result<Value, AppError> {
-    let col = &row.columns()[idx];
-    let type_name = col.type_info().name();
-    if let Ok(v) = row.try_get::<Option<bool>, _>(idx) {
-        return Ok(match v {
-            Some(b) => Value::Bool(b),
-            None => Value::Null,
-        });
-    }
-    if let Ok(v) = row.try_get::<Option<i64>, _>(idx) {
-        return Ok(match v {
-            Some(n) => json!(n),
-            None => Value::Null,
-        });
-    }
-    if let Ok(v) = row.try_get::<Option<f64>, _>(idx) {
-        return Ok(match v {
-            Some(n) => json!(n),
-            None => Value::Null,
-        });
-    }
-    if let Ok(v) = row.try_get::<Option<String>, _>(idx) {
-        return Ok(match v {
-            Some(s) => Value::String(s),
-            None => Value::Null,
-        });
-    }
-    if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(idx) {
-        return Ok(match v {
-            Some(b) => {
-                let mut s = String::with_capacity(2 + b.len() * 2);
-                s.push_str("\\x");
-                for byte in b {
-                    s.push_str(&format!("{byte:02x}"));
-                }
-                Value::String(s)
+fn libsql_value_to_json(v: libsql::Value) -> Value {
+    match v {
+        libsql::Value::Null => Value::Null,
+        libsql::Value::Integer(n) => json!(n),
+        libsql::Value::Real(n) => json!(n),
+        libsql::Value::Text(s) => Value::String(s),
+        libsql::Value::Blob(b) => {
+            let mut s = String::with_capacity(2 + b.len() * 2);
+            s.push_str("\\x");
+            for byte in b {
+                s.push_str(&format!("{byte:02x}"));
             }
-            None => Value::Null,
-        });
+            Value::String(s)
+        }
     }
-    Err(AppError::Internal(anyhow::anyhow!(
-        "unsupported sqlite type {type_name}"
-    )))
 }
 
 #[cfg(test)]
@@ -227,39 +257,48 @@ mod tests {
     async fn sample_db() -> (tempfile::TempDir, SqliteTarget) {
         let dir = tempdir().unwrap();
         let path = dir.path().join("birdish.sqlite");
-        let url = format!("sqlite:{}?mode=rwc", path.display());
-        let pool = SqlitePoolOptions::new()
-            .connect(&url)
+        let path_str = path.to_string_lossy().into_owned();
+        {
+            let db = Builder::new_local(&path_str).build().await.unwrap();
+            let conn = db.connect().unwrap();
+            conn.execute(
+                r#"
+                CREATE TABLE hero (
+                  id INTEGER PRIMARY KEY,
+                  name TEXT NOT NULL,
+                  "power level" INTEGER
+                )
+                "#,
+                (),
+            )
             .await
             .unwrap();
-        sqlx::query(
-            r#"
-            CREATE TABLE hero (
-              id INTEGER PRIMARY KEY,
-              name TEXT NOT NULL,
-              "power level" INTEGER
+            conn.execute(
+                r#"INSERT INTO hero (id, name, "power level") VALUES (1, 'A', 10), (2, 'B', 20)"#,
+                (),
             )
-            "#,
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            r#"INSERT INTO hero (id, name, "power level") VALUES (1, 'A', 10), (2, 'B', 20)"#,
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        drop(pool);
+            .await
+            .unwrap();
+        }
         let info = TargetInfo {
             id: "t".into(),
             name: "test".into(),
             engine: "sqlite".into(),
         };
-        let target = SqliteTarget::connect(info, &format!("sqlite:{}?mode=ro", path.display()))
+        let target = SqliteTarget::connect(info, &format!("sqlite:{path_str}?mode=ro"))
             .await
             .unwrap();
         (dir, target)
+    }
+
+    #[test]
+    fn parse_dsn_path_and_readonly() {
+        let (path, ro) = parse_sqlite_url("sqlite:/tmp/a.sqlite?mode=ro").unwrap();
+        assert_eq!(path, "/tmp/a.sqlite");
+        assert!(ro);
+        let (path, ro) = parse_sqlite_url("sqlite:./rel.db").unwrap();
+        assert_eq!(path, "./rel.db");
+        assert!(!ro);
     }
 
     #[tokio::test]
@@ -299,4 +338,3 @@ mod tests {
         assert!(matches!(err, AppError::NotSelect), "{err}");
     }
 }
-
