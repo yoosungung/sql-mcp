@@ -75,9 +75,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lists_three_skill_roots() {
+    fn lists_skill_roots() {
         let list = list_skill_resources();
-        assert!(list.len() >= 3, "got {} resources", list.len());
+        assert!(list.len() >= 4, "got {} resources", list.len());
         let uris: Vec<_> = list.iter().map(|r| r.uri.as_str()).collect();
         assert!(uris.iter().any(|u| u.ends_with("semantic-register/SKILL.md")));
         assert!(uris
@@ -86,6 +86,7 @@ mod tests {
         assert!(uris
             .iter()
             .any(|u| u.ends_with("semantic-cube-metric-segment/SKILL.md")));
+        assert!(uris.iter().any(|u| u.ends_with("semantic-from-qa/SKILL.md")));
     }
 
     #[test]

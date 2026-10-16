@@ -43,6 +43,7 @@ Progress:
 
 ### 5. Hand off
 
+질문·도메인 지식·참고 SQL로 기존 cube를 다듬을 때는 **`semantic-from-qa`**.  
 등록 순서: cube → metric | segment. 검증·CRUD는 **`semantic-register`**.
 
 ## Do not

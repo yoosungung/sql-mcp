@@ -60,4 +60,4 @@ Progress:
 ## Do not
 
 - 타깃 DW 탐색에 MCP `list_tables` / `describe_table` / `sample_column` / `execute_sql`에 의존하지 않는다.
-- cube / metric / segment는 `semantic-cube-metric-segment`.
+- cube / metric / segment는 `semantic-cube-metric-segment`. Q&A·지식 보강은 `semantic-from-qa`.

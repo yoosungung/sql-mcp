@@ -228,12 +228,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lists_three_skills_with_digests() {
+    fn lists_skills_with_digests() {
         let result = list_skills_result().unwrap();
         assert_eq!(result["resultType"], "complete");
         assert_eq!(result["cacheScope"], "public");
         let skills = result["skills"].as_array().unwrap();
-        assert_eq!(skills.len(), 3);
+        assert_eq!(skills.len(), 4);
         let names: std::collections::BTreeMap<_, _> = skills
             .iter()
             .map(|s| {
@@ -246,6 +246,7 @@ mod tests {
         assert!(names.contains_key("semantic-register"));
         assert!(names.contains_key("semantic-table-view"));
         assert!(names.contains_key("semantic-cube-metric-segment"));
+        assert!(names.contains_key("semantic-from-qa"));
 
         let reg = names["semantic-register"];
         assert_eq!(
@@ -277,7 +278,7 @@ mod tests {
         let list = handle_skills_custom("skills/list", None)
             .unwrap()
             .unwrap();
-        assert_eq!(list["skills"].as_array().unwrap().len(), 3);
+        assert_eq!(list["skills"].as_array().unwrap().len(), 4);
         let get = handle_skills_custom(
             "skills/get",
             Some(&json!({"uri": "https://sql-mcp.local/skills/semantic-table-view/SKILL.md"})),

@@ -244,6 +244,12 @@ async fn document_schema_and_skill_resources_list_and_read() {
         }),
         "missing cube-metric-segment skill: {resources:?}"
     );
+    assert!(
+        resources.iter().any(|r| {
+            r["uri"] == "https://sql-mcp.local/skills/semantic-from-qa/SKILL.md"
+        }),
+        "missing from-qa skill: {resources:?}"
+    );
 
     let (status, body) = post_rpc(
         &url,
@@ -309,7 +315,7 @@ async fn document_schema_and_skill_resources_list_and_read() {
     let skills = skills_list["result"]["skills"]
         .as_array()
         .expect("skills array");
-    assert_eq!(skills.len(), 3, "{skills_list}");
+    assert_eq!(skills.len(), 4, "{skills_list}");
     assert_eq!(skills_list["result"]["resultType"], "complete");
 
     let (status, body) = post_rpc(
