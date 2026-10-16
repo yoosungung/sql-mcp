@@ -28,9 +28,9 @@
 ## Schema 로드 순서
 
 1. MCP `resources/list` · `resources/read` — URI `https://sql-mcp.local/semantic/document.schema.json` (있을 때)
-2. 폴백: 이 스킬의 [document.schema.json](document.schema.json)
+2. 폴백: 스킬 Resource `https://sql-mcp.local/skills/semantic-register/document.schema.json` 또는 이 스킬 동봉 [document.schema.json](document.schema.json)
 
-레포 경로에 의존하지 않는다.
+스킬 본문·예시도 같은 prefix(`https://sql-mcp.local/skills/…`)로 Resource에 있다. 레포 경로에 의존하지 않는다.
 
 ## 파일 레이아웃 (선택)
 

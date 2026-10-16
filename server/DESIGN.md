@@ -30,7 +30,8 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `sample` | cube+member → 물리/as_code 사전 샘플 해석 |
 | `code_detect` | (레거시) 텍스트 코드 휴리스틱 — 현재 sample_column 미사용 |
 | `target` | 타깃 레지스트리 · Postgres(`sqlx`) / SQLite(`libsql`) |
-| `tools` | MCP 툴 표면 · Resource(`document.schema.json`) |
+| `tools` | MCP 툴 표면 · Resource(schema + `skills/`) |
+| `skill_resources` | `skills/` embed · Resource URI/MIME · list/read |
 | `http` | axum 리스너 `/mcp` (일반 HTTP) |
 | `stdio` | 로컬 stdin/stdout MCP (`--stdio`) |
 

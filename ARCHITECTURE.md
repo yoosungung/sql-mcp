@@ -11,7 +11,7 @@
 5. **범위.** **MCP 서버만.** Frontend·Admin UI·Admin API·**세션형 Streamable HTTP**는 **취소(범위 밖)**. Transport는 **일반 HTTP**(배포·원격)와 **stdio**(로컬 자식 프로세스). 둘 다 동일 툴 표면.
 6. **타깃 SQL = 시맨틱 SELECT만.** `execute_sql` 입력은 **시맨틱 SQL**(cube FROM · metric/dimension/segment)이며, 서버가 6단계 파이프라인으로 물리 SELECT를 만든 뒤에만 타깃에 실행한다. **자유 물리 SELECT 경로는 없다.** 컴파일·실행 결과는 단일 SELECT(읽기 CTE 허용)만. INSERT/UPDATE/DELETE/DDL/다중 문장/쓰기 CTE 거부. 행 상한·타임아웃 강제. (문서상 `execute_semantic_sql`은 `execute_sql` 이명.)
 7. **메타데이터 CRUD (예외).** 임베디드 시맨틱 저장소에 한해 MCP 툴로 **CRUD**를 제공한다. 요청/응답 바디는 **JSON**. 타깃 DB 쓰기가 아니다.
-8. **MCP 제공 능력.** (1) 타깃·테이블 목록/상세 (2) 컬럼 검색(BM25/벡터/hybrid) (3) 컬럼 샘플(+code) (4) 타깃 SELECT SQL (5) **메타데이터 CRUD(JSON)** (6) **Resource:** 등록 문서 JSON Schema(`document.schema.json`). 그 외 툴·Resource는 기본 표면에 넣지 않는다. DW 에이전트에게는 메타 CRUD 도구를 주지 않는다. 이 에이전트에게 테이블은 cube이고 컬럼은 dimension, fact, metric이다.
+8. **MCP 제공 능력.** (1) 타깃·테이블 목록/상세 (2) 컬럼 검색(BM25/벡터/hybrid) (3) 컬럼 샘플(+code) (4) 타깃 SELECT SQL (5) **메타데이터 CRUD(JSON)** (6) **Resource:** 등록 문서 JSON Schema(`document.schema.json`) · **Agent Skills**(`skills/` 트리를 Resource로 제공). 그 외 툴·Resource는 기본 표면에 넣지 않는다. DW 에이전트에게는 메타 CRUD 도구를 주지 않는다. 이 에이전트에게 테이블은 cube이고 컬럼은 dimension, fact, metric이다.
 9. **시크릿.** 로그·에러·툴 응답에 DSN/비밀번호를 실지 않는다. 타깃 자격 증명은 기동 설정으로만 주입(채팅으로 비밀번호 받지 않음). 메타 CRUD JSON에도 시크릿 필드를 넣지 않는다.
 10. **문서 우선 · TDD.**
 
@@ -107,8 +107,9 @@ JSON에 DSN/password 금지 — 타깃 연결 비밀은 설정 쪽 id 참조만.
 | URI | 이름 | MIME | 내용 |
 |-----|------|------|------|
 | `https://sql-mcp.local/semantic/document.schema.json` | `document.schema.json` | `application/schema+json` | 등록 문서 JSON Schema 정본(`semantic/schema/document.schema.json`). `$id`와 동일 |
+| `https://sql-mcp.local/skills/{skill}/…` | `{skill}/…` (상대 경로) | 확장자별 (`text/markdown` · `application/json` · `application/schema+json`) | Agent Skills 정본(`skills/`). 서버 바이너리에 embed. `SKILL.md`·계약·예시 포함 |
 
-코딩 에이전트는 `resources/list` · `resources/read`로 스키마를 읽고 `metadata_*` 페이로드를 작성한다. 그 외 Resource는 두지 않는다.
+코딩 에이전트는 `resources/list` · `resources/read`로 스키마와 스킬 파일을 읽는다. 스킬 정본은 제품 비종속 `skills/`이며, Cursor 로컬 발견용으로 `.cursor/skills` → `../skills` 심볼릭을 둔다. MCP Skills extension(`skills/list` 등)은 클라이언트 지원 시 후속.
 
 ### 3.7 에러
 

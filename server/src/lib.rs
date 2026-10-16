@@ -14,6 +14,7 @@ pub mod sample;
 pub mod search;
 pub mod select_guard;
 pub mod semantic;
+pub mod skill_resources;
 pub mod stdio;
 pub mod target;
 pub mod tools;

@@ -19,7 +19,7 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
 | `deploy/k8s/base/` | Kustomize 베이스 | `deploy/k8s/base/` |
 | `target_db/README.md` | BIRD Mini-Dev SQLite 로컬 타깃 사용법 | `target_db/` |
 | `server/spec.md` | 시맨틱 SQL 6단계 컴파일·타입별 `meta_*` 상세 | `server/` |
-| `.cursor/skills/` | 코딩 에이전트용 Cursor Skills(시맨틱 등록). 계약·예시·schema를 스킬 폴더에 자립 동봉(타 환경 이식 가능). MCP Resource≠Skill | `.cursor/skills/` |
+| `skills/` | 코딩 에이전트용 Agent Skills 정본(시맨틱 등록). MCP Resource로도 제공(`https://sql-mcp.local/skills/…`). Cursor는 `.cursor/skills` → `../skills` | `skills/` |
  
 규칙:
  

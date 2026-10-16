@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use crate::config::Config;
 use crate::error::AppError;
 use crate::semantic::schema::{DOCUMENT_SCHEMA_JSON, DOCUMENT_SCHEMA_URI};
+use crate::skill_resources::{list_skill_resources, read_skill_resource};
 use crate::semantic::SemanticStore;
 use crate::target::TargetRegistry;
 
@@ -392,14 +393,14 @@ impl ServerHandler for SqlMcp {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
-        Ok(ListResourcesResult::with_all_items(vec![
-            Resource::new(DOCUMENT_SCHEMA_URI, "document.schema.json")
-                .with_description(
-                    "JSON Schema for semantic registration documents (table/view/cube/metric/segment)",
-                )
-                .with_mime_type("application/schema+json")
-                .with_size(DOCUMENT_SCHEMA_JSON.len() as u64),
-        ]))
+        let mut items = vec![Resource::new(DOCUMENT_SCHEMA_URI, "document.schema.json")
+            .with_description(
+                "JSON Schema for semantic registration documents (table/view/cube/metric/segment)",
+            )
+            .with_mime_type("application/schema+json")
+            .with_size(DOCUMENT_SCHEMA_JSON.len() as u64)];
+        items.extend(list_skill_resources());
+        Ok(ListResourcesResult::with_all_items(items))
     }
 
     async fn read_resource(
@@ -411,6 +412,12 @@ impl ServerHandler for SqlMcp {
             return Ok(ReadResourceResult::new(vec![
                 ResourceContents::text(DOCUMENT_SCHEMA_JSON, DOCUMENT_SCHEMA_URI)
                     .with_mime_type("application/schema+json"),
+            ])
+            .into());
+        }
+        if let Some((mime, text)) = read_skill_resource(request.uri.as_str()) {
+            return Ok(ReadResourceResult::new(vec![
+                ResourceContents::text(text, request.uri.as_str()).with_mime_type(mime),
             ])
             .into());
         }

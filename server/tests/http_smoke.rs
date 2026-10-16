@@ -159,7 +159,7 @@ async fn initialize_and_metadata_roundtrip() {
 }
 
 #[tokio::test]
-async fn document_schema_resource_list_and_read() {
+async fn document_schema_and_skill_resources_list_and_read() {
     let (url, handle) = spawn_server().await;
 
     let (status, body) = post_rpc(
@@ -210,10 +210,36 @@ async fn document_schema_resource_list_and_read() {
     let resources = listed["result"]["resources"]
         .as_array()
         .expect("resources array");
-    assert_eq!(resources.len(), 1);
-    assert_eq!(resources[0]["uri"], schema_uri);
-    assert_eq!(resources[0]["name"], "document.schema.json");
-    assert_eq!(resources[0]["mimeType"], "application/schema+json");
+    assert!(
+        resources.len() > 1,
+        "expected schema + skill resources, got {resources:?}"
+    );
+    let schema_res = resources
+        .iter()
+        .find(|r| r["uri"] == schema_uri)
+        .expect("schema resource");
+    assert_eq!(schema_res["name"], "document.schema.json");
+    assert_eq!(schema_res["mimeType"], "application/schema+json");
+
+    let skill_uri = "https://sql-mcp.local/skills/semantic-register/SKILL.md";
+    let skill_res = resources
+        .iter()
+        .find(|r| r["uri"] == skill_uri)
+        .expect("semantic-register SKILL.md resource");
+    assert_eq!(skill_res["name"], "semantic-register/SKILL.md");
+    assert_eq!(skill_res["mimeType"], "text/markdown");
+    assert!(
+        resources.iter().any(|r| {
+            r["uri"] == "https://sql-mcp.local/skills/semantic-table-view/SKILL.md"
+        }),
+        "missing table-view skill: {resources:?}"
+    );
+    assert!(
+        resources.iter().any(|r| {
+            r["uri"] == "https://sql-mcp.local/skills/semantic-cube-metric-segment/SKILL.md"
+        }),
+        "missing cube-metric-segment skill: {resources:?}"
+    );
 
     let (status, body) = post_rpc(
         &url,
@@ -233,6 +259,31 @@ async fn document_schema_resource_list_and_read() {
     let schema: serde_json::Value = serde_json::from_str(text).expect("schema json");
     assert_eq!(schema["$id"], schema_uri);
     assert!(schema["$defs"]["table"].is_object(), "{schema}");
+
+    let (status, body) = post_rpc(
+        &url,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "resources/read",
+            "params": {"uri": skill_uri}
+        }),
+    )
+    .await;
+    assert_eq!(status, 200, "skill resources/read status body={body}");
+    let skill_read: serde_json::Value =
+        serde_json::from_str(&body).expect(&format!("skill read json: {body}"));
+    let skill_text = skill_read["result"]["contents"][0]["text"]
+        .as_str()
+        .expect("skill text");
+    assert!(
+        skill_text.contains("name: semantic-register"),
+        "unexpected skill body: {skill_text}"
+    );
+    assert_eq!(
+        skill_read["result"]["contents"][0]["mimeType"],
+        "text/markdown"
+    );
 
     handle.abort();
 }

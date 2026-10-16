@@ -9,6 +9,7 @@ publish = false
 anyhow = "1"
 async-trait = "0.1"
 axum = "0.8"
+include_dir = "0.7"
 jsonschema = { version = "0.58", default-features = false, features = ["resolve-file"] }
 libsql = { version = "0.9", default-features = false, features = ["core"] }
 rmcp = { version = "3.5", features = [

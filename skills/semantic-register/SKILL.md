@@ -18,7 +18,7 @@ description: >-
 
 ```
 Progress:
-- [ ] 1. Schema 로드 (MCP Resource 또는 이 폴더 document.schema.json)
+- [ ] 1. Schema 로드 (MCP Resource `document.schema.json` / 스킬 Resource / 이 폴더 동봉)
 - [ ] 2. 문서 단위 형태 점검
 - [ ] 3. 연결 순서대로 metadata_create / update
 - [ ] 4. validation 실패 시 수정 후 재시도
