@@ -229,7 +229,7 @@ fn str_field<'a>(doc: &'a Value, key: &str) -> Result<&'a str, AppError> {
 }
 
 /// Build SELECT for sampling; used when value_column / where need custom SQL.
-pub fn sample_sql(target: &SampleTarget, limit: usize) -> Result<String, AppError> {
+pub fn sample_sql(target: &SampleTarget, _limit: usize) -> Result<String, AppError> {
     let schema = quote_ident(&target.schema)?;
     let table = quote_ident(&target.table)?;
     let col = quote_ident(&target.column)?;
@@ -244,7 +244,7 @@ pub fn sample_sql(target: &SampleTarget, limit: usize) -> Result<String, AppErro
         sql.push_str(w);
         sql.push(')');
     }
-    sql.push_str(&format!(" LIMIT {limit}"));
+    // Row limit: TargetDb::execute_select engine wrapper (LIMIT / FETCH FIRST).
     Ok(sql)
 }
 

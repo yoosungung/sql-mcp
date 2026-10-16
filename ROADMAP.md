@@ -43,18 +43,19 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 | ID | 질문 | 옵션 / 비고 |
 |----|------|-------------|
 | D1 | 임베디드 시맨틱 엔진 | **결정: libSQL** |
-| D2 | 클라이언트 | **결정:** 시맨틱=`libsql` 0.9 (`core`만) · 타깃=`sqlx` 0.9(+postgres). **크레이트 분리**. Rust **1.94+** (`rust-toolchain.toml`) |
+| D2 | 클라이언트 | **결정:** 시맨틱=`libsql` 0.9 (`core`만) · 타깃=`sqlx` 0.9(+postgres,+mysql) · Oracle=`oracledb`(thin). **크레이트 분리**. Rust **1.94+** (`rust-toolchain.toml`) |
 | D14 | 임베딩·검색 폴백 | **결정: 외부 API만 임베딩.** `SQL_MCP_EMBEDDING_URL`+`API_KEY` → vector/hybrid. **미설정 시 keyword(BM25)만**(vector/hybrid 요청도 keyword로 폴백). 오프라인 품질은 **BM25 강화**(한글 유지·문자 bigram·`as_code` 등 인덱스 텍스트). HashEmbedder=테스트 전용. 로컬 ONNX 비채택 |
 | D7 | 배포 | **결정(M3): release 바이너리 + 컨테이너 이미지**. Kustomize 베이스는 `deploy/k8s/base/` |
 | D9 | 코드사전 | **결정:** dimension `as_code` = `{table,key_column,value_column,where?}`. 집계 후 dim=key LEFT JOIN → `{dim}__value`. `sample_column`은 cube+member(사전 있으면 사전 샘플). 에이전트 기입·MCP 저장만 |
 | D12 | 등록 스키마 ↔ 저장·검색 | **결정: JSON 교환=`document.schema.json` · 저장=타입별 `meta_*` · 검색 투영=`column_index`+FTS5(`bm25`)+embedding(hybrid RRF). 규칙은 `semantic/DESIGN.md`·`server/spec.md`** |
-| D13 | 타깃 엔진 | **결정: Postgres(`sqlx`) + SQLite(`libsql` 로컬)**. sqlx에 `sqlite` feature를 넣지 않는다(번들 SQLite 이중 링크 방지). 테스트 타깃은 BIRD Mini-Dev SQLite (`target_db/`) |
+| D13 | 타깃 엔진 | **결정: Postgres(`sqlx`) · MySQL(`sqlx`) · SQLite(`libsql` 로컬) · Oracle(`oracledb` thin)**. sqlx에 `sqlite` feature를 넣지 않는다(번들 SQLite 이중 링크 방지). ADBC·JDBC/ODBC 비채택. Exadata=일반 Oracle. 테스트 타깃은 BIRD Mini-Dev SQLite (`target_db/`) |
 | D15 | `metadata_update` | **결정: 전체 replace** (merge-patch 아님). `body`는 문서 JSON 전체 |
 | D16 | metric·segment 식 문법 | **결정: 새 DSL 없음.** `sqlparser`로 파싱한 **신뢰된 SQL 조각** + AST 제한. metric `expression` = 스칼라/집계식만 · segment·filter = 단일 boolean 식만. 서브쿼리·다중 문장·쓰기·CTE 거부. 식별자: table 필터=물리 컬럼 · cube/metric/segment=dimension·fact 이름 |
 | D17 | `encryption: true` | **결정: 암·복호화 아님 → 응답 마스킹.** SELECT/샘플/로그에서 해당 셀을 `null`(또는 `"***"`)로 치환. AES·토큰화는 타깃 DW 책임 |
 | D18 | expression/filter 컬럼 검사 시점 | **결정: 이중 검사.** `metadata_*` = 연결 그래프 · 컴파일=AST 식별자. `execute_sql`은 시맨틱 컴파일 필수 |
 | D19 | `execute_sql` 입력 | **결정: 시맨틱 SELECT만.** 툴명 유지. 자유 물리 SELECT 경로 없음 |
 | D20 | table/view/cube `target` | **결정:** 등록 JSON에 MCP `target` id 필수. leaf table·view·cube 동일 target 강제. `list_tables`/`describe_table`=cube 표면. 같은 target cube JOIN/UNION 허용(다른 target 거절) |
+| D21 | 타깃 SQL 방언(dialect) | **결정: Cube식 DialectProfile emit.** 시맨틱 파이프라인(Step 1–6)은 엔진 중립. 물리 문자열·행상한·바인드 스타일은 **emit 직전·실행 래퍼**에서 `TargetConfig.engine`별 어댑터가 담당(식별자 quote · LIMIT/`FETCH` · bind placeholder · 필요 시 날짜 함수 rewrite). **비채택:** 자유 SQL 트랜스파일(SQLGlot식)·`sqlparser` `Display`에 방언 위임(파서 Dialect는 입력 파싱용). 신뢰된 식(D16)의 방언 의존 함수는 화이트리스트 + rewrite 또는 등록 시 엔진 표기. 상세 [ARCHITECTURE.md](ARCHITECTURE.md) · [server/DESIGN.md](server/DESIGN.md) · [server/spec.md](server/spec.md) |
 
 (제거: D5 세션형 Streamable HTTP, D10/D11 Frontend. stdio는 로컬용으로 복원)
 
@@ -95,7 +96,8 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 - [x] MCP Resource로 `document.schema.json` 제공 (`resources/list` · `resources/read`)
 - [x] Agent Skills 정본 `skills/` + MCP Resource 노출(`https://sql-mcp.local/skills/…`); Cursor용 `.cursor/skills` 심볼릭
 - [x] MCP Skills extension: `skills/list` · `skills/get` + capabilities `io.modelcontextprotocol/skills` (`directoryRead` 미구현)
-- [ ] 타깃 엔진 추가 확장·운영 하드닝(인증·rate limit 등)은 필요 시 후속
+- [x] 타깃 MySQL(`sqlx`) · Oracle(`oracledb` thin) (D13; ADBC 비채택)
+- [ ] 운영 하드닝(인증·rate limit 등)은 필요 시 후속
 
 ### M4 — 시맨틱 컴파일러 · 타입별 카탈로그
 
@@ -111,6 +113,13 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 ### 후속 — 동일 target cube JOIN/UNION
 
 - [x] semantic SQL에서 같은 `target`인 cube끼리 JOIN / UNION(·EXCEPT/INTERSECT) (다른 target 거절; 각 JOIN 측 cube는 metric ≥1)
+
+### 후속 — 타깃 DialectProfile (D21)
+
+- [ ] `DialectProfile` 추상화: `quote_ident` · `wrap_row_limit` · (선택) bind/날짜 함수 rewrite — `TargetConfig.engine`으로 선택
+- [ ] 컴파일/파이프라인에 `engine` 주입: emit·`sample_column`·타깃 LIMIT 래퍼가 동일 프로필을 쓰도록 통일
+- [ ] Postgres·SQLite·MySQL·Oracle 프로필 + 골든 SQL 테스트(엔진별 quote/`LIMIT`/`FETCH`)
+- [ ] 현황 부채: 지금은 ANSI `"…"` + `LIMIT` 한 방언으로 emit — MySQL 백틱·Oracle `FETCH` 등은 D21 구현으로 이전
 
 ## 구현 시 작업 규칙
 

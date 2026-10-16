@@ -6,6 +6,8 @@ use serde::Serialize;
 use crate::config::{Config, TargetConfig};
 use crate::error::AppError;
 
+use super::mysql::MysqlTarget;
+use super::oracle::OracleTarget;
 use super::postgres::PostgresTarget;
 use super::sqlite::SqliteTarget;
 use super::TargetDb;
@@ -74,9 +76,17 @@ async fn build_target(
             let pg = PostgresTarget::connect(info, &url).await?;
             Ok(Arc::new(pg))
         }
+        "mysql" => {
+            let mysql = MysqlTarget::connect(info, &url).await?;
+            Ok(Arc::new(mysql))
+        }
         "sqlite" => {
             let sqlite = SqliteTarget::connect(info, &url).await?;
             Ok(Arc::new(sqlite))
+        }
+        "oracle" => {
+            let oracle = OracleTarget::connect(info, &url).await?;
+            Ok(Arc::new(oracle))
         }
         other => Err(AppError::Validation(format!(
             "unsupported target engine: {other}"

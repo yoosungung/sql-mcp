@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 use crate::error::AppError;
 use crate::select_guard::assert_select_only;
 
+use super::limit::wrap_select;
 use super::registry::TargetInfo;
 use super::{ColumnInfo, QueryResult, TableInfo, TargetDb};
 
@@ -125,7 +126,7 @@ impl TargetDb for SqliteTarget {
     async fn execute_select(&self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError> {
         assert_select_only(sql)?;
         // Audited: outer wrapper only; inner SQL already passed SELECT-only AST guard.
-        let limited = format!("SELECT * FROM ({sql}) AS _sql_mcp_q LIMIT {max_rows}");
+        let limited = wrap_select("sqlite", sql, max_rows);
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(&limited, ())
@@ -181,7 +182,7 @@ impl TargetDb for SqliteTarget {
         let table_q = quote_ident(table)?;
         let column_q = quote_ident(column)?;
         let sql = format!(
-            r#"SELECT {column_q} AS v FROM {table_q} WHERE {column_q} IS NOT NULL LIMIT {limit}"#
+            r#"SELECT {column_q} AS v FROM {table_q} WHERE {column_q} IS NOT NULL"#
         );
         let result = self.execute_select(&sql, limit).await?;
         Ok(result

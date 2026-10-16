@@ -6,6 +6,7 @@ use sqlx::{Column, PgPool, Row, TypeInfo};
 use crate::error::AppError;
 use crate::select_guard::assert_select_only;
 
+use super::limit::wrap_select;
 use super::registry::TargetInfo;
 use super::{ColumnInfo, QueryResult, TableInfo, TargetDb};
 
@@ -103,7 +104,7 @@ impl TargetDb for PostgresTarget {
     async fn execute_select(&self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError> {
         assert_select_only(sql)?;
         // Audited: outer wrapper only; inner SQL already passed SELECT-only AST guard.
-        let limited = format!("SELECT * FROM ({sql}) AS _sql_mcp_q LIMIT {max_rows}");
+        let limited = wrap_select("postgres", sql, max_rows);
         let rows = sqlx::query(sqlx::AssertSqlSafe(limited))
             .fetch_all(&self.pool)
             .await
@@ -154,7 +155,7 @@ impl TargetDb for PostgresTarget {
             }
         }
         let sql = format!(
-            r#"SELECT "{column}" AS v FROM "{schema}"."{table}" WHERE "{column}" IS NOT NULL LIMIT {limit}"#
+            r#"SELECT "{column}" AS v FROM "{schema}"."{table}" WHERE "{column}" IS NOT NULL"#
         );
         let result = self.execute_select(&sql, limit).await?;
         Ok(result

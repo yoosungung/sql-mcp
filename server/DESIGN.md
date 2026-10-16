@@ -8,7 +8,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 - **stdio**(로컬): `--stdio` 또는 `SQL_MCP_TRANSPORT=stdio` → `rmcp` `stdio()`. 로그는 stderr. 동일 `SqlMcp` 핸들러.
 - **시맨틱**: 프로세스 내 `libsql` 0.9(`core`) · 타입별 `meta_*` + `column_index`/FTS5 · `metadata_*` JSON
 - **컴파일**: `pipeline` (시맨틱 SQL → 물리 SELECT). 상세 [spec.md](spec.md)
-- **타깃**: 엔진 **Postgres**(`sqlx` 0.9) · **SQLite**(`libsql` 로컬, 시맨틱과 동일 C 라이브러리) · SELECT only
+- **타깃**: 엔진 **Postgres**·**MySQL**(`sqlx` 0.9) · **SQLite**(`libsql` 로컬) · **Oracle**(`oracledb` thin, Instant Client 없음) · SELECT only · ADBC/JDBC/ODBC 비채택
 - **로컬 테스트 DB**: BIRD Mini-Dev SQLite → 저장소 루트 `target_db/` ([target_db/README.md](../target_db/README.md))
 
 ## 모듈
@@ -29,7 +29,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `embed` | D14: OpenAI-호환 HTTP만. 없으면 None → BM25만. `HashEmbedder`는 테스트 전용 |
 | `sample` | cube+member → 물리/as_code 사전 샘플 해석 |
 | `code_detect` | (레거시) 텍스트 코드 휴리스틱 — 현재 sample_column 미사용 |
-| `target` | 타깃 레지스트리 · Postgres(`sqlx`) / SQLite(`libsql`) |
+| `target` | 타깃 레지스트리 · Postgres·MySQL(`sqlx`) / SQLite(`libsql`) / Oracle(`oracledb`) |
 | `tools` | MCP 툴 표면 · Resource(schema + `skills/`) |
 | `skill_resources` | `skills/` embed · Resource URI/MIME · list/read |
 | `http` | axum 리스너 `/mcp` (일반 HTTP) |
@@ -77,7 +77,8 @@ cargo run -p sql-mcp
 # 로컬 stdio (Cursor mcp.json 예: examples/mcp.stdio.example.json)
 cargo run -p sql-mcp -- --stdio
 
-# Postgres 연동 스모크(선택)
+# Postgres / MySQL / Oracle 연동 스모크(선택, DSN 환경 필요)
+# SQL_MCP_TARGET_DW_URL · SQL_MCP_TARGET_MYSQL_URL · SQL_MCP_TARGET_ORACLE_URL
 cargo test -p sql-mcp --test http_smoke -- --ignored
 
 # BIRD SQLite 타깃 (target_db/ 준비 후 — ../target_db/README.md)

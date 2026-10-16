@@ -22,9 +22,11 @@ schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlparser = { version = "0.58", features = ["visitor"] }
+oracledb = "26.0.0-beta.4"
 sqlx = { version = "0.9", default-features = false, features = [
   "runtime-tokio",
   "postgres",
+  "mysql",
   "json",
 ] }
 thiserror = "2"

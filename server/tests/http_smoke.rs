@@ -343,3 +343,25 @@ async fn postgres_execute_sql_ignored_without_env() {
     let url = std::env::var("SQL_MCP_TARGET_DW_URL").expect("set SQL_MCP_TARGET_DW_URL");
     assert!(!url.is_empty());
 }
+
+#[tokio::test]
+#[ignore]
+async fn mysql_dsn_smoke_ignored_without_env() {
+    let url = std::env::var("SQL_MCP_TARGET_MYSQL_URL").expect("set SQL_MCP_TARGET_MYSQL_URL");
+    assert!(!url.is_empty());
+    assert!(
+        url.starts_with("mysql://") || url.starts_with("mariadb://"),
+        "expected mysql:// DSN"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn oracle_dsn_smoke_ignored_without_env() {
+    let url = std::env::var("SQL_MCP_TARGET_ORACLE_URL").expect("set SQL_MCP_TARGET_ORACLE_URL");
+    assert!(!url.is_empty());
+    assert!(
+        url.contains('@') || url.starts_with("oracle://"),
+        "expected user/pass@connect or oracle:// DSN"
+    );
+}

@@ -11,5 +11,8 @@ engine = "postgres"
 url_env = "SQL_MCP_TARGET_DW_URL"
 
 # SQLite 예: engine = "sqlite", url_env → sqlite:/path/to.db?mode=ro
+# MySQL 예:  engine = "mysql",  url_env → mysql://user:pass@host:3306/db
+# Oracle 예: engine = "oracle", url_env → user/pass@host:1521/service  (oracledb connect string)
 # BIRD Mini-Dev: config.bird.toml + ../target_db/README.md
+# ADBC/JDBC/ODBC 비채택. Exadata는 engine=oracle.
 

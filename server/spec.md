@@ -8,7 +8,7 @@
 1. **카탈로그는 타입별 `meta_*` 테이블**에 저장한다. `document(kind,name,body)` 단일 blob 정본은 쓰지 않는다. MCP `metadata_*` **입출력은 JSON**(`document.schema.json`)이며, 저장 시 타입별 행으로 분해·조회 시 JSON으로 재조립한다.
 2. **타깃 질의는 시맨틱 SELECT만.** 자유 물리 SELECT 경로는 없다. 공개 툴 `execute_sql`의 입력은 시맨틱 SQL이고, 6단계 컴파일 후에만 물리 SQL이 생성·실행된다. (문서·다이어그램의 `execute_semantic_sql`은 **이명** — 공개 툴명을 바꾸지 않는다.)
 3. **툴 표면 유지:** `execute_sql`, `sample_column`, `search_columns`, `metadata_*` 등 현행 이름. `sample_cube_data`는 `sample_column`의 이명이다.
-4. **타깃 접속:** Postgres=`sqlx`, SQLite=`libsql`(로컬). JDBC/ODBC는 쓰지 않는다.
+4. **타깃 접속:** Postgres·MySQL=`sqlx`, SQLite=`libsql`(로컬), Oracle=`oracledb`(thin). JDBC/ODBC/ADBC는 쓰지 않는다.
 5. **검색:** keyword는 **FTS5**(순위는 `bm25()` — 별도 BM25 엔진이 아님). **vector + hybrid(RRF) 유지.** 구조화 FTS(`meta_search_fts`)와 embedding side table을 쓰며, FTS를 이중으로 두지 않는다.
 
 ## 1. 개요 및 아키텍처 목적
@@ -230,4 +230,4 @@ CREATE VIRTUAL TABLE meta_search_fts USING fts5(
 - [ ] `encryption: true`는 `sample_column`·최종 응답에서 평문 노출 금지(AST 마스킹 + 응답 마스킹).
 - [ ] meta_* / FTS / embedding 재구축은 동시성 읽기와 충돌하지 않도록 **단일 Write 트랜잭션**으로 처리할 것.
 - [ ] `execute_sql`에 자유 물리 SQL 우회 경로를 두지 말 것.
-- [ ] JDBC/ODBC를 도입하지 말 것 — 타깃은 Postgres=`sqlx`, SQLite=`libsql`만.
+- [ ] JDBC/ODBC/ADBC를 도입하지 말 것 — 타깃은 Postgres·MySQL=`sqlx`, SQLite=`libsql`, Oracle=`oracledb`만.
