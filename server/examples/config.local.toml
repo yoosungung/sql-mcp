@@ -1,0 +1,5 @@
+# 로컬 stdio / 스모크용 — 타깃 없음(빈 레지스트리).
+listen = "127.0.0.1:8080"
+max_rows = 1000
+sample_limit = 20
+timeout_ms = 30000

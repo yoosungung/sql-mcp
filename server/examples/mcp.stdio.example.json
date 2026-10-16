@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "sql-mcp": {
+      "command": "cargo",
+      "args": [
+        "run",
+        "-q",
+        "-p",
+        "sql-mcp",
+        "--",
+        "--stdio"
+      ],
+      "cwd": "/ABS/PATH/TO/sql-mcp",
+      "env": {
+        "SQL_MCP_SEMANTIC_PATH": "./data/semantic.db",
+        "SQL_MCP_CONFIG": "./server/examples/config.local.toml"
+      }
+    }
+  }
+}

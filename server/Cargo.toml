@@ -15,6 +15,7 @@ rmcp = { version = "3.5", features = [
   "server",
   "macros",
   "transport-streamable-http-server",
+  "transport-io",
 ] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
@@ -34,5 +35,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [dev-dependencies]
+rmcp = { version = "3.5", features = ["client", "transport-child-process"] }
 tempfile = "3"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process"] }

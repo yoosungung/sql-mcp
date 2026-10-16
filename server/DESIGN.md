@@ -4,7 +4,8 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 
 ## 역할
 
-- **일반 HTTP**: `rmcp` `StreamableHttpService`를 **stateless + JSON response**로 기동. 세션 ID·장수 SSE는 쓰지 않는다(계약의 “세션형 Streamable HTTP 취소”와 동일 취지).
+- **일반 HTTP**(기본): `rmcp` `StreamableHttpService`를 **stateless + JSON response**로 기동. 세션 ID·장수 SSE는 쓰지 않는다.
+- **stdio**(로컬): `--stdio` 또는 `SQL_MCP_TRANSPORT=stdio` → `rmcp` `stdio()`. 로그는 stderr. 동일 `SqlMcp` 핸들러.
 - **시맨틱**: 프로세스 내 `libsql` 0.9(`core`) · 타입별 `meta_*` + `column_index`/FTS5 · `metadata_*` JSON
 - **컴파일**: `pipeline` (시맨틱 SQL → 물리 SELECT). 상세 [spec.md](spec.md)
 - **타깃**: 엔진 **Postgres**(`sqlx` 0.9) · **SQLite**(`libsql` 로컬, 시맨틱과 동일 C 라이브러리) · SELECT only
@@ -29,7 +30,8 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `code_detect` | D9 `sample_column` 런타임 `is_code` 휴리스틱(메타 `as_code`와 무관·미기록) |
 | `target` | 타깃 레지스트리 · Postgres(`sqlx`) / SQLite(`libsql`) |
 | `tools` | MCP 툴 표면 · Resource(`document.schema.json`) |
-| `http` | axum 리스너 `/mcp` |
+| `http` | axum 리스너 `/mcp` (일반 HTTP) |
+| `stdio` | 로컬 stdin/stdout MCP (`--stdio`) |
 
 ## 검증
 
@@ -51,7 +53,8 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 |----|------|
 | `SQL_MCP_SEMANTIC_PATH` | libSQL 파일 경로(`:memory:` 허용) |
 | `SQL_MCP_CONFIG` | TOML 설정 경로 |
-| `SQL_MCP_LISTEN` | 바인드 주소(기본 `127.0.0.1:8080`) |
+| `SQL_MCP_LISTEN` | 바인드 주소(기본 `127.0.0.1:8080`, HTTP 모드) |
+| `SQL_MCP_TRANSPORT` | `stdio`면 stdio 모드(`--stdio`와 동일). 미설정·기타는 HTTP |
 | `SQL_MCP_MAX_ROWS` / `SQL_MCP_SAMPLE_LIMIT` / `SQL_MCP_TIMEOUT_MS` | 상한 |
 | `SQL_MCP_EMBEDDING_URL` / `SQL_MCP_EMBEDDING_API_KEY` | 둘 다 있으면 임베딩·vector/hybrid. 없으면 keyword(BM25)만(D14) |
 | `SQL_MCP_EMBEDDING_MODEL` | 기본 `text-embedding-3-small` |
@@ -69,6 +72,9 @@ export SQL_MCP_CONFIG=./server/examples/config.example.toml
 cargo run -p sql-mcp
 # GET /health · POST /mcp
 
+# 로컬 stdio (Cursor mcp.json 예: examples/mcp.stdio.example.json)
+cargo run -p sql-mcp -- --stdio
+
 # Postgres 연동 스모크(선택)
 cargo test -p sql-mcp --test http_smoke -- --ignored
 
@@ -80,3 +86,6 @@ cargo run -p sql-mcp
 
 # 컨테이너·K8s: ../deploy/SETUP.md
 ```
+
+동일 `SQL_MCP_SEMANTIC_PATH`를 HTTP·stdio 프로세스가 **동시에** 열지 말 것(libSQL 파일 락).
+

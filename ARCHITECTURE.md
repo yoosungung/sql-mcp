@@ -8,7 +8,7 @@
 2. **시맨틱 등록 문서.** 코딩 에이전트가 등록하는 JSON은 `table`, `view`, `cube`, `metric`, `segment`다. 문서 하나의 정본은 `semantic/schema/document.schema.json`이다. 코딩 에이전트는 그 스키마와 이 계약의 연결 규칙을 보고 검증한다. MCP `metadata_*`도 같은 스키마로 검증한다.
 3. **타깃 DB (복수).** 실제 DW/조회 대상은 **타깃 DB**라 부른다. **복수 등록**을 허용한다. `execute_sql`·샘플 등 데이터 조회는 타깃 DB로 간다.
 4. **언어.** MCP 서버는 **Rust** + [`rmcp`](https://crates.io/crates/rmcp) (MCP spec `2026-07-28`).
-5. **범위.** **MCP 서버만.** Frontend·Admin UI·Admin API·**stdio**·**Streamable HTTP**는 **취소(범위 밖)**. Transport는 **일반 HTTP**만(요청/응답 JSON — 스트리밍 세션 없음).
+5. **범위.** **MCP 서버만.** Frontend·Admin UI·Admin API·**세션형 Streamable HTTP**는 **취소(범위 밖)**. Transport는 **일반 HTTP**(배포·원격)와 **stdio**(로컬 자식 프로세스). 둘 다 동일 툴 표면.
 6. **타깃 SQL = 시맨틱 SELECT만.** `execute_sql` 입력은 **시맨틱 SQL**(cube FROM · metric/dimension/segment)이며, 서버가 6단계 파이프라인으로 물리 SELECT를 만든 뒤에만 타깃에 실행한다. **자유 물리 SELECT 경로는 없다.** 컴파일·실행 결과는 단일 SELECT(읽기 CTE 허용)만. INSERT/UPDATE/DELETE/DDL/다중 문장/쓰기 CTE 거부. 행 상한·타임아웃 강제. (문서상 `execute_semantic_sql`은 `execute_sql` 이명.)
 7. **메타데이터 CRUD (예외).** 임베디드 시맨틱 저장소에 한해 MCP 툴로 **CRUD**를 제공한다. 요청/응답 바디는 **JSON**. 타깃 DB 쓰기가 아니다.
 8. **MCP 제공 능력.** (1) 타깃·테이블 목록/상세 (2) 컬럼 검색(BM25/벡터/hybrid) (3) 컬럼 샘플(+code) (4) 타깃 SELECT SQL (5) **메타데이터 CRUD(JSON)** (6) **Resource:** 등록 문서 JSON Schema(`document.schema.json`). 그 외 툴·Resource는 기본 표면에 넣지 않는다. DW 에이전트에게는 메타 CRUD 도구를 주지 않는다. 이 에이전트에게 테이블은 cube이고 컬럼은 dimension, fact, metric이다.
@@ -42,14 +42,15 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 
 | 컴포넌트 | 경로 | 책임 |
 |----------|------|------|
-| MCP 서버 | `server/` | **일반 HTTP** · 툴 · SELECT 가드 · **libSQL** 시맨틱 · 타깃 DB 클라이언트 |
+| MCP 서버 | `server/` | **일반 HTTP** · **stdio(로컬)** · 툴 · SELECT 가드 · **libSQL** 시맨틱 · 타깃 DB 클라이언트 |
 | 시맨틱 정의 | `semantic/` | 등록 JSON Schema · 예시 · libSQL 카탈로그 DDL |
 | 시맨틱 DB | 프로세스 내 **libSQL** | 메타·(장차) FTS/벡터. CRUD는 MCP 메타 툴 |
 | 타깃 DB | 외부 DW (N개) | 실제 조회 대상. SELECT only |
-| Frontend / stdio / Streamable HTTP | — | **취소** |
+| Frontend / 세션형 Streamable HTTP | — | **취소** |
 
 ```
  AI Client ──HTTP (JSON)──▶ server/ (rmcp)
+ Local MCP ──stdio────────▶ server/ (rmcp)   # --stdio / SQL_MCP_TRANSPORT=stdio
                               ├─ libSQL semantic  ◀── metadata CRUD
                               └─ target clients ──SELECT──▶ Target DW #1..N
 ```
@@ -60,8 +61,8 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 
 | Transport | 상태 |
 |-----------|------|
-| **일반 HTTP** | **유일하게 지원** — MCP 메시지를 HTTP POST 요청/응답(JSON)으로 주고받음. 세션 ID·장수 SSE 스트림 없음 |
-| stdio | **취소** |
+| **일반 HTTP** | **기본** — MCP 메시지를 HTTP POST 요청/응답(JSON)으로 주고받음. 세션 ID·장수 SSE 스트림 없음 |
+| **stdio** | **로컬 지원** — stdin/stdout JSON-RPC. Cursor 등 자식 프로세스 MCP용. `--stdio` 또는 `SQL_MCP_TRANSPORT=stdio`. 로그는 stderr |
 | Streamable HTTP (세션형) | **취소** — 장수 세션·SSE 중심 모드 제외. 구현체는 `server/DESIGN.md` |
 
 ### 3.2 Tools — 조회 (타깃 / 시맨틱 검색)

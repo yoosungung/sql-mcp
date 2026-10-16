@@ -8,12 +8,17 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // stderr only — stdout is the MCP stdio channel when --stdio is used.
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "info,sql_mcp=debug".into()),
         )
-        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_target(true),
+        )
         .init();
 
     let cfg = Config::load(Config::config_path())?;
@@ -27,6 +32,11 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!(error = %e, "starting with empty target registry");
         TargetRegistry::empty()
     });
+
+    if sql_mcp::stdio::want_stdio(std::env::args()) {
+        let server = SqlMcp::new(store, targets, cfg);
+        return sql_mcp::stdio::serve(server).await;
+    }
 
     let addr: SocketAddr = cfg.listen.parse()?;
     let cfg = Arc::new(cfg);

@@ -5,7 +5,7 @@
 ## 목표
 
 Rust MCP(`rmcp`) 서버: **임베디드 시맨틱 DB** + **복수 타깃 DB** 조회(SELECT) + **메타데이터 CRUD(JSON)**.  
-Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport는 **일반 HTTP**.
+Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는 **일반 HTTP**(기본) + **stdio**(로컬).
 
 ## 확정된 결정
 
@@ -19,7 +19,7 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 | 메타 | MCP `metadata_*` CRUD, **JSON 바디**. 검증은 `semantic/schema/document.schema.json` |
 | 컬럼 검색 | BM25/벡터/hybrid — 인덱스는 등록 JSON 투영(D12). 임베딩=외부 API, 없으면 강화 BM25(D14) |
 | MCP 툴 | `list_targets`, `list_tables`, `describe_table`, `search_columns`, `sample_column`, `execute_sql`, `metadata_{create,get,list,update,delete}` |
-| Transport | **일반 HTTP만** (stdio·Streamable HTTP 취소) |
+| Transport | **일반 HTTP**(기본) + **stdio**(로컬). 세션형 Streamable HTTP 취소 |
 | Frontend / Admin API | 취소 |
 | 개발 | TDD, 문서 우선 |
 | metric·segment 식 (D16) | 새 DSL 없음 · `sqlparser` + AST 제한 |
@@ -55,13 +55,13 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 | D18 | expression/filter 컬럼 검사 시점 | **결정: 이중 검사.** `metadata_*` = 연결 그래프 · 컴파일=AST 식별자. `execute_sql`은 시맨틱 컴파일 필수 |
 | D19 | `execute_sql` 입력 | **결정: 시맨틱 SELECT만.** 툴명 유지. 자유 물리 SELECT 경로 없음 |
 
-(제거: D5 Streamable HTTP, stdio, D10/D11 Frontend)
+(제거: D5 세션형 Streamable HTTP, D10/D11 Frontend. stdio는 로컬용으로 복원)
 
 ## 마일스톤
 
 ### M0 — 문서·계약
 
-- [x] MCP-only · 임베디드 libSQL · 복수 타깃 · 메타 CRUD(JSON) · **일반 HTTP**
+- [x] MCP-only · 임베디드 libSQL · 복수 타깃 · 메타 CRUD(JSON) · **일반 HTTP** · **stdio(로컬)**
 - [x] 시맨틱 등록 JSON Schema·예시·카탈로그 DDL (`semantic/`)
 - [x] D2·D13·D15 합의 (D14는 M2)
 

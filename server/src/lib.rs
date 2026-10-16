@@ -13,6 +13,7 @@ pub mod pipeline;
 pub mod search;
 pub mod select_guard;
 pub mod semantic;
+pub mod stdio;
 pub mod target;
 pub mod tools;
 

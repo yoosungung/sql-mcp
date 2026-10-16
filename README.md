@@ -1,16 +1,16 @@
 # sql-mcp
 
-임베디드 **libSQL** 시맨틱 저장소를 품은 Rust **MCP** 서버(`rmcp`, **일반 HTTP**).
+임베디드 **libSQL** 시맨틱 저장소를 품은 Rust **MCP** 서버(`rmcp`, **일반 HTTP** + **stdio**).
 
 - **타깃 DB** (DW, **복수**): 테이블/컬럼 탐색, 샘플(+code), **SELECT만**
 - **시맨틱 저장소** (프로세스 내 **libSQL**): **메타데이터 CRUD(JSON)**. 등록 스키마·예시는 [`semantic/`](semantic/DESIGN.md)
-- Frontend / stdio / Streamable HTTP: **없음(취소)**
+- Transport: **일반 HTTP**(기본) · **stdio**(로컬 `--stdio`). Frontend / 세션형 Streamable HTTP: **없음(취소)**
 
 계약: [ARCHITECTURE.md](ARCHITECTURE.md) · 계획: [ROADMAP.md](ROADMAP.md) · 워크플로: [AGENTS.md](AGENTS.md)
 
 ## Status
 
-M0–M3 골격: 시맨틱=**libSQL**, 타깃=**Postgres·SQLite**, transport=**일반 HTTP**, 검색·컴파일·CI·배포 런북. BIRD 샘플은 [target_db/README.md](target_db/README.md). 빌드·실행은 [server/DESIGN.md](server/DESIGN.md), 배포는 [deploy/SETUP.md](deploy/SETUP.md).
+M0–M3 골격: 시맨틱=**libSQL**, 타깃=**Postgres·SQLite**, transport=**일반 HTTP**+**stdio**, 검색·컴파일·CI·배포 런북. BIRD 샘플은 [target_db/README.md](target_db/README.md). 빌드·실행은 [server/DESIGN.md](server/DESIGN.md), 배포는 [deploy/SETUP.md](deploy/SETUP.md).
 
 ## Quickstart
 
@@ -21,6 +21,9 @@ export SQL_MCP_CONFIG=./server/examples/config.example.toml
 
 cargo run -p sql-mcp
 # MCP: POST http://127.0.0.1:8080/mcp  (JSON 요청/응답)
+
+# 로컬 Cursor 등 (stdio). 예시는 server/examples/mcp.stdio.example.json
+cargo run -p sql-mcp -- --stdio
 ```
 
 ## 문서 맵
