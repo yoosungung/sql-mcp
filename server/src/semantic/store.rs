@@ -47,6 +47,7 @@ impl SemanticStore {
             .map_err(|e| AppError::Internal(e.into()))?;
         migrate_drop_member_default_filter(&conn).await?;
         migrate_fact_type_from_amount_fx(&conn).await?;
+        migrate_as_code_json(&conn).await?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             embedder: None,
@@ -255,6 +256,35 @@ async fn migrate_fact_type_from_amount_fx(conn: &Connection) -> Result<(), AppEr
     Ok(())
 }
 
+/// Older catalogs stored as_code as INTEGER boolean; rebuild to JSON object column.
+async fn migrate_as_code_json(conn: &Connection) -> Result<(), AppError> {
+    if table_has_column(conn, "meta_table_columns", "as_code_json").await? {
+        return Ok(());
+    }
+    if !table_has_column(conn, "meta_table_columns", "as_code").await? {
+        return Ok(());
+    }
+    conn.execute_batch(
+        r#"
+        CREATE TABLE meta_table_columns_new (
+          table_name TEXT NOT NULL REFERENCES meta_tables(name) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          type TEXT NOT NULL,
+          nullable INTEGER NOT NULL,
+          as_code_json TEXT,
+          PRIMARY KEY (table_name, name)
+        ) STRICT;
+        INSERT INTO meta_table_columns_new (table_name, name, type, nullable, as_code_json)
+        SELECT table_name, name, type, nullable, NULL FROM meta_table_columns;
+        DROP TABLE meta_table_columns;
+        ALTER TABLE meta_table_columns_new RENAME TO meta_table_columns;
+        "#,
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(())
+}
+
 async fn table_has_column(
     conn: &Connection,
     table: &str,
@@ -353,6 +383,8 @@ mod tests {
         let store = mem().await;
         for path in [
             include_str!("../../../semantic/examples/tables/customer.json"),
+            include_str!("../../../semantic/examples/tables/region_codes.json"),
+            include_str!("../../../semantic/examples/tables/status_codes.json"),
             include_str!("../../../semantic/examples/tables/orders.json"),
             include_str!("../../../semantic/examples/views/orders_customer.json"),
             include_str!("../../../semantic/examples/cubes/sales.json"),
@@ -371,6 +403,8 @@ mod tests {
         let store = mem().await;
         for path in [
             include_str!("../../../semantic/examples/tables/customer.json"),
+            include_str!("../../../semantic/examples/tables/region_codes.json"),
+            include_str!("../../../semantic/examples/tables/status_codes.json"),
             include_str!("../../../semantic/examples/tables/orders.json"),
             include_str!("../../../semantic/examples/tables/orders_month.json"),
             include_str!("../../../semantic/examples/views/orders_customer.json"),

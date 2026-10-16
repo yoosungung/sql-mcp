@@ -47,6 +47,31 @@
         }
       }
     },
+    "asCode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["table", "key_column", "value_column"],
+      "description": "코드사전. 집계 완료 후 dim=key_column 조인, value는 {dim}__value로 SELECT(D9).",
+      "properties": {
+        "table": {
+          "$ref": "#/$defs/name",
+          "description": "코드사전 논리 table name."
+        },
+        "key_column": {
+          "$ref": "#/$defs/name",
+          "description": "사전 키 컬럼(dim 값과 조인)."
+        },
+        "value_column": {
+          "$ref": "#/$defs/name",
+          "description": "표시용 값 컬럼."
+        },
+        "where": {
+          "type": "string",
+          "minLength": 1,
+          "description": "선택. 사전 테이블에 적용하는 boolean SQL 조각."
+        }
+      }
+    },
     "role": {
       "description": "컬럼을 볼 수 있는 role. 생략하거나 all 이면 모든 role.",
       "default": "all",
@@ -141,8 +166,8 @@
         },
         "nullable": { "type": "boolean" },
         "as_code": {
-          "type": "boolean",
-          "description": "true이면 이 컬럼 값이 소스/쿼리 등 코드 텍스트다. 코딩 에이전트가 기입. MCP는 저장만(D9)."
+          "$ref": "#/$defs/asCode",
+          "description": "코드사전 조인. 집계 후 dim=key로 붙여 dim__value를 SELECT한다(D9). 코딩 에이전트 기입·MCP 저장만."
         }
       }
     },

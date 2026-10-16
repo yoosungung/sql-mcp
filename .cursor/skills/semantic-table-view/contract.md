@@ -21,7 +21,7 @@
 |------|------|
 | `db` / `schema` / `table` | 물리 DB·스키마·테이블 |
 | `name` | 논리 테이블 이름(view·fk가 이 이름으로 참조) |
-| `columns[]` | `name`, `type`, `nullable`; 선택 `as_code`(코드성이면 에이전트가 true로 기입 — 서버는 추론하지 않음) |
+| `columns[]` | `name`, `type`, `nullable`; 선택 `as_code` 코드사전 `{ table, key_column, value_column, where? }`(에이전트 기입 — 서버는 추론하지 않음) |
 | `pk` | 컬럼 이름 배열 |
 | `fk[]` | `columns`(이 테이블) + `references.table`(다른 **논리** table `name`) + `references.columns` |
 | `permission_filters[]` | `{ role, expression }` — 호출자 role과 같을 때 행 필터 |

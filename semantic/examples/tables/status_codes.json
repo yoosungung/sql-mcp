@@ -1,0 +1,18 @@
+{
+  "kind": "table",
+  "name": "status_codes",
+  "db": "dw",
+  "schema": "sales",
+  "table": "status_codes",
+  "description": "주문 상태 코드 사전.",
+  "columns": [
+    { "name": "code", "type": "varchar", "nullable": false },
+    { "name": "name", "type": "varchar", "nullable": false }
+  ],
+  "pk": ["code"],
+  "fk": [],
+  "permission_filters": [],
+  "scope_filter": null,
+  "default_filter": null,
+  "role": "all"
+}

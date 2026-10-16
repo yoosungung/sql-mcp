@@ -65,7 +65,7 @@ CREATE TABLE meta_table_columns (
     name TEXT NOT NULL,
     type TEXT NOT NULL,
     nullable BOOLEAN NOT NULL,
-    as_code BOOLEAN DEFAULT 0,
+    as_code_json TEXT,               -- D9: {table,key_column,value_column,where?} JSON or NULL
     PRIMARY KEY (table_name, name)
 );
 
@@ -214,6 +214,13 @@ CREATE VIRTUAL TABLE meta_search_fts USING fts5(
   `FROM (SELECT * FROM db.schema.tbl WHERE [filters]) alias` 인라인 뷰로 주입 (Outer Join 왜곡·보안 유출 방지).
 - Dimension/Fact에는 `default_filter`가 없다(table·metric·segment 필터만).
 - `encryption: true`면 프로젝션을 `NULL` 또는 `'***'`로 래핑. 응답·`sample_column`에서도 평문 금지(D17).
+- 출력: 집계·필터까지 반영된 물리 SQL (Step 7 입력)
+
+### Step 7: 코드사전(`as_code`) 조인
+
+- group_by/프로젝션 dim 중, 해석된 table 컬럼에 `as_code` 객체가 있으면 집계 서브쿼리 **바깥**에서 LEFT JOIN.
+- ON: `q."{dim}" = code."{key_column}"`. 사전 테이블에도 permission/scope/default + `as_code.where`를 인라인 뷰로 적용.
+- SELECT에 `code."{value_column}" AS "{dim}__value"` 추가.
 - 출력: 타깃으로 보낼 최종 물리 SQL 문자열
 
 ## 4. 개발 시 주의사항 (Checklist)

@@ -39,7 +39,7 @@ Progress:
 - 물리 `db` / `schema` / `table` 이름
 - 컬럼명·타입·nullable
 - PK·FK 후보
-- 코드성 컬럼(`as_code`)·필터에 쓸 값 분포
+- 코드사전(`as_code`: table/key/value/where)·필터에 쓸 값 분포
 
 ### 2. Existing semantic names (optional)
 

@@ -27,7 +27,8 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `semantic` | 스키마·연결 검증 · libSQL CRUD · 검색 인덱스 재구축 |
 | `search` | BM25(FTS5) · 벡터 · hybrid(RRF) |
 | `embed` | D14: OpenAI-호환 HTTP만. 없으면 None → BM25만. `HashEmbedder`는 테스트 전용 |
-| `code_detect` | D9 `sample_column` 런타임 `is_code` 휴리스틱(메타 `as_code`와 무관·미기록) |
+| `sample` | cube+member → 물리/as_code 사전 샘플 해석 |
+| `code_detect` | (레거시) 텍스트 코드 휴리스틱 — 현재 sample_column 미사용 |
 | `target` | 타깃 레지스트리 · Postgres(`sqlx`) / SQLite(`libsql`) |
 | `tools` | MCP 툴 표면 · Resource(`document.schema.json`) |
 | `http` | axum 리스너 `/mcp` (일반 HTTP) |
@@ -44,8 +45,8 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 
 - `list_tables` / `describe_table`: 타깃 카탈로그(`information_schema`) 우선. `target` 생략 시 시맨틱 `table` 등록분.
 - `search_columns`: `keyword` | `vector` | `hybrid`(기본). 임베더 없으면 vector/hybrid→keyword.
-- `sample_column`: D9 휴리스틱으로 `is_code`(+선택 `language`). 등록 `as_code`는 에이전트 기입·CRUD 저장만. `encryption` 컬럼은 값 마스킹(D17, `masked: true`)
-- `execute_sql`: **시맨틱 SQL만** 수용 → `pipeline` 컴파일 → 타깃 실행. `caller_role`·`params`(`:bind`·union 날짜 pruning). 응답에 물리 `sql` 포함. encryption 마스킹(D17).
+- `sample_column`: `cube`+`member` → mappings/as_code 해석 후 타깃 샘플. `as_code`면 사전 key/value. encryption 마스킹(D17, `masked: true`)
+- `execute_sql`: **시맨틱 SQL만** 수용 → `pipeline` 컴파일(Step7 코드사전 조인) → 타깃 실행. `caller_role`·`params`. 응답에 물리 `sql` 포함. encryption 마스킹(D17).
 
 ## 설정
 

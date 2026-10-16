@@ -155,10 +155,13 @@ async fn insert_table(conn: &Connection, body: &Value) -> Result<(), AppError> {
             let cname = str_field(c, "name")?;
             let ctype = str_field(c, "type")?;
             let nullable = c.get("nullable").and_then(|v| v.as_bool()).unwrap_or(true);
-            let as_code = c.get("as_code").and_then(|v| v.as_bool()).unwrap_or(false);
+            let as_code_json = c
+                .get("as_code")
+                .filter(|v| !v.is_null())
+                .map(|v| serde_json::to_string(v).unwrap_or_default());
             conn.execute(
-                "INSERT INTO meta_table_columns (table_name, name, type, nullable, as_code) VALUES (?1,?2,?3,?4,?5)",
-                params![name, cname, ctype, nullable as i32, as_code as i32],
+                "INSERT INTO meta_table_columns (table_name, name, type, nullable, as_code_json) VALUES (?1,?2,?3,?4,?5)",
+                params![name, cname, ctype, nullable as i32, as_code_json],
             )
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
@@ -206,7 +209,7 @@ async fn load_table(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut columns = Vec::new();
     let mut crows = conn
         .query(
-            "SELECT name, type, nullable, as_code FROM meta_table_columns WHERE table_name = ?1 ORDER BY name",
+            "SELECT name, type, nullable, as_code_json FROM meta_table_columns WHERE table_name = ?1 ORDER BY name",
             params![name],
         )
         .await
@@ -219,14 +222,16 @@ async fn load_table(conn: &Connection, name: &str) -> Result<Value, AppError> {
         let cname: String = r.get(0).map_err(|e| AppError::Internal(e.into()))?;
         let ctype: String = r.get(1).map_err(|e| AppError::Internal(e.into()))?;
         let nullable: i32 = r.get(2).map_err(|e| AppError::Internal(e.into()))?;
-        let as_code: i32 = r.get(3).map_err(|e| AppError::Internal(e.into()))?;
+        let as_code_json: Option<String> = r.get(3).ok();
         let mut col = json!({
             "name": cname,
             "type": ctype,
             "nullable": nullable != 0,
         });
-        if as_code != 0 {
-            col["as_code"] = json!(true);
+        if let Some(raw) = as_code_json.filter(|s| !s.is_empty()) {
+            if let Ok(v) = serde_json::from_str::<Value>(&raw) {
+                col["as_code"] = v;
+            }
         }
         columns.push(col);
     }

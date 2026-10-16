@@ -7,8 +7,27 @@
   "columns": [
     { "name": "order_id", "type": "bigint", "nullable": false },
     { "name": "customer_id", "type": "bigint", "nullable": false },
-    { "name": "region_code", "type": "varchar", "nullable": false },
-    { "name": "status_code", "type": "varchar", "nullable": false },
+    {
+      "name": "region_code",
+      "type": "varchar",
+      "nullable": false,
+      "as_code": {
+        "table": "region_codes",
+        "key_column": "code",
+        "value_column": "name",
+        "where": "lang = 'ko'"
+      }
+    },
+    {
+      "name": "status_code",
+      "type": "varchar",
+      "nullable": false,
+      "as_code": {
+        "table": "status_codes",
+        "key_column": "code",
+        "value_column": "name"
+      }
+    },
     { "name": "order_date", "type": "date", "nullable": false },
     { "name": "sale_amount", "type": "numeric", "nullable": false },
     { "name": "fx_rate", "type": "numeric", "nullable": false }

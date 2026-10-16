@@ -72,7 +72,7 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 | `list_tables` | 테이블 목록 | `target?`, `schema?` | 테이블 메타 | 타깃 또는 시맨틱 등록분 — DESIGN |
 | `describe_table` | 테이블 상세 | `target?`, `table`, `schema?` | 컬럼·키 요약 | |
 | `search_columns` | 컬럼 검색 | `query`, `target?`, `mode?`, `limit?` | 매칭 메타 | §3.2.2 |
-| `sample_column` | 컬럼 샘플 | `target`, `table`, `column`, `limit?` | 샘플·`is_code` | §3.2.1 — **타깃** |
+| `sample_column` | dim/fact 샘플 | `target`, `cube`, `member`, `limit?` | 샘플·`resolved`·`as_code` | §3.4 — **타깃**(시맨틱 해석) |
 | `execute_sql` | 시맨틱 SQL 컴파일·실행 | `target`, `sql`, `caller_role?`, `params?` | 행·메타·`sql`(물리) | **시맨틱 SELECT만** → 물리 SELECT |
 
 ### 3.3 Tools — 메타데이터 CRUD (JSON)
@@ -89,11 +89,12 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 
 JSON에 DSN/password 금지 — 타깃 연결 비밀은 설정 쪽 id 참조만.
 
-### 3.4 `sample_column` — code
+### 3.4 `sample_column` · `as_code` 코드사전
 
-- 일반: 짧은 샘플, 긴 텍스트 truncate.
-- 코드: `is_code: true`, 개행 유지, 선택 `language`. 런타임 판정은 D9 휴리스틱(서버가 메타를 쓰지 않음).
-- 등록 문서의 `as_code`는 **코딩 에이전트가 기입**한다. MCP `metadata_*`는 스키마에 맞는 JSON을 **저장만** 하며 `as_code`를 추론하거나 샘플 결과로 덮어쓰지 않는다(D9).
+- 인자: `cube` + `member`(dimension/fact). 서버가 view mappings로 물리 테이블을 고른다(첫 mapping).
+- table `columns[].as_code`는 **코드사전 객체** `{ table, key_column, value_column, where? }`(D9). boolean 금지. 에이전트 기입·MCP 저장만.
+- `execute_sql` Step 7: 집계 완료 후 SELECT에 있는 dim에 대해 사전을 `dim = key` LEFT JOIN하고 `{dim}__value`를 프로젝션한다.
+- `sample_column`: `as_code`가 있으면 사전에서 key/value 샘플, 없으면 물리 컬럼 샘플.
 
 ### 3.5 `search_columns`
 
@@ -140,7 +141,7 @@ semantic/examples/
 | metric | `kind`, `name`, `cube`, `expression`, `aggregation`, `filter` |
 | segment | `kind`, `name`, `cube`, `filter` |
 
-table `role`의 기본값은 `all`이다. `columns`는 `name`, `type`, `nullable`과 선택 `as_code`(D9: 에이전트 기입·서버는 저장만)이다. `pk`는 그 컬럼 이름이다. `fk.columns`는 이 테이블 컬럼이고 `fk.references`는 다른 논리 테이블과 그 컬럼이다.
+table `role`의 기본값은 `all`이다. `columns`는 `name`, `type`, `nullable`과 선택 `as_code`(D9: 코드사전 `{table,key_column,value_column,where?}` · 에이전트 기입·서버는 저장만)이다. `pk`는 그 컬럼 이름이다. `fk.columns`는 이 테이블 컬럼이고 `fk.references`는 다른 논리 테이블과 그 컬럼이다.
 
 view `combine`은 `join`, `union`, `minus`, `select` 중 하나다. `combine`이 없으면 view가 아니다. `join`, `union`, `minus`의 source는 테이블이고, `select`의 source는 view다. union과 minus는 첫 source가 기준이고 각 view 컬럼이 모든 source를 가리킨다. join의 `type`은 `inner`, `left`, `right`, `full`이다.
 

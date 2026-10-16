@@ -10,6 +10,7 @@ pub mod expr_guard;
 pub mod http;
 pub mod mask;
 pub mod pipeline;
+pub mod sample;
 pub mod search;
 pub mod select_guard;
 pub mod semantic;

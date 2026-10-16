@@ -407,6 +407,8 @@ mod tests {
             .with_embedder(embedder.clone());
         for path in [
             include_str!("../../semantic/examples/tables/customer.json"),
+            include_str!("../../semantic/examples/tables/region_codes.json"),
+            include_str!("../../semantic/examples/tables/status_codes.json"),
             include_str!("../../semantic/examples/tables/orders.json"),
             include_str!("../../semantic/examples/views/orders_customer.json"),
             include_str!("../../semantic/examples/cubes/sales.json"),
@@ -432,6 +434,8 @@ mod tests {
         let store = SemanticStore::open(":memory:").await.unwrap();
         for path in [
             include_str!("../../semantic/examples/tables/customer.json"),
+            include_str!("../../semantic/examples/tables/region_codes.json"),
+            include_str!("../../semantic/examples/tables/status_codes.json"),
             include_str!("../../semantic/examples/tables/orders.json"),
             include_str!("../../semantic/examples/views/orders_customer.json"),
             include_str!("../../semantic/examples/cubes/sales.json"),

@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS meta_table_columns (
   name TEXT NOT NULL,
   type TEXT NOT NULL,
   nullable INTEGER NOT NULL,
-  as_code INTEGER NOT NULL DEFAULT 0,
+  as_code_json TEXT,
   PRIMARY KEY (table_name, name)
 ) STRICT;
 

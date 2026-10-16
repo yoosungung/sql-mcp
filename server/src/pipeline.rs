@@ -287,6 +287,8 @@ mod tests {
             include_str!("../../semantic/examples/tables/customer.json"),
             include_str!("../../semantic/examples/tables/orders.json"),
             include_str!("../../semantic/examples/tables/orders_month.json"),
+            include_str!("../../semantic/examples/tables/region_codes.json"),
+            include_str!("../../semantic/examples/tables/status_codes.json"),
             include_str!("../../semantic/examples/views/orders_customer.json"),
             include_str!("../../semantic/examples/cubes/sales.json"),
             include_str!("../../semantic/examples/metrics/revenue.json"),

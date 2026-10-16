@@ -76,9 +76,10 @@ pub struct SearchColumnsArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SampleColumnArgs {
     pub target: String,
-    pub table: String,
-    pub column: String,
-    pub schema: Option<String>,
+    /// Cube name (semantic).
+    pub cube: String,
+    /// Dimension or fact name on the cube.
+    pub member: String,
     pub limit: Option<u32>,
 }
 
@@ -260,7 +261,9 @@ impl SqlMcp {
         ok_json(crate::search::hits_to_json(&hits))
     }
 
-    #[tool(description = "Sample distinct-ish values from a target column")]
+    #[tool(
+        description = "Sample values for a cube dimension/fact. Uses as_code dictionary when registered."
+    )]
     async fn sample_column(
         &self,
         Parameters(args): Parameters<SampleColumnArgs>,
@@ -269,37 +272,66 @@ impl SqlMcp {
             Ok(t) => t,
             Err(e) => return tool_err(e),
         };
-        let limit = args
-            .limit
-            .map(|n| n as usize)
-            .unwrap_or(self.cfg.sample_limit);
-        let values = match db
-            .sample_column(args.schema.as_deref(), &args.table, &args.column, limit)
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => return tool_err(e),
-        };
         let docs = match self.store.list(None).await {
             Ok(d) => d,
             Err(e) => return tool_err(e),
         };
-        let encrypted = crate::mask::is_encrypted_column(&docs, &args.column);
-        let values = if encrypted {
-            crate::mask::mask_sample_values(values)
-        } else {
-            values
+        let limit = args
+            .limit
+            .map(|n| n as usize)
+            .unwrap_or(self.cfg.sample_limit);
+        let target = match crate::sample::resolve_sample_target(&docs, &args.cube, &args.member)
+        {
+            Ok(t) => t,
+            Err(e) => return tool_err(e),
         };
-        let (is_code, language) = crate::code_detect::detect_code(&args.column, &values);
-        let mut out = json!({
+        let sql = match crate::sample::sample_sql(&target, limit) {
+            Ok(s) => s,
+            Err(e) => return tool_err(e),
+        };
+        let result = match db.execute_select(&sql, limit).await {
+            Ok(r) => r,
+            Err(e) => return tool_err(e),
+        };
+        let encrypted = crate::mask::is_encrypted_column(&docs, &args.member);
+        let values: Value = if target.from_as_code {
+            let rows: Vec<Value> = result
+                .rows
+                .into_iter()
+                .map(|r| {
+                    json!({
+                        "key": r.first().cloned().unwrap_or(Value::Null),
+                        "value": r.get(1).cloned().unwrap_or(Value::Null),
+                    })
+                })
+                .collect();
+            if encrypted {
+                json!(rows
+                    .into_iter()
+                    .map(|_| json!({"key": null, "value": null}))
+                    .collect::<Vec<_>>())
+            } else {
+                json!(rows)
+            }
+        } else {
+            let vals: Vec<Value> = result
+                .rows
+                .into_iter()
+                .filter_map(|r| r.into_iter().next())
+                .collect();
+            json!(if encrypted {
+                crate::mask::mask_sample_values(vals)
+            } else {
+                vals
+            })
+        };
+        ok_json(json!({
             "values": values,
-            "is_code": is_code,
+            "as_code": target.from_as_code,
             "masked": encrypted,
-        });
-        if let Some(lang) = language {
-            out["language"] = json!(lang);
-        }
-        ok_json(out)
+            "resolved": target.resolved,
+            "sql": sql,
+        }))
     }
 
     #[tool(

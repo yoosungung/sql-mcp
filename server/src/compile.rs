@@ -844,8 +844,218 @@ pub fn compile_metric_select_with_binds(
         gb.push(output_col_expr(&view, gname, set_alias)?);
     }
     let sql = crate::ast_select::assemble_select(&projections, &from, &filters, &gb)?;
+    let dim_names: Vec<String> = group_by
+        .iter()
+        .filter_map(|g| g.as_str().map(str::to_string))
+        .collect();
+    // Step 7: after aggregation, LEFT JOIN code dictionaries for dims with as_code.
+    let sql = wrap_as_code_joins(docs, cube, &view, &dim_names, &sql, role)?;
     assert_select_only(&sql)?;
     Ok(sql)
+}
+
+/// Step 7: wrap aggregated SELECT with LEFT JOINs to as_code dictionaries.
+pub fn wrap_as_code_joins(
+    docs: &[Value],
+    cube: &Value,
+    view: &Value,
+    dim_names: &[String],
+    inner_sql: &str,
+    role: Option<&str>,
+) -> Result<String, AppError> {
+    let mut joins = Vec::new();
+    let mut extra_proj = Vec::new();
+    for (i, dim) in dim_names.iter().enumerate() {
+        if member_encrypted(cube, dim) {
+            continue;
+        }
+        let Some((code_table, as_code)) = resolve_dim_as_code(docs, cube, view, dim)? else {
+            continue;
+        };
+        let key_col = as_code
+            .get("key_column")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AppError::Validation(format!("{dim}: as_code.key_column")))?;
+        let value_col = as_code
+            .get("value_column")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AppError::Validation(format!("{dim}: as_code.value_column")))?;
+        let alias = format!("_code_{i}");
+        let qalias = quote_ident(&alias)?;
+        let derived = table_inline_derived(docs, &code_table, &as_code, role, &alias)?;
+        joins.push(format!(
+            "LEFT JOIN {derived} ON {q_inner}.{q_dim} = {qalias}.{q_key}",
+            q_inner = quote_ident("_sem_agg")?,
+            q_dim = quote_ident(dim)?,
+            q_key = quote_ident(key_col)?,
+        ));
+        extra_proj.push(format!(
+            "{qalias}.{} AS {}",
+            quote_ident(value_col)?,
+            quote_ident(&format!("{dim}__value"))?
+        ));
+    }
+    if joins.is_empty() {
+        return Ok(inner_sql.to_string());
+    }
+    let mut sql = format!(
+        "SELECT {inner_alias}.*",
+        inner_alias = quote_ident("_sem_agg")?
+    );
+    for p in &extra_proj {
+        sql.push_str(", ");
+        sql.push_str(p);
+    }
+    sql.push_str(&format!(
+        " FROM ({inner_sql}) AS {inner_alias}",
+        inner_alias = quote_ident("_sem_agg")?
+    ));
+    for j in &joins {
+        sql.push(' ');
+        sql.push_str(j);
+    }
+    let dialect = sqlparser::dialect::GenericDialect {};
+    let stmts = sqlparser::parser::Parser::parse_sql(&dialect, &sql)
+        .map_err(|e| AppError::Validation(format!("as_code wrap parse: {e}")))?;
+    if stmts.len() != 1 {
+        return Err(AppError::Validation(
+            "as_code wrap: expected single statement".into(),
+        ));
+    }
+    Ok(stmts[0].to_string())
+}
+
+fn table_inline_derived(
+    docs: &[Value],
+    code_table_name: &str,
+    as_code: &Value,
+    role: Option<&str>,
+    alias: &str,
+) -> Result<String, AppError> {
+    let table_doc = find_doc(docs, "table", code_table_name)?;
+    let phys = physical_from(table_doc)?;
+    let known = table_column_names(table_doc);
+    let mut filters = Vec::new();
+    if let Some(expr) = filter_expr(table_doc.get("scope_filter")) {
+        validate_table_filter(expr, &known)?;
+        filters.push(format!("({expr})"));
+    }
+    if let Some(expr) = filter_expr(table_doc.get("default_filter")) {
+        validate_table_filter(expr, &known)?;
+        filters.push(format!("({expr})"));
+    }
+    if let Some(role) = role {
+        if let Some(pfs) = table_doc.get("permission_filters").and_then(|v| v.as_array()) {
+            for pf in pfs {
+                if pf.get("role").and_then(|v| v.as_str()) == Some(role) {
+                    if let Some(expr) = pf.get("expression").and_then(|v| v.as_str()) {
+                        validate_table_filter(expr, &known)?;
+                        filters.push(format!("({expr})"));
+                    }
+                }
+            }
+        }
+    }
+    if let Some(w) = as_code.get("where").and_then(|v| v.as_str()) {
+        assert_filter_expr(w)?;
+        assert_idents_known(w, &known)?;
+        filters.push(format!("({w})"));
+    }
+    let qalias = quote_ident(alias)?;
+    if filters.is_empty() {
+        Ok(format!("{phys} AS {qalias}"))
+    } else {
+        Ok(format!(
+            "(SELECT * FROM {phys} WHERE {}) AS {qalias}",
+            filters.join(" AND ")
+        ))
+    }
+}
+
+/// Resolve dim → view mapping → source table column `as_code` object.
+pub fn resolve_dim_as_code<'a>(
+    docs: &'a [Value],
+    cube: &'a Value,
+    view: &'a Value,
+    dim_name: &str,
+) -> Result<Option<(String, &'a Value)>, AppError> {
+    let member = find_cube_member(cube, dim_name);
+    let Some(member) = member else {
+        return Ok(None);
+    };
+    let view_col = member
+        .get("column")
+        .and_then(|v| v.as_str())
+        .unwrap_or(dim_name);
+    // expression-only dims: no single table column for as_code
+    if member.get("column").is_none() && member.get("expression").is_some() {
+        return Ok(None);
+    }
+    let mapping = view_first_mapping(view, view_col)?;
+    let Some(mapping) = mapping else {
+        return Ok(None);
+    };
+    let source = mapping
+        .get("source")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::Validation("mapping.source".into()))?;
+    let phys_col = mapping
+        .get("column")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::Validation("mapping.column".into()))?;
+    let table_doc = find_doc(docs, "table", source)?;
+    let cols = table_doc
+        .get("columns")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| AppError::Validation(format!("table {source}: columns")))?;
+    for c in cols {
+        if c.get("name").and_then(|v| v.as_str()) != Some(phys_col) {
+            continue;
+        }
+        if let Some(as_code) = c.get("as_code") {
+            if as_code.is_object() {
+                let code_table = as_code
+                    .get("table")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AppError::Validation(format!("{source}.{phys_col}: as_code.table"))
+                    })?;
+                return Ok(Some((code_table.to_string(), as_code)));
+            }
+        }
+        return Ok(None);
+    }
+    Ok(None)
+}
+
+fn find_cube_member<'a>(cube: &'a Value, name: &str) -> Option<&'a Value> {
+    for key in ["dimensions", "facts"] {
+        if let Some(items) = cube.get(key).and_then(|v| v.as_array()) {
+            for item in items {
+                if item.get("name").and_then(|v| v.as_str()) == Some(name) {
+                    return Some(item);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn view_first_mapping<'a>(view: &'a Value, view_col: &str) -> Result<Option<&'a Value>, AppError> {
+    let cols = view
+        .get("columns")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| AppError::Validation("view.columns required".into()))?;
+    let Some(col) = cols
+        .iter()
+        .find(|c| c.get("name").and_then(|v| v.as_str()) == Some(view_col))
+    else {
+        return Ok(None);
+    };
+    Ok(col
+        .get("mappings")
+        .and_then(|v| v.as_array())
+        .and_then(|m| m.first()))
 }
 
 fn output_col_expr(
@@ -1011,6 +1221,8 @@ mod tests {
             include_str!("../../semantic/examples/tables/customer.json"),
             include_str!("../../semantic/examples/tables/orders.json"),
             include_str!("../../semantic/examples/tables/orders_month.json"),
+            include_str!("../../semantic/examples/tables/region_codes.json"),
+            include_str!("../../semantic/examples/tables/status_codes.json"),
             include_str!("../../semantic/examples/views/orders_customer.json"),
             include_str!("../../semantic/examples/cubes/sales.json"),
             include_str!("../../semantic/examples/metrics/revenue.json"),
@@ -1019,6 +1231,37 @@ mod tests {
         .into_iter()
         .map(|s| serde_json::from_str(s).unwrap())
         .collect()
+    }
+
+    #[test]
+    fn as_code_join_after_aggregation() {
+        let docs = example_docs();
+        let sql = compile_metric_select(&docs, "revenue", &["paid"], Some("branch")).unwrap();
+        assert!(
+            sql.contains("region_code__value") || sql.contains("\"region_code__value\""),
+            "expected region_code__value in {sql}"
+        );
+        assert!(
+            sql.contains("_sem_agg") || sql.contains("\"_sem_agg\""),
+            "expected outer wrap alias in {sql}"
+        );
+        assert!(
+            sql.to_ascii_uppercase().contains("LEFT JOIN"),
+            "expected LEFT JOIN code dict in {sql}"
+        );
+        assert!(
+            sql.contains("lang = 'ko'") || sql.contains("lang = \"ko\"") || sql.contains("lang='ko'"),
+            "expected as_code.where in {sql}"
+        );
+        // Join must be outside GROUP BY aggregation
+        let upper = sql.to_ascii_uppercase();
+        let group_pos = upper.find("GROUP BY").expect("GROUP BY");
+        let left_pos = upper.rfind("LEFT JOIN").expect("LEFT JOIN");
+        assert!(
+            left_pos > group_pos,
+            "LEFT JOIN should wrap after GROUP BY: {sql}"
+        );
+        assert_select_only(&sql).unwrap();
     }
 
     #[test]
