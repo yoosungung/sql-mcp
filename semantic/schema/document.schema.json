@@ -358,7 +358,7 @@
     "dimension": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "type", "default_filter", "encryption"],
+      "required": ["name", "type", "encryption"],
       "properties": {
         "name": {
           "$ref": "#/$defs/name",
@@ -377,10 +377,6 @@
           "minLength": 1,
           "description": "view 컬럼 이름으로 만든 스칼라 식. column 과 함께 두지 않는다."
         },
-        "default_filter": {
-          "$ref": "#/$defs/nullableFilter",
-          "description": "이 dimension 을 쓸 때 붙는 필터. 시멘틱 컬럼 이름을 쓴다."
-        },
         "encryption": { "type": "boolean", "description": "true 이면 응답·샘플·로그에서 원문을 마스킹한다(null 또는 ***). 암·복호화 아님(D17)." },
         "role": { "$ref": "#/$defs/role" }
       },
@@ -392,7 +388,7 @@
     "fact": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "amount", "fx", "default_filter", "encryption"],
+      "required": ["name", "amount", "fx", "encryption"],
       "properties": {
         "name": { "$ref": "#/$defs/name" },
         "column": {
@@ -406,9 +402,6 @@
         },
         "amount": { "type": "boolean", "description": "금액이면 true." },
         "fx": { "type": "boolean", "description": "외환이면 true." },
-        "default_filter": {
-          "$ref": "#/$defs/nullableFilter"
-        },
         "encryption": {
           "type": "boolean",
           "description": "true 이면 응답·샘플·로그에서 원문을 마스킹한다(null 또는 ***). 암·복호화 아님(D17)."

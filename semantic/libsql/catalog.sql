@@ -74,7 +74,6 @@ CREATE TABLE IF NOT EXISTS meta_cube_dimensions (
   type TEXT CHECK (type IN ('code', 'date', 'time', 'datetime', 'string')),
   column_ref TEXT,
   expression TEXT,
-  default_filter TEXT,
   encryption INTEGER NOT NULL,
   role_json TEXT NOT NULL DEFAULT '"all"',
   PRIMARY KEY (cube_name, name)
@@ -87,7 +86,6 @@ CREATE TABLE IF NOT EXISTS meta_cube_facts (
   fx INTEGER NOT NULL,
   column_ref TEXT,
   expression TEXT,
-  default_filter TEXT,
   encryption INTEGER NOT NULL,
   role_json TEXT NOT NULL DEFAULT '"all"',
   PRIMARY KEY (cube_name, name)

@@ -99,7 +99,7 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 - [x] 타입별 `meta_*` 저장 + `metadata_*` JSON 분해/재조립
 - [x] `execute_sql` = 시맨틱 SQL → `pipeline` → 물리 SELECT (자유 물리 SELECT 삭제, D19)
 - [x] keyword = FTS5/`bm25` · vector/hybrid 유지 (D12)
-- [x] 요약 뷰 라우팅 (`combine=select` + `prefer=summary`) · join Steiner 근사 pruning · 인라인 뷰 필터 푸시다운 · dim/fact `default_filter` · encryption 프로젝션 NULL
+- [x] 요약 뷰 라우팅 (`combine=select` + `prefer=summary`) · join Steiner 근사 pruning · 인라인 뷰 필터 푸시다운 · encryption 프로젝션 NULL
 - [x] union/minus 컴파일 · union pruning(`1=0` scope · 미매핑 source 제거)
 - [x] metric/view 식별자 치환을 sqlparser `VisitorMut` AST 경로로 이관 (`ast_rewrite`)
 - [x] metric SELECT AST 조립(`ast_select`) · 날짜 리터럴 구간 union disjoint(`date_range`)

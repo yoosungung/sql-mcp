@@ -118,7 +118,6 @@ CREATE TABLE meta_cube_dimensions (
     type TEXT CHECK (type IN ('code', 'date', 'time', 'datetime', 'string')),
     column_ref TEXT,
     expression TEXT,
-    default_filter TEXT,
     encryption BOOLEAN NOT NULL,
     role_json TEXT DEFAULT '"all"',
     PRIMARY KEY (cube_name, name)
@@ -131,7 +130,6 @@ CREATE TABLE meta_cube_facts (
     fx BOOLEAN NOT NULL,
     column_ref TEXT,
     expression TEXT,
-    default_filter TEXT,
     encryption BOOLEAN NOT NULL,
     role_json TEXT DEFAULT '"all"',
     PRIMARY KEY (cube_name, name)
@@ -215,7 +213,7 @@ CREATE VIRTUAL TABLE meta_search_fts USING fts5(
 
 - 테이블별 `permission_filters`(role 매칭) · `scope_filter` · `default_filter`를 바깥 WHERE가 아니라  
   `FROM (SELECT * FROM db.schema.tbl WHERE [filters]) alias` 인라인 뷰로 주입 (Outer Join 왜곡·보안 유출 방지).
-- Dimension/Fact `default_filter`는 메인 WHERE에 AND.
+- Dimension/Fact에는 `default_filter`가 없다(table·metric·segment 필터만).
 - `encryption: true`면 프로젝션을 `NULL` 또는 `'***'`로 래핑. 응답·`sample_column`에서도 평문 금지(D17).
 - 출력: 타깃으로 보낼 최종 물리 SQL 문자열
 

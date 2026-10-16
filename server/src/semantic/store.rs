@@ -45,6 +45,7 @@ impl SemanticStore {
         conn.execute_batch(CATALOG_SQL)
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
+        migrate_drop_member_default_filter(&conn).await?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             embedder: None,
@@ -204,6 +205,44 @@ fn name_of(body: &Value) -> Result<&str, AppError> {
     body.get("name")
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("name required".into()))
+}
+
+/// Older catalogs had `default_filter` on dim/fact; drop if present (idempotent).
+async fn migrate_drop_member_default_filter(conn: &Connection) -> Result<(), AppError> {
+    for table in ["meta_cube_dimensions", "meta_cube_facts"] {
+        if !table_has_column(conn, table, "default_filter").await? {
+            continue;
+        }
+        conn.execute(
+            &format!("ALTER TABLE {table} DROP COLUMN default_filter"),
+            (),
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    }
+    Ok(())
+}
+
+async fn table_has_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+) -> Result<bool, AppError> {
+    let mut rows = conn
+        .query(&format!("PRAGMA table_info({table})"), ())
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?
+    {
+        let name: String = row.get(1).map_err(|e| AppError::Internal(e.into()))?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 #[cfg(test)]

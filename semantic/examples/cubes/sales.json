@@ -8,7 +8,6 @@
       "name": "order_date",
       "type": "date",
       "column": "order_date",
-      "default_filter": null,
       "encryption": false,
       "role": "all"
     },
@@ -16,7 +15,6 @@
       "name": "order_year",
       "type": "date",
       "expression": "date_trunc('year', order_date)",
-      "default_filter": null,
       "encryption": false,
       "role": "all"
     },
@@ -24,7 +22,6 @@
       "name": "region_code",
       "type": "code",
       "column": "region_code",
-      "default_filter": null,
       "encryption": false,
       "role": "all"
     },
@@ -32,7 +29,6 @@
       "name": "status_code",
       "type": "code",
       "column": "status_code",
-      "default_filter": null,
       "encryption": false,
       "role": "all"
     },
@@ -40,7 +36,6 @@
       "name": "customer_id",
       "type": "string",
       "column": "customer_id",
-      "default_filter": null,
       "encryption": false,
       "role": "all"
     }
@@ -51,7 +46,6 @@
       "column": "sale_amount",
       "amount": true,
       "fx": false,
-      "default_filter": null,
       "encryption": false,
       "role": ["finance"]
     },
@@ -60,7 +54,6 @@
       "column": "fx_rate",
       "amount": false,
       "fx": true,
-      "default_filter": null,
       "encryption": false,
       "role": ["finance"]
     },
@@ -69,7 +62,6 @@
       "expression": "sale_amount * fx_rate",
       "amount": true,
       "fx": false,
-      "default_filter": null,
       "encryption": false,
       "role": ["finance"]
     }

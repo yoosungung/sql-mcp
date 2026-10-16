@@ -22,9 +22,8 @@
 1. 선택된 view가 닿는 각 table의 `scope_filter`
 2. 호출자 role과 같은 table `permission_filters`
 3. 각 table의 `default_filter`
-4. 질의에 쓰인 dimension, fact의 `default_filter`
-5. 질의에 쓰인 metric의 `filter`
-6. 질의에 쓰인 segment의 `filter`
+4. 질의에 쓰인 metric의 `filter`
+5. 질의에 쓰인 segment의 `filter`
 
 table, dimension, fact, metric, segment의 `role`을 생략하거나 `all`이면 모든 role이 볼 수 있다. table `permission_filters`의 `role`은 그 행 필터가 적용되는 역할이다. role 이름 배열이면 호출자는 그 중 하나의 role을 가져야 한다. `encryption`이 true인 dimension·fact는 **암·복호화하지 않고** 툴 응답·샘플·로그에서 원문을 내지 않는다 — 셀 값은 `null`(또는 `"***"`)로 마스킹한다(D17). AES·토큰화는 타깃 DW 책임이다.
 
@@ -143,7 +142,7 @@ table `role`의 기본값은 `all`이다. `columns`는 `name`, `type`, `nullable
 
 view `combine`은 `join`, `union`, `minus`, `select` 중 하나다. `combine`이 없으면 view가 아니다. `join`, `union`, `minus`의 source는 테이블이고, `select`의 source는 view다. union과 minus는 첫 source가 기준이고 각 view 컬럼이 모든 source를 가리킨다. join의 `type`은 `inner`, `left`, `right`, `full`이다.
 
-dimension `type`은 `code`, `date`, `time`, `datetime`, `string` 중 하나다. fact는 `amount`, `fx`를 가진다. 둘 다 `default_filter`, `encryption`(D17 마스킹)을 가진다. `role`의 기본값은 `all`이다. 값은 view 컬럼 `column`이거나, view 컬럼 이름을 쓰는 스칼라 `expression`이다. 둘 중 하나만 둔다.
+dimension `type`은 `code`, `date`, `time`, `datetime`, `string` 중 하나다. fact는 `amount`, `fx`를 가진다. 둘 다 `encryption`(D17 마스킹)을 가진다. `role`의 기본값은 `all`이다. 값은 view 컬럼 `column`이거나, view 컬럼 이름을 쓰는 스칼라 `expression`이다. 둘 중 하나만 둔다.
 
 metric `expression`은 연결된 cube의 view 컬럼 연산이다. `aggregation`은 `group`, `rollup`, `cube`, `grouping_sets` 중 하나이고, 질의의 그룹 기준을 그 방식으로 묶는다. `group`이면 `group_by`에 GROUP BY로 쓰는 view 컬럼을 둔다. metric과 segment `role`의 기본값은 `all`이다. segment `filter`는 비울 수 없다.
 

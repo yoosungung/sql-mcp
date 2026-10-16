@@ -816,9 +816,8 @@ pub fn compile_metric_select_with_binds(
     let rewritten = rewrite_metric_expression(metric_expr, cube, &view, set_alias)?;
     projections.push((rewritten, metric_name.to_string()));
 
-    // Outer WHERE: metric/segment/dimension-fact default_filter only (table filters pushed down).
+    // Outer WHERE: metric/segment only (table filters pushed down; dim/fact have no default_filter).
     let mut filters = Vec::new();
-    collect_member_default_filters(cube, &req_cols, &view, set_alias, &mut filters)?;
 
     if let Some(expr) = filter_expr(metric.get("filter")) {
         assert_filter_expr(expr)?;
@@ -929,37 +928,6 @@ fn member_encrypted(cube: &Value, name: &str) -> bool {
         }
     }
     false
-}
-
-fn collect_member_default_filters(
-    cube: &Value,
-    used_view_cols: &HashSet<String>,
-    view: &Value,
-    set_alias: Option<&str>,
-    filters: &mut Vec<String>,
-) -> Result<(), AppError> {
-    for key in ["dimensions", "facts"] {
-        if let Some(items) = cube.get(key).and_then(|v| v.as_array()) {
-            for item in items {
-                let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                let col = item
-                    .get("column")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(name);
-                if !used_view_cols.contains(col) && !used_view_cols.contains(name) {
-                    continue;
-                }
-                if let Some(expr) = filter_expr(item.get("default_filter")) {
-                    assert_filter_expr(expr)?;
-                    filters.push(format!(
-                        "({})",
-                        rewrite_view_idents(expr, view, set_alias)?
-                    ));
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 fn validate_cube_member_expressions(

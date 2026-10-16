@@ -485,7 +485,6 @@ async fn insert_cube_member(
     let name = str_field(item, "name")?;
     let column_ref = opt_str(item, "column");
     let expression = opt_str(item, "expression");
-    let default_filter = filter_expr(item.get("default_filter"));
     let encryption = item
         .get("encryption")
         .and_then(|v| v.as_bool())
@@ -494,15 +493,14 @@ async fn insert_cube_member(
     if is_dim {
         let dtype = opt_str(item, "type");
         conn.execute(
-            "INSERT INTO meta_cube_dimensions (cube_name, name, type, column_ref, expression, default_filter, encryption, role_json)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+            "INSERT INTO meta_cube_dimensions (cube_name, name, type, column_ref, expression, encryption, role_json)
+             VALUES (?1,?2,?3,?4,?5,?6,?7)",
             params![
                 cube,
                 name,
                 dtype,
                 column_ref,
                 expression,
-                default_filter,
                 encryption as i32,
                 role
             ],
@@ -513,8 +511,8 @@ async fn insert_cube_member(
         let amount = item.get("amount").and_then(|v| v.as_bool()).unwrap_or(false);
         let fx = item.get("fx").and_then(|v| v.as_bool()).unwrap_or(false);
         conn.execute(
-            "INSERT INTO meta_cube_facts (cube_name, name, amount, fx, column_ref, expression, default_filter, encryption, role_json)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            "INSERT INTO meta_cube_facts (cube_name, name, amount, fx, column_ref, expression, encryption, role_json)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
             params![
                 cube,
                 name,
@@ -522,7 +520,6 @@ async fn insert_cube_member(
                 fx as i32,
                 column_ref,
                 expression,
-                default_filter,
                 encryption as i32,
                 role
             ],
@@ -553,7 +550,7 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut dimensions = Vec::new();
     let mut drows = conn
         .query(
-            "SELECT name, type, column_ref, expression, default_filter, encryption, role_json
+            "SELECT name, type, column_ref, expression, encryption, role_json
              FROM meta_cube_dimensions WHERE cube_name = ?1 ORDER BY name",
             params![name],
         )
@@ -570,7 +567,7 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut facts = Vec::new();
     let mut frows = conn
         .query(
-            "SELECT name, amount, fx, column_ref, expression, default_filter, encryption, role_json
+            "SELECT name, amount, fx, column_ref, expression, encryption, role_json
              FROM meta_cube_facts WHERE cube_name = ?1 ORDER BY name",
             params![name],
         )
@@ -599,14 +596,12 @@ fn load_member_dim(r: &libsql::Row) -> Result<Value, AppError> {
     let dtype: Option<String> = r.get(1).ok();
     let column_ref: Option<String> = r.get(2).ok();
     let expression: Option<String> = r.get(3).ok();
-    let default_filter: Option<String> = r.get(4).ok();
-    let encryption: i32 = r.get(5).map_err(|e| AppError::Internal(e.into()))?;
-    let role_s: String = r.get(6).map_err(|e| AppError::Internal(e.into()))?;
+    let encryption: i32 = r.get(4).map_err(|e| AppError::Internal(e.into()))?;
+    let role_s: String = r.get(5).map_err(|e| AppError::Internal(e.into()))?;
     let mut out = json!({
         "name": name,
         "encryption": encryption != 0,
         "role": serde_json::from_str::<Value>(&role_s).unwrap_or(json!("all")),
-        "default_filter": filter_obj(default_filter),
     });
     if let Some(t) = dtype {
         out["type"] = json!(t);
@@ -626,16 +621,14 @@ fn load_member_fact(r: &libsql::Row) -> Result<Value, AppError> {
     let fx: i32 = r.get(2).map_err(|e| AppError::Internal(e.into()))?;
     let column_ref: Option<String> = r.get(3).ok();
     let expression: Option<String> = r.get(4).ok();
-    let default_filter: Option<String> = r.get(5).ok();
-    let encryption: i32 = r.get(6).map_err(|e| AppError::Internal(e.into()))?;
-    let role_s: String = r.get(7).map_err(|e| AppError::Internal(e.into()))?;
+    let encryption: i32 = r.get(5).map_err(|e| AppError::Internal(e.into()))?;
+    let role_s: String = r.get(6).map_err(|e| AppError::Internal(e.into()))?;
     let mut out = json!({
         "name": name,
         "amount": amount != 0,
         "fx": fx != 0,
         "encryption": encryption != 0,
         "role": serde_json::from_str::<Value>(&role_s).unwrap_or(json!("all")),
-        "default_filter": filter_obj(default_filter),
     });
     if let Some(c) = column_ref {
         out["column"] = json!(c);
