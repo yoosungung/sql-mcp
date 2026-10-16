@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use libsql::{Builder, Connection, params};
+use libsql::{Builder, Connection};
 use serde_json::Value;
 use tokio::sync::Mutex;
 
@@ -11,6 +11,7 @@ use crate::search::{self, SearchHit};
 
 use super::links::validate_links;
 use super::schema::validate_document;
+use super::typed;
 
 const CATALOG_SQL: &str = include_str!("../../../semantic/libsql/catalog.sql");
 
@@ -38,6 +39,9 @@ impl SemanticStore {
         let conn = db
             .connect()
             .map_err(|e| AppError::Connection(e.into()))?;
+        conn.execute_batch("PRAGMA foreign_keys=ON;")
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?;
         conn.execute_batch(CATALOG_SQL)
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
@@ -60,7 +64,6 @@ impl SemanticStore {
         validate_document(&body)?;
         let kind = kind_of(&body)?;
         let name = name_of(&body)?;
-        let description = description_of(&body);
         let mut docs = self.list_all().await?;
         if docs
             .iter()
@@ -72,8 +75,19 @@ impl SemanticStore {
         }
         docs.push(body.clone());
         validate_links(&docs)?;
-        self.insert_row(kind, name, description.as_deref(), &body)
-            .await?;
+        {
+            let conn = self.conn.lock().await;
+            conn.execute_batch("BEGIN IMMEDIATE;")
+                .await
+                .map_err(|e| AppError::Internal(e.into()))?;
+            if let Err(e) = typed::insert_document(&conn, &body).await {
+                let _ = conn.execute_batch("ROLLBACK;").await;
+                return Err(e);
+            }
+            conn.execute_batch("COMMIT;")
+                .await
+                .map_err(|e| AppError::Internal(e.into()))?;
+        }
         self.reindex(&docs).await?;
         Ok(body)
     }
@@ -85,7 +99,6 @@ impl SemanticStore {
                 "body.kind/name must match path kind/name".into(),
             ));
         }
-        let description = description_of(&body);
         let mut docs = self.list_all().await?;
         let pos = docs
             .iter()
@@ -95,16 +108,21 @@ impl SemanticStore {
         validate_links(&docs)?;
         {
             let conn = self.conn.lock().await;
-            let n = conn
-                .execute(
-                    "UPDATE document SET description = ?1, body = ?2 WHERE kind = ?3 AND name = ?4",
-                    params![description, body.to_string(), kind, name],
-                )
+            conn.execute_batch("BEGIN IMMEDIATE;")
                 .await
                 .map_err(|e| AppError::Internal(e.into()))?;
-            if n == 0 {
-                return Err(AppError::NotFound(format!("{kind}/{name}")));
+            let del = typed::delete_kind(&conn, kind, name).await;
+            if let Err(e) = del {
+                let _ = conn.execute_batch("ROLLBACK;").await;
+                return Err(e);
             }
+            if let Err(e) = typed::insert_document(&conn, &body).await {
+                let _ = conn.execute_batch("ROLLBACK;").await;
+                return Err(e);
+            }
+            conn.execute_batch("COMMIT;")
+                .await
+                .map_err(|e| AppError::Internal(e.into()))?;
         }
         self.reindex(&docs).await?;
         Ok(body)
@@ -120,16 +138,23 @@ impl SemanticStore {
         validate_links(&docs)?;
         {
             let conn = self.conn.lock().await;
-            let n = conn
-                .execute(
-                    "DELETE FROM document WHERE kind = ?1 AND name = ?2",
-                    params![kind, name],
-                )
+            conn.execute_batch("BEGIN IMMEDIATE;")
                 .await
                 .map_err(|e| AppError::Internal(e.into()))?;
-            if n == 0 {
-                return Err(AppError::NotFound(format!("{kind}/{name}")));
+            match typed::delete_kind(&conn, kind, name).await {
+                Ok(0) => {
+                    let _ = conn.execute_batch("ROLLBACK;").await;
+                    return Err(AppError::NotFound(format!("{kind}/{name}")));
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    let _ = conn.execute_batch("ROLLBACK;").await;
+                    return Err(e);
+                }
             }
+            conn.execute_batch("COMMIT;")
+                .await
+                .map_err(|e| AppError::Internal(e.into()))?;
         }
         self.reindex(&docs).await?;
         Ok(())
@@ -137,46 +162,15 @@ impl SemanticStore {
 
     pub async fn get(&self, kind: &str, name: &str) -> Result<Value, AppError> {
         let conn = self.conn.lock().await;
-        let mut rows = conn
-            .query(
-                "SELECT body FROM document WHERE kind = ?1 AND name = ?2",
-                params![kind, name],
-            )
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
-        let row = rows
-            .next()
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?
-            .ok_or_else(|| AppError::NotFound(format!("{kind}/{name}")))?;
-        let body: String = row.get(0).map_err(|e| AppError::Internal(e.into()))?;
-        serde_json::from_str(&body).map_err(|e| AppError::Internal(e.into()))
+        typed::load_document(&conn, kind, name).await
     }
 
     pub async fn list(&self, kind: Option<&str>) -> Result<Vec<Value>, AppError> {
         let conn = self.conn.lock().await;
-        let mut rows = if let Some(kind) = kind {
-            conn.query(
-                "SELECT body FROM document WHERE kind = ?1 ORDER BY name",
-                params![kind],
-            )
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?
-        } else {
-            conn.query("SELECT body FROM document ORDER BY kind, name", ())
-                .await
-                .map_err(|e| AppError::Internal(e.into()))?
-        };
-        let mut out = Vec::new();
-        while let Some(row) = rows
-            .next()
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?
-        {
-            let body: String = row.get(0).map_err(|e| AppError::Internal(e.into()))?;
-            out.push(serde_json::from_str(&body).map_err(|e| AppError::Internal(e.into()))?);
+        match kind {
+            Some(k) => typed::list_kind(&conn, k).await,
+            None => typed::list_all(&conn).await,
         }
-        Ok(out)
     }
 
     pub async fn search_columns(
@@ -198,23 +192,6 @@ impl SemanticStore {
     async fn list_all(&self) -> Result<Vec<Value>, AppError> {
         self.list(None).await
     }
-
-    async fn insert_row(
-        &self,
-        kind: &str,
-        name: &str,
-        description: Option<&str>,
-        body: &Value,
-    ) -> Result<(), AppError> {
-        let conn = self.conn.lock().await;
-        conn.execute(
-            "INSERT INTO document (kind, name, description, body) VALUES (?1, ?2, ?3, ?4)",
-            params![kind, name, description, body.to_string()],
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
-        Ok(())
-    }
 }
 
 fn kind_of(body: &Value) -> Result<&str, AppError> {
@@ -227,12 +204,6 @@ fn name_of(body: &Value) -> Result<&str, AppError> {
     body.get("name")
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("name required".into()))
-}
-
-fn description_of(body: &Value) -> Option<String> {
-    body.get("description")
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
 }
 
 #[cfg(test)]
@@ -315,5 +286,27 @@ mod tests {
         store.create(customer).await.unwrap();
         let hits = store.search_columns("region", "keyword", 10).await.unwrap();
         assert!(hits.iter().any(|h| h.field_name == "region_code"));
+    }
+
+    #[tokio::test]
+    async fn examples_roundtrip() {
+        let store = mem().await;
+        for path in [
+            include_str!("../../../semantic/examples/tables/customer.json"),
+            include_str!("../../../semantic/examples/tables/orders.json"),
+            include_str!("../../../semantic/examples/tables/orders_month.json"),
+            include_str!("../../../semantic/examples/views/orders_customer.json"),
+            include_str!("../../../semantic/examples/cubes/sales.json"),
+            include_str!("../../../semantic/examples/metrics/revenue.json"),
+            include_str!("../../../semantic/examples/segments/paid.json"),
+        ] {
+            let doc: Value = serde_json::from_str(path).unwrap();
+            store.create(doc.clone()).await.unwrap();
+            let kind = doc["kind"].as_str().unwrap();
+            let name = doc["name"].as_str().unwrap();
+            let got = store.get(kind, name).await.unwrap();
+            assert_eq!(got["kind"], doc["kind"]);
+            assert_eq!(got["name"], doc["name"]);
+        }
     }
 }

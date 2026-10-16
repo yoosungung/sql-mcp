@@ -6,6 +6,7 @@ pub mod error;
 pub mod expr_guard;
 pub mod http;
 pub mod mask;
+pub mod pipeline;
 pub mod search;
 pub mod select_guard;
 pub mod semantic;

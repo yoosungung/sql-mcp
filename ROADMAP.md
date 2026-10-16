@@ -32,7 +32,7 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 
 - 확장(`sqlite-vec`) 없이 벡터·FTS 경로가 엔진에 있음
 - 프로세스 내 파일 DB → `rmcp` 안에 심기 자연스러움
-- `document(kind, name, body)` 카탈로그로 CRUD 통로·이후 인덱스 추가가 가능
+- 타입별 `meta_*` 카탈로그 + JSON CRUD 통로·검색 인덱스 투영이 가능
 - 주의: hybrid는 앱 RRF. Turso 브랜드/API 이동은 있으나 M1 시맨틱은 `libsql` 핀(D2)
 - 타깃 DB는 libSQL일 필요 없음(Postgres 등 별도, D13)
 
@@ -47,12 +47,13 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 | D14 | 임베딩·검색 폴백 | **결정: 외부 API만 임베딩.** `SQL_MCP_EMBEDDING_URL`+`API_KEY` → vector/hybrid. **미설정 시 keyword(BM25)만**(vector/hybrid 요청도 keyword로 폴백). 오프라인 품질은 **BM25 강화**(한글 유지·문자 bigram·`as_code` 등 인덱스 텍스트). HashEmbedder=테스트 전용. 로컬 ONNX 비채택 |
 | D7 | 배포 | **결정(M3): release 바이너리 + 컨테이너 이미지**. Kustomize 베이스는 `deploy/k8s/base/` |
 | D9 | code 판정 | **결정:** `sample_column`의 `is_code`는 런타임 휴리스틱(컬럼명·샘플). **`as_code` 메타는 코딩 에이전트가 등록 JSON에 기입**하고 MCP는 **준 그대로 저장만**(추론·덮어쓰기 없음) |
-| D12 | 등록 스키마 ↔ 검색 인덱스 | **결정: 현재 구현을 정본으로 문서화.** 등록 정본=`document.schema.json` · 인덱스는 그 투영(`column_index`, 규칙은 `semantic/DESIGN.md`). 나중에 바꾸면 스키마·DESIGN·`extract_index_rows`를 **같이** 고친다 |
+| D12 | 등록 스키마 ↔ 저장·검색 | **결정: JSON 교환=`document.schema.json` · 저장=타입별 `meta_*` · 검색 투영=`column_index`+FTS5(`bm25`)+embedding(hybrid RRF). 규칙은 `semantic/DESIGN.md`·`server/spec.md`** |
 | D13 | 타깃 엔진 | **결정: Postgres + SQLite** (`sqlx`). 테스트 타깃은 BIRD Mini-Dev SQLite (`target_db/`) |
 | D15 | `metadata_update` | **결정: 전체 replace** (merge-patch 아님). `body`는 문서 JSON 전체 |
 | D16 | metric·segment 식 문법 | **결정: 새 DSL 없음.** `sqlparser`로 파싱한 **신뢰된 SQL 조각** + AST 제한. metric `expression` = 스칼라/집계식만 · segment·filter = 단일 boolean 식만. 서브쿼리·다중 문장·쓰기·CTE 거부. 식별자: table 필터=물리 컬럼 · cube/metric/segment=dimension·fact 이름 |
 | D17 | `encryption: true` | **결정: 암·복호화 아님 → 응답 마스킹.** SELECT/샘플/로그에서 해당 셀을 `null`(또는 `"***"`)로 치환. AES·토큰화는 타깃 DW 책임 |
-| D18 | expression/filter 컬럼 검사 시점 | **결정: 이중 검사.** `metadata_*` = 연결 그래프만(`column`·`group_by`·cube/view 존재). 식 안 식별자는 **컴파일 직전** AST에서 검증(`validation`). 자유 `execute_sql`은 SELECT 가드만 |
+| D18 | expression/filter 컬럼 검사 시점 | **결정: 이중 검사.** `metadata_*` = 연결 그래프 · 컴파일=AST 식별자. `execute_sql`은 시맨틱 컴파일 필수 |
+| D19 | `execute_sql` 입력 | **결정: 시맨틱 SELECT만.** 툴명 유지. 자유 물리 SELECT 경로 없음 |
 
 (제거: D5 Streamable HTTP, stdio, D10/D11 Frontend)
 
@@ -92,6 +93,14 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 - [x] D16–D18 본구현 (`expr_guard` · `mask`)
 - [x] MCP Resource로 `document.schema.json` 제공 (`resources/list` · `resources/read`)
 - [ ] 타깃 엔진 추가 확장·운영 하드닝(인증·rate limit 등)은 필요 시 후속
+
+### M4 — 시맨틱 컴파일러 · 타입별 카탈로그
+
+- [x] 타입별 `meta_*` 저장 + `metadata_*` JSON 분해/재조립
+- [x] `execute_sql` = 시맨틱 SQL → `pipeline` → 물리 SELECT (자유 물리 SELECT 삭제, D19)
+- [x] keyword = FTS5/`bm25` · vector/hybrid 유지 (D12)
+- [ ] 요약 뷰 라우팅 · join Steiner/MST · union pruning · 인라인 뷰 필터 푸시다운(spec Step 3–6 고도화)
+- [ ] 구 `compile_*` 문자열 경로를 AST 파이프라인으로 전면 이관
 
 ## 구현 시 작업 규칙
 

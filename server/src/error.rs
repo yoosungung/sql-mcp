@@ -12,6 +12,8 @@ pub enum AppError {
     NotFound(String),
     #[error("validation failed: {0}")]
     Validation(String),
+    #[error("forbidden: {0}")]
+    Forbidden(String),
     #[error("connection error")]
     Connection(#[source] anyhow::Error),
     #[error("query timeout")]
@@ -29,6 +31,7 @@ impl AppError {
             Self::SqlParse(_) => "sql_parse",
             Self::NotFound(_) => "not_found",
             Self::Validation(_) => "validation",
+            Self::Forbidden(_) => "forbidden",
             Self::Connection(_) => "connection",
             Self::Timeout => "timeout",
             Self::RowLimit => "row_limit",

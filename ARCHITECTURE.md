@@ -9,7 +9,7 @@
 3. **타깃 DB (복수).** 실제 DW/조회 대상은 **타깃 DB**라 부른다. **복수 등록**을 허용한다. `execute_sql`·샘플 등 데이터 조회는 타깃 DB로 간다.
 4. **언어.** MCP 서버는 **Rust** + [`rmcp`](https://crates.io/crates/rmcp) (MCP spec `2026-07-28`).
 5. **범위.** **MCP 서버만.** Frontend·Admin UI·Admin API·**stdio**·**Streamable HTTP**는 **취소(범위 밖)**. Transport는 **일반 HTTP**만(요청/응답 JSON — 스트리밍 세션 없음).
-6. **타깃 SQL = SELECT only.** 타깃 DB에 대한 임의 SQL은 **단일 SELECT**(및 DESIGN 화이트리스트 읽기 CTE)만. INSERT/UPDATE/DELETE/DDL/다중 문장/쓰기 CTE 거부. 행 상한·타임아웃 강제. AST로 SELECT가 아닌 문을 거절한 뒤, 등록된 문서를 따라 물리 SQL을 만들어 실행할 수 있다.
+6. **타깃 SQL = 시맨틱 SELECT만.** `execute_sql` 입력은 **시맨틱 SQL**(cube FROM · metric/dimension/segment)이며, 서버가 6단계 파이프라인으로 물리 SELECT를 만든 뒤에만 타깃에 실행한다. **자유 물리 SELECT 경로는 없다.** 컴파일·실행 결과는 단일 SELECT(읽기 CTE 허용)만. INSERT/UPDATE/DELETE/DDL/다중 문장/쓰기 CTE 거부. 행 상한·타임아웃 강제. (문서상 `execute_semantic_sql`은 `execute_sql` 이명.)
 7. **메타데이터 CRUD (예외).** 임베디드 시맨틱 저장소에 한해 MCP 툴로 **CRUD**를 제공한다. 요청/응답 바디는 **JSON**. 타깃 DB 쓰기가 아니다.
 8. **MCP 제공 능력.** (1) 타깃·테이블 목록/상세 (2) 컬럼 검색(BM25/벡터/hybrid) (3) 컬럼 샘플(+code) (4) 타깃 SELECT SQL (5) **메타데이터 CRUD(JSON)** (6) **Resource:** 등록 문서 JSON Schema(`document.schema.json`). 그 외 툴·Resource는 기본 표면에 넣지 않는다. DW 에이전트에게는 메타 CRUD 도구를 주지 않는다. 이 에이전트에게 테이블은 cube이고 컬럼은 dimension, fact, metric이다.
 9. **시크릿.** 로그·에러·툴 응답에 DSN/비밀번호를 실지 않는다. 타깃 자격 증명은 기동 설정으로만 주입(채팅으로 비밀번호 받지 않음). 메타 CRUD JSON에도 시크릿 필드를 넣지 않는다.
@@ -28,7 +28,7 @@
 
 table, dimension, fact, metric, segment의 `role`을 생략하거나 `all`이면 모든 role이 볼 수 있다. table `permission_filters`의 `role`은 그 행 필터가 적용되는 역할이다. role 이름 배열이면 호출자는 그 중 하나의 role을 가져야 한다. `encryption`이 true인 dimension·fact는 **암·복호화하지 않고** 툴 응답·샘플·로그에서 원문을 내지 않는다 — 셀 값은 `null`(또는 `"***"`)로 마스킹한다(D17). AES·토큰화는 타깃 DW 책임이다.
 
-식 안의 컬럼/멤버 이름 검사는 **이중**이다(D18). `metadata_*` 저장 시에는 연결 그래프만 검증한다(`column`·`group_by`·cube/view 존재 등; `expression`으로 만든 dimension·fact의 view 컬럼 연결 검사는 하지 않는다). 식 본문의 식별자는 **컴파일 직전** AST에서 알려진 dimension·fact·(해당 시) view/물리 컬럼으로 해석 가능한지 검사하고, 실패하면 `validation`으로 거절한다. 자유 `execute_sql` 경로는 SELECT 가드만 적용한다.
+식 안의 컬럼/멤버 이름 검사는 **이중**이다(D18). `metadata_*` 저장 시에는 연결 그래프만 검증한다(`column`·`group_by`·cube/view 존재 등; `expression`으로 만든 dimension·fact의 view 컬럼 연결 검사는 하지 않는다). 식 본문의 식별자는 **컴파일 직전** AST에서 알려진 dimension·fact·(해당 시) view/물리 컬럼으로 해석 가능한지 검사하고, 실패하면 `validation`으로 거절한다. `execute_sql`은 시맨틱 컴파일을 반드시 거친다.
 
 view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은 컬럼은 하나의 view 컬럼으로 묶는다. `mappings`가 둘 이상이면 가리키는 컬럼 이름이 같다.
 
@@ -36,7 +36,7 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 
 `metadata_create`와 `metadata_update`는 문서 하나의 JSON Schema 검증을 통과한 뒤에, 그 문서를 반영한 등록 집합 전체의 연결을 검증한다. `metadata_delete`는 그 문서를 뺀 집합의 연결을 검증한다. 검증이 실패하면 시맨틱 DB를 바꾸지 않는다. `metadata_get`과 `metadata_list`는 저장된 문서를 반환한다.
 
-연결은 `fk.references`, view `sources`와 `mappings`, cube `view`, dimension·fact의 `column`, metric·segment `cube`, metric `group_by`다. `expression`으로 만든 dimension·fact는 **저장 시** view 컬럼 연결 검사를 하지 않는다(식 식별자 검사는 D18 컴파일 단계). `aggregation`이 `group`이면 `group_by`의 각 이름이 연결된 view 컬럼에 있어야 한다. MCP가 저장하는 등록 집합은 libSQL `document` 테이블이다. 한 행은 `kind`, `name`, `description`, `body`이고 `body`가 등록 JSON이다. `description`은 검색용 바깥 컬럼이며 `body.description`과 같다. 제안 DDL은 `semantic/libsql/catalog.sql`이다.
+연결은 `fk.references`, view `sources`와 `mappings`, cube `view`, dimension·fact의 `column`, metric·segment `cube`, metric `group_by`다. `expression`으로 만든 dimension·fact는 **저장 시** view 컬럼 연결 검사를 하지 않는다(식 식별자 검사는 D18 컴파일 단계). `aggregation`이 `group`이면 `group_by`의 각 이름이 연결된 view 컬럼에 있어야 한다. MCP 저장 계층은 타입별 libSQL `meta_*` 테이블이다(`semantic/libsql/catalog.sql`). `metadata_*` **입출력은 JSON**(`document.schema.json`)이며 저장 시 타입별 행으로 분해·조회 시 JSON으로 재조립한다. 검색 투영은 `column_index`(+embedding)와 FTS5(`column_index_fts`, 순위 `bm25`)다 — keyword는 FTS5이며 vector/hybrid(RRF)를 유지한다.
 
 ## 2. 컴포넌트
 
@@ -73,7 +73,7 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 | `describe_table` | 테이블 상세 | `target?`, `table`, `schema?` | 컬럼·키 요약 | |
 | `search_columns` | 컬럼 검색 | `query`, `target?`, `mode?`, `limit?` | 매칭 메타 | §3.2.2 |
 | `sample_column` | 컬럼 샘플 | `target`, `table`, `column`, `limit?` | 샘플·`is_code` | §3.2.1 — **타깃** |
-| `execute_sql` | SQL 수행 | `target`, `sql`, `params?` | 행·메타 | **타깃 SELECT만** |
+| `execute_sql` | 시맨틱 SQL 컴파일·실행 | `target`, `sql`, `caller_role?` | 행·메타·`sql`(물리) | **시맨틱 SELECT만** → 물리 SELECT |
 
 ### 3.3 Tools — 메타데이터 CRUD (JSON)
 
@@ -98,7 +98,7 @@ JSON에 DSN/password 금지 — 타깃 연결 비밀은 설정 쪽 id 참조만.
 ### 3.5 `search_columns`
 
 - 목표 모드: `keyword`(BM25) · `vector` · `hybrid`(RRF). 기본 `hybrid` 권장.
-- 등록 문서 정본은 `semantic/schema/document.schema.json`. 검색 인덱스(`column_index`)는 등록 JSON의 **투영**이며, 펼치는 필드·`text` 규칙은 [semantic/DESIGN.md](semantic/DESIGN.md)에 둔다(D12). 스키마나 인덱스 규칙을 바꿀 때 둘과 서버 `extract_index_rows`를 함께 갱신한다.
+- JSON 교환·검증 정본은 `semantic/schema/document.schema.json`. 저장은 타입별 `meta_*`. 검색 인덱스(`column_index` / FTS5)는 등록 JSON의 **투영**이며 규칙은 [semantic/DESIGN.md](semantic/DESIGN.md)(D12). 파이프라인 상세는 [server/spec.md](server/spec.md).
 - **D14:** 임베딩은 외부 OpenAI-호환 HTTP API(`SQL_MCP_EMBEDDING_URL` + `API_KEY`)로만 생성하고 libSQL에 저장한다. API가 없으면 embedder를 두지 않으며, `vector`/`hybrid` 요청은 **keyword(BM25)로 폴백**한다. 오프라인 검색 품질은 BM25 강화(한글 토큰 유지, 문자 bigram, `as_code` 등)로 올린다. 로컬 ONNX·운영용 HashEmbedder는 쓰지 않는다.
 
 ### 3.6 Resources

@@ -5,7 +5,8 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 ## 역할
 
 - **일반 HTTP**: `rmcp` `StreamableHttpService`를 **stateless + JSON response**로 기동. 세션 ID·장수 SSE는 쓰지 않는다(계약의 “세션형 Streamable HTTP 취소”와 동일 취지).
-- **시맨틱**: 프로세스 내 `libsql` 0.9(`core`) · `document` + `column_index` · `metadata_*`
+- **시맨틱**: 프로세스 내 `libsql` 0.9(`core`) · 타입별 `meta_*` + `column_index`/FTS5 · `metadata_*` JSON
+- **컴파일**: `pipeline` (시맨틱 SQL → 물리 SELECT). 상세 [spec.md](spec.md)
 - **타깃**: `sqlx` 0.9 · 엔진 **Postgres** · **SQLite** · SELECT only
 - **로컬 테스트 DB**: BIRD Mini-Dev SQLite → 저장소 루트 `target_db/` ([target_db/README.md](../target_db/README.md))
 
@@ -16,7 +17,9 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `select_guard` | SQL 단일 SELECT(읽기 CTE 허용) AST 검사 |
 | `expr_guard` | D16 식 AST 제한 · D18 컴파일 시 식별자 검사 |
 | `mask` | D17 `encryption` 응답 마스킹(null) |
-| `compile` | table/metric 등록 → 물리 SQL · 식 검증 후 컴파일 |
+| `compile` | table/metric 등록 → 물리 SQL 조각(파이프라인 Step 5–6 기반) |
+| `pipeline` | 시맨틱 SQL AST → `compile_*` → 물리 SELECT (`execute_sql` 유일한 실행 경로) |
+| `semantic/typed` | JSON ↔ 타입별 `meta_*` 분해/재조립 |
 | `semantic` | 스키마·연결 검증 · libSQL CRUD · 검색 인덱스 재구축 |
 | `search` | BM25(FTS5) · 벡터 · hybrid(RRF) |
 | `embed` | D14: OpenAI-호환 HTTP만. 없으면 None → BM25만. `HashEmbedder`는 테스트 전용 |
@@ -37,7 +40,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 - `list_tables` / `describe_table`: 타깃 카탈로그(`information_schema`) 우선. `target` 생략 시 시맨틱 `table` 등록분.
 - `search_columns`: `keyword` | `vector` | `hybrid`(기본). 임베더 없으면 vector/hybrid→keyword.
 - `sample_column`: D9 휴리스틱으로 `is_code`(+선택 `language`). 등록 `as_code`는 에이전트 기입·CRUD 저장만. `encryption` 컬럼은 값 마스킹(D17, `masked: true`)
-- `execute_sql`: 결과 컬럼명이 암호화 dimension/fact와 일치하면 셀을 null로 마스킹(D17)
+- `execute_sql`: **시맨틱 SQL만** 수용 → `pipeline` 컴파일 → 타깃 실행. 응답에 물리 `sql` 포함. encryption 컬럼 마스킹(D17). 자유 물리 SELECT 없음.
 
 ## 설정
 

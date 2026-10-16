@@ -85,7 +85,10 @@ pub struct SampleColumnArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ExecuteSqlArgs {
     pub target: String,
+    /// Semantic SQL only (cube FROM). Compiled to physical SQL before execution.
     pub sql: String,
+    /// Caller role for permission_filters / cube role checks.
+    pub caller_role: Option<String>,
 }
 
 impl SqlMcp {
@@ -297,7 +300,9 @@ impl SqlMcp {
         ok_json(out)
     }
 
-    #[tool(description = "Execute a single SELECT on a target database")]
+    #[tool(
+        description = "Compile semantic SQL (cube/metric/segment) to physical SELECT and run on a target. Free physical SQL is not accepted."
+    )]
     async fn execute_sql(
         &self,
         Parameters(args): Parameters<ExecuteSqlArgs>,
@@ -306,12 +311,20 @@ impl SqlMcp {
             Ok(t) => t,
             Err(e) => return tool_err(e),
         };
-        let result = match db.execute_select(&args.sql, self.cfg.max_rows).await {
-            Ok(r) => r,
-            Err(e) => return tool_err(e),
-        };
         let docs = match self.store.list(None).await {
             Ok(d) => d,
+            Err(e) => return tool_err(e),
+        };
+        let physical = match crate::pipeline::compile_semantic_sql(
+            &docs,
+            &args.sql,
+            args.caller_role.as_deref(),
+        ) {
+            Ok(s) => s,
+            Err(e) => return tool_err(e),
+        };
+        let result = match db.execute_select(&physical, self.cfg.max_rows).await {
+            Ok(r) => r,
             Err(e) => return tool_err(e),
         };
         let encrypted = crate::mask::encrypted_names(&docs);
@@ -319,6 +332,7 @@ impl SqlMcp {
         ok_json(json!({
             "columns": result.columns,
             "rows": rows,
+            "sql": physical,
         }))
     }
 }
