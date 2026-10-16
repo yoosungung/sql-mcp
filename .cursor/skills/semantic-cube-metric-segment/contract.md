@@ -32,6 +32,7 @@
 - `type`: `code` | `date` | `time` | `datetime` | `string`
 - `column`(view 컬럼) **또는** `expression`(view 컬럼명을 쓰는 스칼라) — 둘 중 하나만
 - `encryption`, `role`
+- 선택 `as_code`: `{ table, key_column, value_column, where? }` 코드사전(집계 후 dim=key 조인 → `{dim}__value`)
 
 **fact**
 
@@ -65,3 +66,4 @@
 - [ ] `aggregation=group` ⇒ `group_by` ⊆ view columns
 - [ ] segment `filter.expression` non-empty
 - [ ] 식에 서브쿼리·다중 문장·쓰기 CTE 없음
+- [ ] `as_code.table`·key/value 컬럼이 등록 table에 존재(dimension만)

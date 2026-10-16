@@ -51,7 +51,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["table", "key_column", "value_column"],
-      "description": "코드사전. 집계 완료 후 dim=key_column 조인, value는 {dim}__value로 SELECT(D9).",
+      "description": "dimension 코드사전. 집계 완료 후 dim=key_column 조인, value는 {dim}__value로 SELECT(D9).",
       "properties": {
         "table": {
           "$ref": "#/$defs/name",
@@ -164,11 +164,7 @@
           "minLength": 1,
           "description": "DW 물리 타입 이름."
         },
-        "nullable": { "type": "boolean" },
-        "as_code": {
-          "$ref": "#/$defs/asCode",
-          "description": "코드사전 조인. 집계 후 dim=key로 붙여 dim__value를 SELECT한다(D9). 코딩 에이전트 기입·MCP 저장만."
-        }
+        "nullable": { "type": "boolean" }
       }
     },
     "foreignKey": {
@@ -403,6 +399,10 @@
           "description": "view 컬럼 이름으로 만든 스칼라 식. column 과 함께 두지 않는다."
         },
         "encryption": { "type": "boolean", "description": "true 이면 응답·샘플·로그에서 원문을 마스킹한다(null 또는 ***). 암·복호화 아님(D17)." },
+        "as_code": {
+          "$ref": "#/$defs/asCode",
+          "description": "코드사전 조인. 집계 후 이 dim=key로 붙여 dim__value를 SELECT한다(D9). 코딩 에이전트 기입·MCP 저장만."
+        },
         "role": { "$ref": "#/$defs/role" }
       },
       "oneOf": [

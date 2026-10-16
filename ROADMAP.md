@@ -46,7 +46,7 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 | D2 | 클라이언트 | **결정:** 시맨틱=`libsql` 0.9 (`core`만) · 타깃=`sqlx` 0.9(+postgres). **크레이트 분리**. Rust **1.94+** (`rust-toolchain.toml`) |
 | D14 | 임베딩·검색 폴백 | **결정: 외부 API만 임베딩.** `SQL_MCP_EMBEDDING_URL`+`API_KEY` → vector/hybrid. **미설정 시 keyword(BM25)만**(vector/hybrid 요청도 keyword로 폴백). 오프라인 품질은 **BM25 강화**(한글 유지·문자 bigram·`as_code` 등 인덱스 텍스트). HashEmbedder=테스트 전용. 로컬 ONNX 비채택 |
 | D7 | 배포 | **결정(M3): release 바이너리 + 컨테이너 이미지**. Kustomize 베이스는 `deploy/k8s/base/` |
-| D9 | 코드사전 | **결정:** table `columns[].as_code` = `{table,key_column,value_column,where?}`. 집계 후 dim=key LEFT JOIN → `{dim}__value`. `sample_column`은 cube+member(사전 있으면 사전 샘플). 에이전트 기입·MCP 저장만 |
+| D9 | 코드사전 | **결정:** dimension `as_code` = `{table,key_column,value_column,where?}`. 집계 후 dim=key LEFT JOIN → `{dim}__value`. `sample_column`은 cube+member(사전 있으면 사전 샘플). 에이전트 기입·MCP 저장만 |
 | D12 | 등록 스키마 ↔ 저장·검색 | **결정: JSON 교환=`document.schema.json` · 저장=타입별 `meta_*` · 검색 투영=`column_index`+FTS5(`bm25`)+embedding(hybrid RRF). 규칙은 `semantic/DESIGN.md`·`server/spec.md`** |
 | D13 | 타깃 엔진 | **결정: Postgres(`sqlx`) + SQLite(`libsql` 로컬)**. sqlx에 `sqlite` feature를 넣지 않는다(번들 SQLite 이중 링크 방지). 테스트 타깃은 BIRD Mini-Dev SQLite (`target_db/`) |
 | D15 | `metadata_update` | **결정: 전체 replace** (merge-patch 아님). `body`는 문서 JSON 전체 |

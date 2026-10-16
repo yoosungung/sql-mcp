@@ -256,32 +256,37 @@ async fn migrate_fact_type_from_amount_fx(conn: &Connection) -> Result<(), AppEr
     Ok(())
 }
 
-/// Older catalogs stored as_code as INTEGER boolean; rebuild to JSON object column.
+/// Move as_code onto dimensions: add dim as_code_json; drop table-column as_code(_json).
 async fn migrate_as_code_json(conn: &Connection) -> Result<(), AppError> {
-    if table_has_column(conn, "meta_table_columns", "as_code_json").await? {
-        return Ok(());
+    if !table_has_column(conn, "meta_cube_dimensions", "as_code_json").await? {
+        conn.execute(
+            "ALTER TABLE meta_cube_dimensions ADD COLUMN as_code_json TEXT",
+            (),
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
     }
-    if !table_has_column(conn, "meta_table_columns", "as_code").await? {
-        return Ok(());
+    let drop_table_as_code = table_has_column(conn, "meta_table_columns", "as_code_json").await?
+        || table_has_column(conn, "meta_table_columns", "as_code").await?;
+    if drop_table_as_code {
+        conn.execute_batch(
+            r#"
+            CREATE TABLE meta_table_columns_new (
+              table_name TEXT NOT NULL REFERENCES meta_tables(name) ON DELETE CASCADE,
+              name TEXT NOT NULL,
+              type TEXT NOT NULL,
+              nullable INTEGER NOT NULL,
+              PRIMARY KEY (table_name, name)
+            ) STRICT;
+            INSERT INTO meta_table_columns_new (table_name, name, type, nullable)
+            SELECT table_name, name, type, nullable FROM meta_table_columns;
+            DROP TABLE meta_table_columns;
+            ALTER TABLE meta_table_columns_new RENAME TO meta_table_columns;
+            "#,
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
     }
-    conn.execute_batch(
-        r#"
-        CREATE TABLE meta_table_columns_new (
-          table_name TEXT NOT NULL REFERENCES meta_tables(name) ON DELETE CASCADE,
-          name TEXT NOT NULL,
-          type TEXT NOT NULL,
-          nullable INTEGER NOT NULL,
-          as_code_json TEXT,
-          PRIMARY KEY (table_name, name)
-        ) STRICT;
-        INSERT INTO meta_table_columns_new (table_name, name, type, nullable, as_code_json)
-        SELECT table_name, name, type, nullable, NULL FROM meta_table_columns;
-        DROP TABLE meta_table_columns;
-        ALTER TABLE meta_table_columns_new RENAME TO meta_table_columns;
-        "#,
-    )
-    .await
-    .map_err(|e| AppError::Internal(e.into()))?;
     Ok(())
 }
 

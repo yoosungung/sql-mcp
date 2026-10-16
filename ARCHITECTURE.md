@@ -92,9 +92,9 @@ JSON에 DSN/password 금지 — 타깃 연결 비밀은 설정 쪽 id 참조만.
 ### 3.4 `sample_column` · `as_code` 코드사전
 
 - 인자: `cube` + `member`(dimension/fact). 서버가 view mappings로 물리 테이블을 고른다(첫 mapping).
-- table `columns[].as_code`는 **코드사전 객체** `{ table, key_column, value_column, where? }`(D9). boolean 금지. 에이전트 기입·MCP 저장만.
+- dimension `as_code`는 **코드사전 객체** `{ table, key_column, value_column, where? }`(D9). boolean 금지. 에이전트 기입·MCP 저장만. fact·table column에는 두지 않는다.
 - `execute_sql` Step 7: 집계 완료 후 SELECT에 있는 dim에 대해 사전을 `dim = key` LEFT JOIN하고 `{dim}__value`를 프로젝션한다.
-- `sample_column`: `as_code`가 있으면 사전에서 key/value 샘플, 없으면 물리 컬럼 샘플.
+- `sample_column`: dim에 `as_code`가 있으면 사전에서 key/value 샘플, 없으면 물리 컬럼 샘플.
 
 ### 3.5 `search_columns`
 
@@ -141,11 +141,11 @@ semantic/examples/
 | metric | `kind`, `name`, `cube`, `expression`, `aggregation`, `filter` |
 | segment | `kind`, `name`, `cube`, `filter` |
 
-table `role`의 기본값은 `all`이다. `columns`는 `name`, `type`, `nullable`과 선택 `as_code`(D9: 코드사전 `{table,key_column,value_column,where?}` · 에이전트 기입·서버는 저장만)이다. `pk`는 그 컬럼 이름이다. `fk.columns`는 이 테이블 컬럼이고 `fk.references`는 다른 논리 테이블과 그 컬럼이다.
+table `role`의 기본값은 `all`이다. `columns`는 `name`, `type`, `nullable`이다. `pk`는 그 컬럼 이름이다. `fk.columns`는 이 테이블 컬럼이고 `fk.references`는 다른 논리 테이블과 그 컬럼이다.
 
 view `combine`은 `join`, `union`, `minus`, `select` 중 하나다. `combine`이 없으면 view가 아니다. `join`, `union`, `minus`의 source는 테이블이고, `select`의 source는 view다. union과 minus는 첫 source가 기준이고 각 view 컬럼이 모든 source를 가리킨다. join의 `type`은 `inner`, `left`, `right`, `full`이다.
 
-dimension `type`은 `code`, `date`, `time`, `datetime`, `string` 중 하나다(취급 방식). fact `type`은 `amount`, `fx`, `quantity` 중 하나다(금액·환율·일반 수량). 둘 다 `encryption`(D17 마스킹)을 가진다. `role`의 기본값은 `all`이다. 값은 view 컬럼 `column`이거나, view 컬럼 이름을 쓰는 스칼라 `expression`이다. 둘 중 하나만 둔다.
+dimension `type`은 `code`, `date`, `time`, `datetime`, `string` 중 하나다(취급 방식). fact `type`은 `amount`, `fx`, `quantity` 중 하나다(금액·환율·일반 수량). 둘 다 `encryption`(D17 마스킹)을 가진다. dimension만 선택 `as_code`(D9 코드사전)를 가진다. `role`의 기본값은 `all`이다. 값은 view 컬럼 `column`이거나, view 컬럼 이름을 쓰는 스칼라 `expression`이다. 둘 중 하나만 둔다.
 
 metric `expression`은 연결된 cube의 view 컬럼 연산이다. `aggregation`은 `group`, `rollup`, `cube`, `grouping_sets` 중 하나이고, 질의의 그룹 기준을 그 방식으로 묶는다. `group`이면 `group_by`에 GROUP BY로 쓰는 view 컬럼을 둔다. metric과 segment `role`의 기본값은 `all`이다. segment `filter`는 비울 수 없다.
 

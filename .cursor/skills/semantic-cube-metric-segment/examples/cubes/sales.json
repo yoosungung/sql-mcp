@@ -23,6 +23,12 @@
       "type": "code",
       "column": "region_code",
       "encryption": false,
+      "as_code": {
+        "table": "region_codes",
+        "key_column": "code",
+        "value_column": "name",
+        "where": "lang = 'ko'"
+      },
       "role": "all"
     },
     {
@@ -30,6 +36,11 @@
       "type": "code",
       "column": "status_code",
       "encryption": false,
+      "as_code": {
+        "table": "status_codes",
+        "key_column": "code",
+        "value_column": "name"
+      },
       "role": "all"
     },
     {

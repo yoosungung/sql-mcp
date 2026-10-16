@@ -47,48 +47,6 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
                 }
             }
         }
-        if let Some(cols) = table.get("columns").and_then(|v| v.as_array()) {
-            for col in cols {
-                let col_name = col.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-                let Some(as_code) = col.get("as_code") else {
-                    continue;
-                };
-                if as_code.is_null() {
-                    continue;
-                }
-                if as_code.as_bool().is_some() {
-                    return Err(AppError::Validation(format!(
-                        "table {name}.{col_name}: as_code must be an object, not boolean"
-                    )));
-                }
-                let code_table = as_code
-                    .get("table")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        AppError::Validation(format!(
-                            "table {name}.{col_name}: as_code.table missing"
-                        ))
-                    })?;
-                let code_doc = tables.get(code_table).ok_or_else(|| {
-                    AppError::Validation(format!(
-                        "table {name}.{col_name}: as_code unknown table {code_table}"
-                    ))
-                })?;
-                let code_cols = table_column_names(code_doc);
-                for key in ["key_column", "value_column"] {
-                    let cname = as_code.get(key).and_then(|v| v.as_str()).ok_or_else(|| {
-                        AppError::Validation(format!(
-                            "table {name}.{col_name}: as_code.{key} missing"
-                        ))
-                    })?;
-                    if !code_cols.contains(cname) {
-                        return Err(AppError::Validation(format!(
-                            "table {name}.{col_name}: as_code.{key} {cname} not in {code_table}"
-                        )));
-                    }
-                }
-            }
-        }
     }
 
     for (name, view) in &views {
@@ -180,6 +138,13 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
                             )));
                         }
                     }
+                    if key == "dimensions" {
+                        validate_dim_as_code(name, iname, item, &tables)?;
+                    } else if item.get("as_code").is_some() {
+                        return Err(AppError::Validation(format!(
+                            "cube {name}.{iname}: as_code is only allowed on dimensions"
+                        )));
+                    }
                 }
             }
         }
@@ -242,6 +207,48 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
         }
     }
 
+    Ok(())
+}
+
+fn validate_dim_as_code(
+    cube: &str,
+    dim: &str,
+    item: &Value,
+    tables: &HashMap<String, &Value>,
+) -> Result<(), AppError> {
+    let Some(as_code) = item.get("as_code") else {
+        return Ok(());
+    };
+    if as_code.is_null() {
+        return Ok(());
+    }
+    if as_code.as_bool().is_some() {
+        return Err(AppError::Validation(format!(
+            "cube {cube}.{dim}: as_code must be an object, not boolean"
+        )));
+    }
+    let code_table = as_code
+        .get("table")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            AppError::Validation(format!("cube {cube}.{dim}: as_code.table missing"))
+        })?;
+    let code_doc = tables.get(code_table).ok_or_else(|| {
+        AppError::Validation(format!(
+            "cube {cube}.{dim}: as_code unknown table {code_table}"
+        ))
+    })?;
+    let code_cols = table_column_names(code_doc);
+    for key in ["key_column", "value_column"] {
+        let cname = as_code.get(key).and_then(|v| v.as_str()).ok_or_else(|| {
+            AppError::Validation(format!("cube {cube}.{dim}: as_code.{key} missing"))
+        })?;
+        if !code_cols.contains(cname) {
+            return Err(AppError::Validation(format!(
+                "cube {cube}.{dim}: as_code.{key} {cname} not in {code_table}"
+            )));
+        }
+    }
     Ok(())
 }
 

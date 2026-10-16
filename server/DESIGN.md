@@ -45,7 +45,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 
 - `list_tables` / `describe_table`: 타깃 카탈로그(`information_schema`) 우선. `target` 생략 시 시맨틱 `table` 등록분.
 - `search_columns`: `keyword` | `vector` | `hybrid`(기본). 임베더 없으면 vector/hybrid→keyword.
-- `sample_column`: `cube`+`member` → mappings/as_code 해석 후 타깃 샘플. `as_code`면 사전 key/value. encryption 마스킹(D17, `masked: true`)
+- `sample_column`: `cube`+`member` → mappings 또는 dimension `as_code` 해석 후 타깃 샘플. encryption 마스킹(D17, `masked: true`)
 - `execute_sql`: **시맨틱 SQL만** 수용 → `pipeline` 컴파일(Step7 코드사전 조인) → 타깃 실행. `caller_role`·`params`. 응답에 물리 `sql` 포함. encryption 마스킹(D17).
 
 ## 설정

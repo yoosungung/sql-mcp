@@ -65,7 +65,6 @@ CREATE TABLE meta_table_columns (
     name TEXT NOT NULL,
     type TEXT NOT NULL,
     nullable BOOLEAN NOT NULL,
-    as_code_json TEXT,               -- D9: {table,key_column,value_column,where?} JSON or NULL
     PRIMARY KEY (table_name, name)
 );
 
@@ -119,6 +118,7 @@ CREATE TABLE meta_cube_dimensions (
     column_ref TEXT,
     expression TEXT,
     encryption BOOLEAN NOT NULL,
+    as_code_json TEXT,               -- D9: {table,key_column,value_column,where?} JSON or NULL
     role_json TEXT DEFAULT '"all"',
     PRIMARY KEY (cube_name, name)
 );
@@ -218,7 +218,7 @@ CREATE VIRTUAL TABLE meta_search_fts USING fts5(
 
 ### Step 7: 코드사전(`as_code`) 조인
 
-- group_by/프로젝션 dim 중, 해석된 table 컬럼에 `as_code` 객체가 있으면 집계 서브쿼리 **바깥**에서 LEFT JOIN.
+- group_by/프로젝션 dim 중, dimension에 `as_code` 객체가 있으면 집계 서브쿼리 **바깥**에서 LEFT JOIN.
 - ON: `q."{dim}" = code."{key_column}"`. 사전 테이블에도 permission/scope/default + `as_code.where`를 인라인 뷰로 적용.
 - SELECT에 `code."{value_column}" AS "{dim}__value"` 추가.
 - 출력: 타깃으로 보낼 최종 물리 SQL 문자열

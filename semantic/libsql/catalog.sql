@@ -21,7 +21,6 @@ CREATE TABLE IF NOT EXISTS meta_table_columns (
   name TEXT NOT NULL,
   type TEXT NOT NULL,
   nullable INTEGER NOT NULL,
-  as_code_json TEXT,
   PRIMARY KEY (table_name, name)
 ) STRICT;
 
@@ -75,6 +74,7 @@ CREATE TABLE IF NOT EXISTS meta_cube_dimensions (
   column_ref TEXT,
   expression TEXT,
   encryption INTEGER NOT NULL,
+  as_code_json TEXT,
   role_json TEXT NOT NULL DEFAULT '"all"',
   PRIMARY KEY (cube_name, name)
 ) STRICT;

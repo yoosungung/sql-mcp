@@ -972,90 +972,39 @@ fn table_inline_derived(
     }
 }
 
-/// Resolve dim → view mapping → source table column `as_code` object.
+/// Resolve dimension `as_code` dictionary (on the cube member, not table column).
 pub fn resolve_dim_as_code<'a>(
     docs: &'a [Value],
     cube: &'a Value,
-    view: &'a Value,
+    _view: &'a Value,
     dim_name: &str,
 ) -> Result<Option<(String, &'a Value)>, AppError> {
-    let member = find_cube_member(cube, dim_name);
-    let Some(member) = member else {
+    let Some(member) = find_dimension(cube, dim_name) else {
         return Ok(None);
     };
-    let view_col = member
-        .get("column")
-        .and_then(|v| v.as_str())
-        .unwrap_or(dim_name);
-    // expression-only dims: no single table column for as_code
-    if member.get("column").is_none() && member.get("expression").is_some() {
-        return Ok(None);
-    }
-    let mapping = view_first_mapping(view, view_col)?;
-    let Some(mapping) = mapping else {
+    let Some(as_code) = member.get("as_code") else {
         return Ok(None);
     };
-    let source = mapping
-        .get("source")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::Validation("mapping.source".into()))?;
-    let phys_col = mapping
-        .get("column")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::Validation("mapping.column".into()))?;
-    let table_doc = find_doc(docs, "table", source)?;
-    let cols = table_doc
-        .get("columns")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| AppError::Validation(format!("table {source}: columns")))?;
-    for c in cols {
-        if c.get("name").and_then(|v| v.as_str()) != Some(phys_col) {
-            continue;
-        }
-        if let Some(as_code) = c.get("as_code") {
-            if as_code.is_object() {
-                let code_table = as_code
-                    .get("table")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        AppError::Validation(format!("{source}.{phys_col}: as_code.table"))
-                    })?;
-                return Ok(Some((code_table.to_string(), as_code)));
-            }
-        }
+    if !as_code.is_object() {
         return Ok(None);
     }
-    Ok(None)
+    let code_table = as_code
+        .get("table")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::Validation(format!("{dim_name}: as_code.table")))?;
+    // Ensure dictionary table exists in the registration set.
+    let _ = find_doc(docs, "table", code_table)?;
+    Ok(Some((code_table.to_string(), as_code)))
 }
 
-fn find_cube_member<'a>(cube: &'a Value, name: &str) -> Option<&'a Value> {
-    for key in ["dimensions", "facts"] {
-        if let Some(items) = cube.get(key).and_then(|v| v.as_array()) {
-            for item in items {
-                if item.get("name").and_then(|v| v.as_str()) == Some(name) {
-                    return Some(item);
-                }
-            }
-        }
-    }
-    None
-}
-
-fn view_first_mapping<'a>(view: &'a Value, view_col: &str) -> Result<Option<&'a Value>, AppError> {
-    let cols = view
-        .get("columns")
+fn find_dimension<'a>(cube: &'a Value, name: &str) -> Option<&'a Value> {
+    cube.get("dimensions")
         .and_then(|v| v.as_array())
-        .ok_or_else(|| AppError::Validation("view.columns required".into()))?;
-    let Some(col) = cols
-        .iter()
-        .find(|c| c.get("name").and_then(|v| v.as_str()) == Some(view_col))
-    else {
-        return Ok(None);
-    };
-    Ok(col
-        .get("mappings")
-        .and_then(|v| v.as_array())
-        .and_then(|m| m.first()))
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item.get("name").and_then(|v| v.as_str()) == Some(name))
+        })
 }
 
 fn output_col_expr(

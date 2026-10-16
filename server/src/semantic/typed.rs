@@ -155,13 +155,9 @@ async fn insert_table(conn: &Connection, body: &Value) -> Result<(), AppError> {
             let cname = str_field(c, "name")?;
             let ctype = str_field(c, "type")?;
             let nullable = c.get("nullable").and_then(|v| v.as_bool()).unwrap_or(true);
-            let as_code_json = c
-                .get("as_code")
-                .filter(|v| !v.is_null())
-                .map(|v| serde_json::to_string(v).unwrap_or_default());
             conn.execute(
-                "INSERT INTO meta_table_columns (table_name, name, type, nullable, as_code_json) VALUES (?1,?2,?3,?4,?5)",
-                params![name, cname, ctype, nullable as i32, as_code_json],
+                "INSERT INTO meta_table_columns (table_name, name, type, nullable) VALUES (?1,?2,?3,?4)",
+                params![name, cname, ctype, nullable as i32],
             )
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
@@ -209,7 +205,7 @@ async fn load_table(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut columns = Vec::new();
     let mut crows = conn
         .query(
-            "SELECT name, type, nullable, as_code_json FROM meta_table_columns WHERE table_name = ?1 ORDER BY name",
+            "SELECT name, type, nullable FROM meta_table_columns WHERE table_name = ?1 ORDER BY name",
             params![name],
         )
         .await
@@ -222,18 +218,11 @@ async fn load_table(conn: &Connection, name: &str) -> Result<Value, AppError> {
         let cname: String = r.get(0).map_err(|e| AppError::Internal(e.into()))?;
         let ctype: String = r.get(1).map_err(|e| AppError::Internal(e.into()))?;
         let nullable: i32 = r.get(2).map_err(|e| AppError::Internal(e.into()))?;
-        let as_code_json: Option<String> = r.get(3).ok();
-        let mut col = json!({
+        columns.push(json!({
             "name": cname,
             "type": ctype,
             "nullable": nullable != 0,
-        });
-        if let Some(raw) = as_code_json.filter(|s| !s.is_empty()) {
-            if let Ok(v) = serde_json::from_str::<Value>(&raw) {
-                col["as_code"] = v;
-            }
-        }
-        columns.push(col);
+        }));
     }
 
     let mut pfs = Vec::new();
@@ -497,9 +486,13 @@ async fn insert_cube_member(
     let role = role_json(item);
     if is_dim {
         let dtype = opt_str(item, "type");
+        let as_code_json = item
+            .get("as_code")
+            .filter(|v| !v.is_null())
+            .map(|v| serde_json::to_string(v).unwrap_or_default());
         conn.execute(
-            "INSERT INTO meta_cube_dimensions (cube_name, name, type, column_ref, expression, encryption, role_json)
-             VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            "INSERT INTO meta_cube_dimensions (cube_name, name, type, column_ref, expression, encryption, as_code_json, role_json)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
             params![
                 cube,
                 name,
@@ -507,6 +500,7 @@ async fn insert_cube_member(
                 column_ref,
                 expression,
                 encryption as i32,
+                as_code_json,
                 role
             ],
         )
@@ -553,7 +547,7 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut dimensions = Vec::new();
     let mut drows = conn
         .query(
-            "SELECT name, type, column_ref, expression, encryption, role_json
+            "SELECT name, type, column_ref, expression, encryption, as_code_json, role_json
              FROM meta_cube_dimensions WHERE cube_name = ?1 ORDER BY name",
             params![name],
         )
@@ -600,7 +594,8 @@ fn load_member_dim(r: &libsql::Row) -> Result<Value, AppError> {
     let column_ref: Option<String> = r.get(2).ok();
     let expression: Option<String> = r.get(3).ok();
     let encryption: i32 = r.get(4).map_err(|e| AppError::Internal(e.into()))?;
-    let role_s: String = r.get(5).map_err(|e| AppError::Internal(e.into()))?;
+    let as_code_json: Option<String> = r.get(5).ok();
+    let role_s: String = r.get(6).map_err(|e| AppError::Internal(e.into()))?;
     let mut out = json!({
         "name": name,
         "encryption": encryption != 0,
@@ -614,6 +609,11 @@ fn load_member_dim(r: &libsql::Row) -> Result<Value, AppError> {
     }
     if let Some(e) = expression {
         out["expression"] = json!(e);
+    }
+    if let Some(raw) = as_code_json.filter(|s| !s.is_empty()) {
+        if let Ok(v) = serde_json::from_str::<Value>(&raw) {
+            out["as_code"] = v;
+        }
     }
     Ok(out)
 }
