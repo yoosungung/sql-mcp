@@ -92,6 +92,7 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 - [x] `/health` 프로브 · tracing 로그
 - [x] D16–D18 본구현 (`expr_guard` · `mask`)
 - [x] MCP Resource로 `document.schema.json` 제공 (`resources/list` · `resources/read`)
+- [x] 코딩 에이전트용 Cursor Skills: `.cursor/skills/semantic-{table-view,cube-metric,register}/` (MCP Skills extension은 Cursor 미지원 → 로컬만)
 - [ ] 타깃 엔진 추가 확장·운영 하드닝(인증·rate limit 등)은 필요 시 후속
 
 ### M4 — 시맨틱 컴파일러 · 타입별 카탈로그
