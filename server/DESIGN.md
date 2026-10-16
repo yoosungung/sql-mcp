@@ -17,7 +17,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `select_guard` | SQL 단일 SELECT(읽기 CTE 허용) AST 검사 |
 | `expr_guard` | D16 식 AST 제한 · D18 컴파일 시 식별자 검사 |
 | `mask` | D17 `encryption` 응답 마스킹(null) |
-| `compile` | table/metric 등록 → 물리 SQL 조각(파이프라인 Step 5–6 기반) |
+| `compile` | table/metric → 물리 SQL: 요약뷰 라우팅·join pruning·필터 푸시다운·encryption NULL |
 | `pipeline` | 시맨틱 SQL AST → `compile_*` → 물리 SELECT (`execute_sql` 유일한 실행 경로) |
 | `semantic/typed` | JSON ↔ 타입별 `meta_*` 분해/재조립 |
 | `semantic` | 스키마·연결 검증 · libSQL CRUD · 검색 인덱스 재구축 |

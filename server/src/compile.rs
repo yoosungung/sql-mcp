@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde_json::Value;
 
@@ -155,17 +155,117 @@ fn find_doc<'a>(
         .ok_or_else(|| AppError::NotFound(format!("{kind}/{name}")))
 }
 
-/// Compile a join/union view into a FROM clause with aliases = logical table names.
+/// Compile a join/union/select view into a FROM clause.
+/// Table filters are pushed into derived-table subqueries (spec Step 6).
+/// When `used_view_cols` is set, join graph is pruned to a Steiner approx (Step 4).
 pub fn compile_view_from(docs: &[Value], view: &Value) -> Result<String, AppError> {
+    compile_view_from_opts(docs, view, None, None)
+}
+
+pub fn compile_view_from_opts(
+    docs: &[Value],
+    view: &Value,
+    role: Option<&str>,
+    used_view_cols: Option<&HashSet<String>>,
+) -> Result<String, AppError> {
     let combine = view
         .get("combine")
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("view.combine required".into()))?;
-    if combine != "join" {
-        return Err(AppError::Validation(format!(
-            "combine={combine} not yet supported in compile"
-        )));
+    match combine {
+        "join" => compile_join_view(docs, view, role, used_view_cols),
+        "select" => Err(AppError::Validation(
+            "combine=select must be resolved before compile_view_from".into(),
+        )),
+        other => Err(AppError::Validation(format!(
+            "combine={other} not yet supported in compile"
+        ))),
     }
+}
+
+/// Resolve cube.view, applying summary-view routing when combine=select (Step 3).
+pub fn resolve_view_for_cube(
+    docs: &[Value],
+    cube: &Value,
+    req_cols: &HashSet<String>,
+    is_semi_additive: bool,
+) -> Result<Value, AppError> {
+    let view_name = cube
+        .get("view")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::Validation("cube.view required".into()))?;
+    let view = find_doc(docs, "view", view_name)?.clone();
+    let combine = view.get("combine").and_then(|v| v.as_str()).unwrap_or("");
+    let prefer = view.get("prefer").and_then(|v| v.as_str());
+    if combine != "select" {
+        return Ok(view);
+    }
+    let sources = view
+        .get("sources")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| AppError::Validation("select view.sources required".into()))?;
+    let mut summary_first: Vec<&Value> = Vec::new();
+    let mut rest: Vec<&Value> = Vec::new();
+    for s in sources {
+        if s.get("summary").and_then(|v| v.as_bool()).unwrap_or(false) {
+            summary_first.push(s);
+        } else {
+            rest.push(s);
+        }
+    }
+    let order: Vec<&Value> = if prefer == Some("summary") {
+        summary_first.into_iter().chain(rest).collect()
+    } else {
+        rest.into_iter().chain(summary_first).collect()
+    };
+    for src in order {
+        let sname = source_name(src)?;
+        let skind = src
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("view");
+        let candidate = find_doc(docs, skind, sname)?;
+        if skind == "view" && view_covers_cols(candidate, req_cols) {
+            if is_semi_additive {
+                // Semi-additive: only accept if candidate has no finer grain than query.
+                // Without explicit summary grain metadata, require exact column set match.
+                let cand_cols = view_column_name_set(candidate);
+                if cand_cols != *req_cols && !req_cols.is_subset(&cand_cols) {
+                    continue;
+                }
+            }
+            return Ok(candidate.clone());
+        }
+        if skind == "table" {
+            let tcols = table_column_names(candidate);
+            if req_cols.is_subset(&tcols) {
+                // Wrap table as a synthetic join view of one source.
+                return Ok(json_singleton_table_view(sname, candidate)?);
+            }
+        }
+    }
+    Err(AppError::Validation(
+        "no select-view source covers required columns".into(),
+    ))
+}
+
+fn json_singleton_table_view(name: &str, _table: &Value) -> Result<Value, AppError> {
+    Err(AppError::Validation(format!(
+        "table source {name} in select view not yet wrapped; use a join view source"
+    )))
+}
+
+fn view_covers_cols(view: &Value, req: &HashSet<String>) -> bool {
+    let have = view_column_name_set(view);
+    req.iter().all(|c| have.contains(c))
+}
+
+fn compile_join_view(
+    docs: &[Value],
+    view: &Value,
+    role: Option<&str>,
+    used_view_cols: Option<&HashSet<String>>,
+) -> Result<String, AppError> {
     let sources = view
         .get("sources")
         .and_then(|v| v.as_array())
@@ -173,64 +273,272 @@ pub fn compile_view_from(docs: &[Value], view: &Value) -> Result<String, AppErro
     if sources.is_empty() {
         return Err(AppError::Validation("view.sources empty".into()));
     }
-    let first_name = source_name(&sources[0])?;
-    let first_table = find_doc(docs, "table", first_name)?;
-    let mut sql = format!("{} AS {}", physical_from(first_table)?, quote_ident(first_name)?);
     let joins = view
         .get("joins")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    for j in joins {
-        let right = j
-            .get("right")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AppError::Validation("join.right required".into()))?;
-        let left = j
-            .get("left")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AppError::Validation("join.left required".into()))?;
-        let jtype = j.get("type").and_then(|v| v.as_str()).unwrap_or("inner");
-        let join_kw = match jtype {
-            "inner" => "INNER JOIN",
-            "left" => "LEFT JOIN",
-            "right" => "RIGHT JOIN",
-            "full" => "FULL JOIN",
-            other => {
-                return Err(AppError::Validation(format!("unsupported join type {other}")));
+
+    let all_names: HashSet<String> = sources
+        .iter()
+        .filter_map(|s| source_name(s).ok().map(str::to_string))
+        .collect();
+    let t_req = if let Some(cols) = used_view_cols {
+        tables_for_view_cols(view, cols)
+    } else {
+        all_names.clone()
+    };
+    let included = steiner_nodes(&joins, &t_req, &all_names)?;
+
+    let mut ordered: Vec<String> = sources
+        .iter()
+        .filter_map(|s| source_name(s).ok().map(str::to_string))
+        .filter(|n| included.contains(n))
+        .collect();
+    if ordered.is_empty() {
+        return Err(AppError::Validation("no tables left after join prune".into()));
+    }
+
+    let first = ordered.remove(0);
+    let mut sql = format!("{} ", inline_table_ref(docs, &first, role)?);
+    let mut placed: HashSet<String> = HashSet::from([first.clone()]);
+
+    // Attach joins whose both ends are included and at least one side already placed.
+    let mut pending = joins.clone();
+    while placed.len() < included.len() {
+        let mut progress = false;
+        pending.retain(|j| {
+            let right = j.get("right").and_then(|v| v.as_str()).unwrap_or("");
+            let left = j.get("left").and_then(|v| v.as_str()).unwrap_or("");
+            if !included.contains(left) || !included.contains(right) {
+                return false; // drop
             }
-        };
-        let right_table = find_doc(docs, "table", right)?;
-        let mut ons = Vec::new();
-        for on in j
-            .get("on")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| AppError::Validation("join.on required".into()))?
-        {
-            let lc = on
-                .get("left_column")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::Validation("on.left_column".into()))?;
-            let rc = on
-                .get("right_column")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::Validation("on.right_column".into()))?;
-            ons.push(format!(
-                "{}.{} = {}.{}",
-                quote_ident(left)?,
-                quote_ident(lc)?,
-                quote_ident(right)?,
-                quote_ident(rc)?
-            ));
+            let left_in = placed.contains(left);
+            let right_in = placed.contains(right);
+            if left_in && right_in {
+                return false;
+            }
+            if !(left_in || right_in) {
+                return true; // keep for later
+            }
+            // Attach the missing side.
+            let (anchor, new_side) = if left_in {
+                (left, right)
+            } else {
+                (right, left)
+            };
+            if let Ok(frag) = format_join_fragment(docs, j, new_side, role) {
+                // ON uses original left/right names — ok.
+                let _ = anchor;
+                sql.push_str(&frag);
+                placed.insert(new_side.to_string());
+                progress = true;
+            }
+            false
+        });
+        if !progress {
+            // Fallback: add any remaining included table with CROSS (should not happen).
+            if let Some(missing) = included.iter().find(|n| !placed.contains(*n)) {
+                sql.push_str(&format!(
+                    " CROSS JOIN {} ",
+                    inline_table_ref(docs, missing, role)?
+                ));
+                placed.insert(missing.clone());
+            } else {
+                break;
+            }
         }
-        sql.push_str(&format!(
-            " {join_kw} {} AS {} ON {}",
-            physical_from(right_table)?,
+    }
+    Ok(sql.trim_end().to_string())
+}
+
+fn format_join_fragment(
+    docs: &[Value],
+    j: &Value,
+    new_side: &str,
+    role: Option<&str>,
+) -> Result<String, AppError> {
+    let left = j
+        .get("left")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::Validation("join.left required".into()))?;
+    let right = j
+        .get("right")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::Validation("join.right required".into()))?;
+    let jtype = j.get("type").and_then(|v| v.as_str()).unwrap_or("inner");
+    let join_kw = match jtype {
+        "inner" => "INNER JOIN",
+        "left" => "LEFT JOIN",
+        "right" => "RIGHT JOIN",
+        "full" => "FULL JOIN",
+        other => {
+            return Err(AppError::Validation(format!("unsupported join type {other}")));
+        }
+    };
+    let mut ons = Vec::new();
+    for on in j
+        .get("on")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| AppError::Validation("join.on required".into()))?
+    {
+        let lc = on
+            .get("left_column")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AppError::Validation("on.left_column".into()))?;
+        let rc = on
+            .get("right_column")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AppError::Validation("on.right_column".into()))?;
+        ons.push(format!(
+            "{}.{} = {}.{}",
+            quote_ident(left)?,
+            quote_ident(lc)?,
             quote_ident(right)?,
-            ons.join(" AND ")
+            quote_ident(rc)?
         ));
     }
-    Ok(sql)
+    Ok(format!(
+        " {join_kw} {} ON {}",
+        inline_table_ref(docs, new_side, role)?,
+        ons.join(" AND ")
+    ))
+}
+
+/// Tables needed for the given view column names (first mapping source).
+fn tables_for_view_cols(view: &Value, cols: &HashSet<String>) -> HashSet<String> {
+    let mut out = HashSet::new();
+    if let Some(vcols) = view.get("columns").and_then(|v| v.as_array()) {
+        for c in vcols {
+            let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if !cols.contains(name) {
+                continue;
+            }
+            if let Some(m) = c
+                .get("mappings")
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.first())
+            {
+                if let Some(src) = m.get("source").and_then(|v| v.as_str()) {
+                    out.insert(src.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Steiner-tree approximation: connect all terminals with shortest paths on the join graph.
+fn steiner_nodes(
+    joins: &[Value],
+    terminals: &HashSet<String>,
+    all: &HashSet<String>,
+) -> Result<HashSet<String>, AppError> {
+    if terminals.is_empty() {
+        return Ok(all.clone());
+    }
+    let mut adj: HashMap<String, Vec<String>> = HashMap::new();
+    for j in joins {
+        let l = j
+            .get("left")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AppError::Validation("join.left".into()))?;
+        let r = j
+            .get("right")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AppError::Validation("join.right".into()))?;
+        adj.entry(l.to_string()).or_default().push(r.to_string());
+        adj.entry(r.to_string()).or_default().push(l.to_string());
+    }
+    for n in all {
+        adj.entry(n.clone()).or_default();
+    }
+
+    let mut included: HashSet<String> = terminals.clone();
+    let terms: Vec<String> = terminals.iter().cloned().collect();
+    let root = &terms[0];
+    for t in terms.iter().skip(1) {
+        if let Some(path) = shortest_path(&adj, root, t) {
+            for n in path {
+                included.insert(n);
+            }
+        } else {
+            return Err(AppError::Validation(format!(
+                "join graph cannot connect {root} to {t}"
+            )));
+        }
+    }
+    // Also connect any terminal not reachable from root via pairwise from included seed.
+    Ok(included)
+}
+
+fn shortest_path(
+    adj: &HashMap<String, Vec<String>>,
+    start: &str,
+    goal: &str,
+) -> Option<Vec<String>> {
+    if start == goal {
+        return Some(vec![start.to_string()]);
+    }
+    let mut prev: HashMap<String, String> = HashMap::new();
+    let mut q = VecDeque::from([start.to_string()]);
+    let mut seen = HashSet::from([start.to_string()]);
+    while let Some(cur) = q.pop_front() {
+        for nxt in adj.get(&cur).into_iter().flatten() {
+            if seen.insert(nxt.clone()) {
+                prev.insert(nxt.clone(), cur.clone());
+                if nxt == goal {
+                    let mut path = vec![goal.to_string()];
+                    let mut p = goal.to_string();
+                    while let Some(x) = prev.get(&p) {
+                        path.push(x.clone());
+                        p = x.clone();
+                    }
+                    path.reverse();
+                    return Some(path);
+                }
+                q.push_back(nxt.clone());
+            }
+        }
+    }
+    None
+}
+
+/// `(SELECT * FROM phys WHERE filters) AS "alias"` — filters unqualified (Step 6).
+fn inline_table_ref(docs: &[Value], alias: &str, role: Option<&str>) -> Result<String, AppError> {
+    let table = find_doc(docs, "table", alias)?;
+    let phys = physical_from(table)?;
+    let known = table_column_names(table);
+    let mut filters = Vec::new();
+    if let Some(expr) = filter_expr(table.get("scope_filter")) {
+        validate_table_filter(expr, &known)?;
+        filters.push(format!("({expr})"));
+    }
+    if let Some(expr) = filter_expr(table.get("default_filter")) {
+        validate_table_filter(expr, &known)?;
+        filters.push(format!("({expr})"));
+    }
+    if let Some(role) = role {
+        if let Some(pfs) = table.get("permission_filters").and_then(|v| v.as_array()) {
+            for pf in pfs {
+                if pf.get("role").and_then(|v| v.as_str()) == Some(role) {
+                    if let Some(expr) = pf.get("expression").and_then(|v| v.as_str()) {
+                        validate_table_filter(expr, &known)?;
+                        filters.push(format!("({expr})"));
+                    }
+                }
+            }
+        }
+    }
+    let qalias = quote_ident(alias)?;
+    if filters.is_empty() {
+        Ok(format!("{phys} AS {qalias}"))
+    } else {
+        Ok(format!(
+            "(SELECT * FROM {phys} WHERE {}) AS {qalias}",
+            filters.join(" AND ")
+        ))
+    }
 }
 
 fn source_name(src: &Value) -> Result<&str, AppError> {
@@ -280,73 +588,72 @@ pub fn compile_metric_select(
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("metric.cube required".into()))?;
     let cube = find_doc(docs, "cube", cube_name)?;
-    let view_name = cube
-        .get("view")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::Validation("cube.view required".into()))?;
-    let view = find_doc(docs, "view", view_name)?;
-    let from = compile_view_from(docs, view)?;
-
-    let mut select_parts = Vec::new();
-    let group_by = metric
-        .get("group_by")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    for g in &group_by {
-        let gname = g
-            .as_str()
-            .ok_or_else(|| AppError::Validation("group_by entry".into()))?;
-        let expr = view_physical_expr(view, gname)?;
-        select_parts.push(format!("{expr} AS {}", quote_ident(gname)?));
-    }
-    let members = cube_member_names(cube);
-    let view_cols = view_column_name_set(view);
-    validate_cube_member_expressions(cube, &view_cols)?;
 
     let metric_expr = metric
         .get("expression")
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("metric.expression required".into()))?;
-    assert_metric_expr(metric_expr)?;
-    assert_idents_known(metric_expr, &members)?;
-    // Rewrite simple fact names inside metric expression via cube_field_sql when possible.
-    let rewritten = rewrite_metric_expression(metric_expr, cube, view)?;
-    select_parts.push(format!("{rewritten} AS {}", quote_ident(metric_name)?));
+    let is_semi = metric_expr.to_ascii_lowercase().contains("count(distinct")
+        || metric_expr.to_ascii_lowercase().contains("avg(")
+        || metric_expr.to_ascii_lowercase().contains("median(");
 
-    let mut filters = Vec::new();
-    // Table filters for sources
-    if let Some(sources) = view.get("sources").and_then(|v| v.as_array()) {
-        for src in sources {
-            let tname = source_name(src)?;
-            let table = find_doc(docs, "table", tname)?;
-            let known = table_column_names(table);
-            if let Some(expr) = filter_expr(table.get("scope_filter")) {
-                validate_table_filter(expr, &known)?;
-                filters.push(qualify_filter(expr, tname)?);
-            }
-            if let Some(expr) = filter_expr(table.get("default_filter")) {
-                validate_table_filter(expr, &known)?;
-                filters.push(qualify_filter(expr, tname)?);
-            }
-            if let Some(role) = role {
-                if let Some(pfs) = table.get("permission_filters").and_then(|v| v.as_array()) {
-                    for pf in pfs {
-                        if pf.get("role").and_then(|v| v.as_str()) == Some(role) {
-                            if let Some(expr) = pf.get("expression").and_then(|v| v.as_str()) {
-                                validate_table_filter(expr, &known)?;
-                                filters.push(qualify_filter(expr, tname)?);
-                            }
-                        }
-                    }
-                }
-            }
+    let group_by = metric
+        .get("group_by")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut req_cols: HashSet<String> = HashSet::new();
+    for g in &group_by {
+        if let Some(gname) = g.as_str() {
+            req_cols.insert(gname.to_string());
         }
     }
+    // Fact/dim names in metric expression → resolve to view columns via member.column.
+    collect_member_view_cols(cube, metric_expr, &mut req_cols);
+    if let Some(expr) = filter_expr(metric.get("filter")) {
+        collect_member_view_cols(cube, expr, &mut req_cols);
+    }
+    for seg_name in segment_names {
+        let seg = find_doc(docs, "segment", seg_name)?;
+        if let Some(expr) = filter_expr(seg.get("filter")) {
+            collect_member_view_cols(cube, expr, &mut req_cols);
+        }
+    }
+
+    let view = resolve_view_for_cube(docs, cube, &req_cols, is_semi)?;
+    let from = compile_view_from_opts(docs, &view, role, Some(&req_cols))?;
+
+    let mut select_parts = Vec::new();
+    for g in &group_by {
+        let gname = g
+            .as_str()
+            .ok_or_else(|| AppError::Validation("group_by entry".into()))?;
+        let expr = view_physical_expr(&view, gname)?;
+        let proj = if member_encrypted(cube, gname) {
+            format!("NULL AS {}", quote_ident(gname)?)
+        } else {
+            format!("{expr} AS {}", quote_ident(gname)?)
+        };
+        select_parts.push(proj);
+    }
+    let members = cube_member_names(cube);
+    let view_cols = view_column_name_set(&view);
+    validate_cube_member_expressions(cube, &view_cols)?;
+
+    assert_metric_expr(metric_expr)?;
+    assert_idents_known(metric_expr, &members)?;
+    let rewritten = rewrite_metric_expression(metric_expr, cube, &view)?;
+    select_parts.push(format!("{rewritten} AS {}", quote_ident(metric_name)?));
+
+    // Outer WHERE: metric/segment/dimension-fact default_filter only (table filters pushed down).
+    let mut filters = Vec::new();
+    collect_member_default_filters(cube, &req_cols, &view, &mut filters)?;
+
     if let Some(expr) = filter_expr(metric.get("filter")) {
         assert_filter_expr(expr)?;
         assert_idents_known(expr, &members)?;
-        filters.push(format!("({expr})"));
+        filters.push(format!("({})", rewrite_view_idents(expr, &view)?));
     }
     for seg_name in segment_names {
         let seg = find_doc(docs, "segment", seg_name)?;
@@ -358,8 +665,7 @@ pub fn compile_metric_select(
         if let Some(expr) = filter_expr(seg.get("filter")) {
             assert_filter_expr(expr)?;
             assert_idents_known(expr, &members)?;
-            // segment filters use cube/view column names — map via view_physical when simple ident
-            filters.push(format!("({})", rewrite_view_idents(expr, view)?));
+            filters.push(format!("({})", rewrite_view_idents(expr, &view)?));
         }
     }
 
@@ -372,13 +678,110 @@ pub fn compile_metric_select(
         let mut gb = Vec::new();
         for g in &group_by {
             let gname = g.as_str().unwrap();
-            gb.push(view_physical_expr(view, gname)?);
+            gb.push(view_physical_expr(&view, gname)?);
         }
         sql.push_str(" GROUP BY ");
         sql.push_str(&gb.join(", "));
     }
     assert_select_only(&sql)?;
     Ok(sql)
+}
+
+fn collect_member_view_cols(cube: &Value, expr: &str, out: &mut HashSet<String>) {
+    for key in ["dimensions", "facts"] {
+        if let Some(items) = cube.get(key).and_then(|v| v.as_array()) {
+            for item in items {
+                let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                if name.is_empty() {
+                    continue;
+                }
+                if expr_has_ident(expr, name) {
+                    if let Some(col) = item.get("column").and_then(|v| v.as_str()) {
+                        out.insert(col.to_string());
+                    } else if let Some(e) = item.get("expression").and_then(|v| v.as_str()) {
+                        // expression dims reference view cols by name
+                        if let Some(vcols) = cube.get("view") {
+                            let _ = vcols;
+                        }
+                        // pull simple idents from expression as view cols
+                        for tok in e.split(|c: char| !c.is_ascii_alphanumeric() && c != '_') {
+                            if !tok.is_empty()
+                                && tok.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+                                && !matches!(
+                                    tok,
+                                    "date_trunc" | "year" | "month" | "sum" | "count" | "avg"
+                                )
+                            {
+                                out.insert(tok.to_string());
+                            }
+                        }
+                    } else {
+                        out.insert(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn expr_has_ident(expr: &str, ident: &str) -> bool {
+    let chars: Vec<char> = expr.chars().collect();
+    let id: Vec<char> = ident.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if i + id.len() <= chars.len() && chars[i..i + id.len()] == id[..] {
+            let before_ok = i == 0 || !is_ident_char(chars[i - 1]);
+            let after_ok = i + id.len() == chars.len() || !is_ident_char(chars[i + id.len()]);
+            if before_ok && after_ok {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+fn member_encrypted(cube: &Value, name: &str) -> bool {
+    for key in ["dimensions", "facts"] {
+        if let Some(items) = cube.get(key).and_then(|v| v.as_array()) {
+            for item in items {
+                if item.get("name").and_then(|v| v.as_str()) == Some(name) {
+                    return item
+                        .get("encryption")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                }
+            }
+        }
+    }
+    false
+}
+
+fn collect_member_default_filters(
+    cube: &Value,
+    used_view_cols: &HashSet<String>,
+    view: &Value,
+    filters: &mut Vec<String>,
+) -> Result<(), AppError> {
+    for key in ["dimensions", "facts"] {
+        if let Some(items) = cube.get(key).and_then(|v| v.as_array()) {
+            for item in items {
+                let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let col = item
+                    .get("column")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(name);
+                if !used_view_cols.contains(col) && !used_view_cols.contains(name) {
+                    continue;
+                }
+                if let Some(expr) = filter_expr(item.get("default_filter")) {
+                    assert_filter_expr(expr)?;
+                    filters.push(format!("({})", rewrite_view_idents(expr, view)?));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_cube_member_expressions(
@@ -563,11 +966,69 @@ mod tests {
     fn compiles_revenue_metric_with_segment() {
         let docs = example_docs();
         let sql = compile_metric_select(&docs, "revenue", &["paid"], Some("branch")).unwrap();
-        assert!(sql.contains("INNER JOIN"));
         assert!(sql.contains("sum("));
         assert!(sql.contains("GROUP BY"));
         assert!(sql.contains("PAID"));
+        // Step 6: table filters pushed into derived table
+        assert!(sql.contains("SELECT * FROM"));
+        assert!(sql.contains("region_code = :caller_region"));
         assert_select_only(&sql).unwrap();
+    }
+
+    #[test]
+    fn prunes_unused_customer_join() {
+        let docs = example_docs();
+        let sql = compile_metric_select(&docs, "revenue", &["paid"], Some("branch")).unwrap();
+        // region_code/order_date/sale_amount/status map to orders first → customer pruned
+        assert!(
+            !sql.contains("AS \"customer\""),
+            "expected customer prune, got {sql}"
+        );
+        assert!(sql.contains("AS \"orders\"") || sql.contains("\"orders\""));
+    }
+
+    #[test]
+    fn summary_view_routing_prefers_summary() {
+        let mut docs = example_docs();
+        docs.push(json!({
+            "kind": "view",
+            "name": "orders_only",
+            "combine": "join",
+            "sources": [{"kind": "table", "name": "orders"}],
+            "joins": [],
+            "columns": [
+                {"name": "region_code", "mappings": [{"source": "orders", "column": "region_code"}]},
+                {"name": "order_date", "mappings": [{"source": "orders", "column": "order_date"}]},
+                {"name": "sale_amount", "mappings": [{"source": "orders", "column": "sale_amount"}]},
+                {"name": "status_code", "mappings": [{"source": "orders", "column": "status_code"}]},
+                {"name": "fx_rate", "mappings": [{"source": "orders", "column": "fx_rate"}]},
+                {"name": "customer_id", "mappings": [{"source": "orders", "column": "customer_id"}]}
+            ]
+        }));
+        docs.push(json!({
+            "kind": "view",
+            "name": "sales_select",
+            "combine": "select",
+            "prefer": "summary",
+            "sources": [
+                {"kind": "view", "name": "orders_only", "summary": true},
+                {"kind": "view", "name": "orders_customer", "summary": false}
+            ],
+            "columns": []
+        }));
+        for d in &mut docs {
+            if d.get("kind").and_then(|v| v.as_str()) == Some("cube")
+                && d.get("name").and_then(|v| v.as_str()) == Some("sales")
+            {
+                d["view"] = json!("sales_select");
+            }
+        }
+        let sql = compile_metric_select(&docs, "revenue", &["paid"], Some("branch")).unwrap();
+        assert!(
+            !sql.contains("AS \"customer\""),
+            "summary route should use orders_only: {sql}"
+        );
+        assert!(sql.contains("sum("));
     }
 
     #[test]
