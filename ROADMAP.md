@@ -102,7 +102,8 @@ Frontend / Admin API / **stdio** / **Streamable HTTP**는 **취소**. Transport�
 - [x] 요약 뷰 라우팅 (`combine=select` + `prefer=summary`) · join Steiner 근사 pruning · 인라인 뷰 필터 푸시다운 · dim/fact `default_filter` · encryption 프로젝션 NULL
 - [x] union/minus 컴파일 · union pruning(`1=0` scope · 미매핑 source 제거)
 - [x] metric/view 식별자 치환을 sqlparser `VisitorMut` AST 경로로 이관 (`ast_rewrite`)
-- [ ] 전체 쿼리 AST Folder(SELECT 조립 포함) · 날짜범위 기반 union disjoint 고도화
+- [x] metric SELECT AST 조립(`ast_select`) · 날짜 리터럴 구간 union disjoint(`date_range`)
+- [ ] bind-param scope와의 구간 비교 · OR/복잡한 날짜식 확장(필요 시)
 
 ## 구현 시 작업 규칙
 

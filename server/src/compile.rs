@@ -159,7 +159,7 @@ fn find_doc<'a>(
 /// Table filters are pushed into derived-table subqueries (spec Step 6).
 /// When `used_view_cols` is set, join graph is pruned to a Steiner approx (Step 4).
 pub fn compile_view_from(docs: &[Value], view: &Value) -> Result<String, AppError> {
-    compile_view_from_opts(docs, view, None, None)
+    compile_view_from_opts(docs, view, None, None, &[])
 }
 
 pub fn compile_view_from_opts(
@@ -167,6 +167,7 @@ pub fn compile_view_from_opts(
     view: &Value,
     role: Option<&str>,
     used_view_cols: Option<&HashSet<String>>,
+    query_preds: &[String],
 ) -> Result<String, AppError> {
     let combine = view
         .get("combine")
@@ -174,8 +175,8 @@ pub fn compile_view_from_opts(
         .ok_or_else(|| AppError::Validation("view.combine required".into()))?;
     match combine {
         "join" => compile_join_view(docs, view, role, used_view_cols),
-        "union" => compile_set_view(docs, view, role, used_view_cols, false),
-        "minus" => compile_set_view(docs, view, role, used_view_cols, true),
+        "union" => compile_set_view(docs, view, role, used_view_cols, false, query_preds),
+        "minus" => compile_set_view(docs, view, role, used_view_cols, true, query_preds),
         "select" => Err(AppError::Validation(
             "combine=select must be resolved before compile_view_from".into(),
         )),
@@ -192,6 +193,7 @@ fn compile_set_view(
     role: Option<&str>,
     used_view_cols: Option<&HashSet<String>>,
     is_minus: bool,
+    query_preds: &[String],
 ) -> Result<String, AppError> {
     let sources = view
         .get("sources")
@@ -217,6 +219,11 @@ fn compile_set_view(
         ));
     }
 
+    let query_ivs: Vec<_> = query_preds
+        .iter()
+        .flat_map(|p| crate::date_range::extract_intervals(p))
+        .collect();
+
     let op = if is_minus { "EXCEPT" } else { "UNION ALL" };
     let mut branches = Vec::new();
     for src in sources {
@@ -227,6 +234,12 @@ fn compile_set_view(
         let table = find_doc(docs, "table", tname)?;
         if scope_is_dead(table) {
             continue; // prune: sentinel unsatisfiable scope
+        }
+        if let Some(scope) = filter_expr(table.get("scope_filter")) {
+            let scope_ivs = crate::date_range::extract_intervals(scope);
+            if crate::date_range::is_disjoint(&scope_ivs, &query_ivs) {
+                continue; // prune: date range disjoint from query
+            }
         }
         let mut select_parts = Vec::new();
         for col in &proj_cols {
@@ -748,26 +761,36 @@ pub fn compile_metric_select(
         }
     }
 
+    let mut query_preds: Vec<String> = Vec::new();
+    if let Some(expr) = filter_expr(metric.get("filter")) {
+        query_preds.push(expr.to_string());
+    }
+    for seg_name in segment_names {
+        let seg = find_doc(docs, "segment", seg_name)?;
+        if let Some(expr) = filter_expr(seg.get("filter")) {
+            query_preds.push(expr.to_string());
+        }
+    }
+
     let view = resolve_view_for_cube(docs, cube, &req_cols, is_semi)?;
     let combine = view.get("combine").and_then(|v| v.as_str()).unwrap_or("");
     let set_alias = matches!(combine, "union" | "minus").then_some("_sem_uv");
-    let mut from = compile_view_from_opts(docs, &view, role, Some(&req_cols))?;
+    let mut from = compile_view_from_opts(docs, &view, role, Some(&req_cols), &query_preds)?;
     if let Some(a) = set_alias {
         from = format!("{from} AS {}", quote_ident(a)?);
     }
 
-    let mut select_parts = Vec::new();
+    let mut projections: Vec<(String, String)> = Vec::new();
     for g in &group_by {
         let gname = g
             .as_str()
             .ok_or_else(|| AppError::Validation("group_by entry".into()))?;
-        let expr = output_col_expr(&view, gname, set_alias)?;
-        let proj = if member_encrypted(cube, gname) {
-            format!("NULL AS {}", quote_ident(gname)?)
+        let expr = if member_encrypted(cube, gname) {
+            "NULL".to_string()
         } else {
-            format!("{expr} AS {}", quote_ident(gname)?)
+            output_col_expr(&view, gname, set_alias)?
         };
-        select_parts.push(proj);
+        projections.push((expr, gname.to_string()));
     }
     let members = cube_member_names(cube);
     let view_cols = view_column_name_set(&view);
@@ -776,7 +799,7 @@ pub fn compile_metric_select(
     assert_metric_expr(metric_expr)?;
     assert_idents_known(metric_expr, &members)?;
     let rewritten = rewrite_metric_expression(metric_expr, cube, &view, set_alias)?;
-    select_parts.push(format!("{rewritten} AS {}", quote_ident(metric_name)?));
+    projections.push((rewritten, metric_name.to_string()));
 
     // Outer WHERE: metric/segment/dimension-fact default_filter only (table filters pushed down).
     let mut filters = Vec::new();
@@ -785,10 +808,7 @@ pub fn compile_metric_select(
     if let Some(expr) = filter_expr(metric.get("filter")) {
         assert_filter_expr(expr)?;
         assert_idents_known(expr, &members)?;
-        filters.push(format!(
-            "({})",
-            rewrite_view_idents(expr, &view, set_alias)?
-        ));
+        filters.push(rewrite_view_idents(expr, &view, set_alias)?);
     }
     for seg_name in segment_names {
         let seg = find_doc(docs, "segment", seg_name)?;
@@ -800,27 +820,16 @@ pub fn compile_metric_select(
         if let Some(expr) = filter_expr(seg.get("filter")) {
             assert_filter_expr(expr)?;
             assert_idents_known(expr, &members)?;
-            filters.push(format!(
-                "({})",
-                rewrite_view_idents(expr, &view, set_alias)?
-            ));
+            filters.push(rewrite_view_idents(expr, &view, set_alias)?);
         }
     }
 
-    let mut sql = format!("SELECT {} FROM {}", select_parts.join(", "), from);
-    if !filters.is_empty() {
-        sql.push_str(" WHERE ");
-        sql.push_str(&filters.join(" AND "));
+    let mut gb = Vec::new();
+    for g in &group_by {
+        let gname = g.as_str().unwrap();
+        gb.push(output_col_expr(&view, gname, set_alias)?);
     }
-    if !group_by.is_empty() {
-        let mut gb = Vec::new();
-        for g in &group_by {
-            let gname = g.as_str().unwrap();
-            gb.push(output_col_expr(&view, gname, set_alias)?);
-        }
-        sql.push_str(" GROUP BY ");
-        sql.push_str(&gb.join(", "));
-    }
+    let sql = crate::ast_select::assemble_select(&projections, &from, &filters, &gb)?;
     assert_select_only(&sql)?;
     Ok(sql)
 }
@@ -1134,6 +1143,90 @@ mod tests {
             }
         }
         assert!(compile_metric_select(&docs, "revenue", &[], None).is_err());
+    }
+
+    #[test]
+    fn prunes_union_branch_on_date_disjoint() {
+        let mut docs = example_docs();
+        for d in &mut docs {
+            if d.get("kind").and_then(|v| v.as_str()) == Some("table")
+                && d.get("name").and_then(|v| v.as_str()) == Some("orders")
+            {
+                d["scope_filter"] =
+                    json!({ "expression": "order_date >= '2020-01-01' AND order_date < '2021-01-01'" });
+            }
+            if d.get("kind").and_then(|v| v.as_str()) == Some("table")
+                && d.get("name").and_then(|v| v.as_str()) == Some("orders_month")
+            {
+                d["scope_filter"] = json!({
+                    "expression": "order_date >= '2024-01-01' AND order_date < '2025-01-01'"
+                });
+                // align column name for interval extract
+                if let Some(cols) = d.get_mut("columns").and_then(|v| v.as_array_mut()) {
+                    for c in cols.iter_mut() {
+                        if c.get("name").and_then(|v| v.as_str()) == Some("order_month") {
+                            c["name"] = json!("order_date");
+                        }
+                    }
+                }
+            }
+        }
+        docs.push(json!({
+            "kind": "view",
+            "name": "orders_union",
+            "combine": "union",
+            "sources": [
+                {"kind": "table", "name": "orders"},
+                {"kind": "table", "name": "orders_month"}
+            ],
+            "columns": [
+                {"name": "region_code", "mappings": [
+                    {"source": "orders", "column": "region_code"},
+                    {"source": "orders_month", "column": "region_code"}
+                ]},
+                {"name": "order_date", "mappings": [
+                    {"source": "orders", "column": "order_date"},
+                    {"source": "orders_month", "column": "order_date"}
+                ]},
+                {"name": "sale_amount", "mappings": [
+                    {"source": "orders", "column": "sale_amount"},
+                    {"source": "orders_month", "column": "sale_amount"}
+                ]},
+                {"name": "status_code", "mappings": [
+                    {"source": "orders", "column": "status_code"},
+                    {"source": "orders_month", "column": "status_code"}
+                ]},
+                {"name": "fx_rate", "mappings": [
+                    {"source": "orders", "column": "fx_rate"},
+                    {"source": "orders_month", "column": "fx_rate"}
+                ]},
+                {"name": "customer_id", "mappings": [
+                    {"source": "orders", "column": "customer_id"},
+                    {"source": "orders_month", "column": "region_code"}
+                ]}
+            ]
+        }));
+        for d in &mut docs {
+            if d.get("kind").and_then(|v| v.as_str()) == Some("cube")
+                && d.get("name").and_then(|v| v.as_str()) == Some("sales")
+            {
+                d["view"] = json!("orders_union");
+            }
+            if d.get("kind").and_then(|v| v.as_str()) == Some("metric")
+                && d.get("name").and_then(|v| v.as_str()) == Some("revenue")
+            {
+                d["filter"] = json!({
+                    "expression": "order_date >= '2020-06-01' AND order_date < '2020-07-01'"
+                });
+            }
+        }
+        let sql = compile_metric_select(&docs, "revenue", &[], Some("branch")).unwrap();
+        assert!(
+            !sql.contains("orders_month"),
+            "2024 branch should be pruned vs 2020 query: {sql}"
+        );
+        assert!(sql.contains("2020") || sql.contains("orders"), "{sql}");
+        assert_select_only(&sql).unwrap();
     }
 
     #[test]
