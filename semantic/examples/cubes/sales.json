@@ -7,6 +7,7 @@
   "dimensions": [
     {
       "name": "order_date",
+      "description": "주문 일자.",
       "type": "date",
       "column": "order_date",
       "encryption": false,
@@ -14,6 +15,7 @@
     },
     {
       "name": "order_year",
+      "description": "주문 연도(order_date 절단).",
       "type": "date",
       "expression": "date_trunc('year', order_date)",
       "encryption": false,
@@ -21,6 +23,7 @@
     },
     {
       "name": "region_code",
+      "description": "판매 지역 코드.",
       "type": "code",
       "column": "region_code",
       "encryption": false,
@@ -34,6 +37,7 @@
     },
     {
       "name": "status_code",
+      "description": "주문 상태 코드.",
       "type": "code",
       "column": "status_code",
       "encryption": false,
@@ -46,6 +50,7 @@
     },
     {
       "name": "customer_id",
+      "description": "고객 식별자.",
       "type": "string",
       "column": "customer_id",
       "encryption": false,
@@ -55,6 +60,7 @@
   "facts": [
     {
       "name": "sale_amount",
+      "description": "판매 금액(원 통화 전).",
       "type": "amount",
       "column": "sale_amount",
       "encryption": false,
@@ -64,6 +70,7 @@
     },
     {
       "name": "fx_rate",
+      "description": "원화 환산 환율.",
       "type": "fx",
       "column": "fx_rate",
       "encryption": false,
@@ -73,6 +80,7 @@
     },
     {
       "name": "krw_amount",
+      "description": "원화 환산 판매 금액.",
       "type": "amount",
       "expression": "sale_amount * fx_rate",
       "encryption": false,

@@ -111,7 +111,16 @@ fn name_desc_text(name: &str, doc: &Value) -> String {
     }
 }
 
-/// D12: cube/dim/fact/metric/segment only — name (+ description); dim/fact add type.
+/// D12: cube/dim/fact/metric/segment — name + description; dim/fact also append type.
+fn member_index_text(item: &Value) -> String {
+    let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    let with_desc = name_desc_text(name, item);
+    match item.get("type").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+        Some(dtype) => format!("{with_desc} {dtype}"),
+        None => with_desc,
+    }
+}
+
 fn extract_index_rows(doc: &Value) -> Vec<IndexRow> {
     let kind = doc.get("kind").and_then(|v| v.as_str()).unwrap_or("");
     let name = doc.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -129,18 +138,12 @@ fn extract_index_rows(doc: &Value) -> Vec<IndexRow> {
                 if let Some(items) = doc.get(key).and_then(|v| v.as_array()) {
                     for item in items {
                         let fname = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                        let dtype = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                        let text = if dtype.is_empty() {
-                            fname.to_string()
-                        } else {
-                            format!("{fname} {dtype}")
-                        };
                         rows.push(IndexRow {
                             doc_kind: kind.into(),
                             doc_name: name.into(),
                             field_name: fname.into(),
                             field_role: role.into(),
-                            text,
+                            text: member_index_text(item),
                         });
                     }
                 }
@@ -466,7 +469,7 @@ mod tests {
         let rows = extract_index_rows(&metric);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].field_role, "metric");
-        assert_eq!(rows[0].text, "revenue");
+        assert_eq!(rows[0].text, "revenue 지역·일자별 판매 금액 합계.");
         assert!(!rows[0].text.contains("sum"));
 
         let cube: Value =
@@ -477,12 +480,12 @@ mod tests {
             .iter()
             .find(|r| r.field_name == "region_code")
             .expect("dim");
-        assert_eq!(dim.text, "region_code code");
+        assert_eq!(dim.text, "region_code 판매 지역 코드. code");
         let fact = rows
             .iter()
             .find(|r| r.field_name == "sale_amount")
             .expect("fact");
-        assert_eq!(fact.text, "sale_amount amount");
+        assert_eq!(fact.text, "sale_amount 판매 금액(원 통화 전). amount");
     }
 
     #[test]

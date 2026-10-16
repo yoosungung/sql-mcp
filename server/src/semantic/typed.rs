@@ -485,6 +485,7 @@ async fn insert_cube_member(
     is_dim: bool,
 ) -> Result<(), AppError> {
     let name = str_field(item, "name")?;
+    let description = str_field(item, "description")?;
     let column_ref = opt_str(item, "column");
     let expression = opt_str(item, "expression");
     let encryption = item
@@ -499,11 +500,12 @@ async fn insert_cube_member(
             .filter(|v| !v.is_null())
             .map(|v| serde_json::to_string(v).unwrap_or_default());
         conn.execute(
-            "INSERT INTO meta_cube_dimensions (cube_name, name, type, column_ref, expression, encryption, as_code_json, role_json)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+            "INSERT INTO meta_cube_dimensions (cube_name, name, description, type, column_ref, expression, encryption, as_code_json, role_json)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
             params![
                 cube,
                 name,
+                description,
                 dtype,
                 column_ref,
                 expression,
@@ -517,11 +519,12 @@ async fn insert_cube_member(
     } else {
         let ftype = str_field(item, "type")?;
         conn.execute(
-            "INSERT INTO meta_cube_facts (cube_name, name, type, column_ref, expression, encryption, role_json)
-             VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            "INSERT INTO meta_cube_facts (cube_name, name, description, type, column_ref, expression, encryption, role_json)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
             params![
                 cube,
                 name,
+                description,
                 ftype,
                 column_ref,
                 expression,
@@ -556,7 +559,7 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut dimensions = Vec::new();
     let mut drows = conn
         .query(
-            "SELECT name, type, column_ref, expression, encryption, as_code_json, role_json
+            "SELECT name, description, type, column_ref, expression, encryption, as_code_json, role_json
              FROM meta_cube_dimensions WHERE cube_name = ?1 ORDER BY name",
             params![name],
         )
@@ -573,7 +576,7 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut facts = Vec::new();
     let mut frows = conn
         .query(
-            "SELECT name, type, column_ref, expression, encryption, role_json
+            "SELECT name, description, type, column_ref, expression, encryption, role_json
              FROM meta_cube_facts WHERE cube_name = ?1 ORDER BY name",
             params![name],
         )
@@ -600,14 +603,16 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
 
 fn load_member_dim(r: &libsql::Row) -> Result<Value, AppError> {
     let name: String = r.get(0).map_err(|e| AppError::Internal(e.into()))?;
-    let dtype: Option<String> = r.get(1).ok();
-    let column_ref: Option<String> = r.get(2).ok();
-    let expression: Option<String> = r.get(3).ok();
-    let encryption: i32 = r.get(4).map_err(|e| AppError::Internal(e.into()))?;
-    let as_code_json: Option<String> = r.get(5).ok();
-    let role_s: String = r.get(6).map_err(|e| AppError::Internal(e.into()))?;
+    let description: String = r.get(1).map_err(|e| AppError::Internal(e.into()))?;
+    let dtype: Option<String> = r.get(2).ok();
+    let column_ref: Option<String> = r.get(3).ok();
+    let expression: Option<String> = r.get(4).ok();
+    let encryption: i32 = r.get(5).map_err(|e| AppError::Internal(e.into()))?;
+    let as_code_json: Option<String> = r.get(6).ok();
+    let role_s: String = r.get(7).map_err(|e| AppError::Internal(e.into()))?;
     let mut out = json!({
         "name": name,
+        "description": description,
         "encryption": encryption != 0,
         "role": serde_json::from_str::<Value>(&role_s).unwrap_or(json!("all")),
     });
@@ -630,13 +635,15 @@ fn load_member_dim(r: &libsql::Row) -> Result<Value, AppError> {
 
 fn load_member_fact(r: &libsql::Row) -> Result<Value, AppError> {
     let name: String = r.get(0).map_err(|e| AppError::Internal(e.into()))?;
-    let ftype: String = r.get(1).map_err(|e| AppError::Internal(e.into()))?;
-    let column_ref: Option<String> = r.get(2).ok();
-    let expression: Option<String> = r.get(3).ok();
-    let encryption: i32 = r.get(4).map_err(|e| AppError::Internal(e.into()))?;
-    let role_s: String = r.get(5).map_err(|e| AppError::Internal(e.into()))?;
+    let description: String = r.get(1).map_err(|e| AppError::Internal(e.into()))?;
+    let ftype: String = r.get(2).map_err(|e| AppError::Internal(e.into()))?;
+    let column_ref: Option<String> = r.get(3).ok();
+    let expression: Option<String> = r.get(4).ok();
+    let encryption: i32 = r.get(5).map_err(|e| AppError::Internal(e.into()))?;
+    let role_s: String = r.get(6).map_err(|e| AppError::Internal(e.into()))?;
     let mut out = json!({
         "name": name,
+        "description": description,
         "type": ftype,
         "encryption": encryption != 0,
         "role": serde_json::from_str::<Value>(&role_s).unwrap_or(json!("all")),
@@ -653,7 +660,7 @@ fn load_member_fact(r: &libsql::Row) -> Result<Value, AppError> {
 async fn insert_metric(conn: &Connection, body: &Value) -> Result<(), AppError> {
     let name = str_field(body, "name")?;
     let cube = str_field(body, "cube")?;
-    let description = opt_str(body, "description");
+    let description = str_field(body, "description")?;
     let expression = str_field(body, "expression")?;
     let aggregation = opt_str(body, "aggregation");
     let group_by_json = body.get("group_by").map(|v| v.to_string());
@@ -692,7 +699,9 @@ async fn load_metric(conn: &Connection, name: &str) -> Result<Value, AppError> {
         .map_err(|e| AppError::Internal(e.into()))?
         .ok_or_else(|| AppError::NotFound(format!("metric/{name}")))?;
     let cube: String = row.get(0).map_err(|e| AppError::Internal(e.into()))?;
-    let description: Option<String> = row.get(1).ok();
+    let description: String = row
+        .get::<String>(1)
+        .unwrap_or_else(|_| name.to_string());
     let expression: String = row.get(2).map_err(|e| AppError::Internal(e.into()))?;
     let aggregation: Option<String> = row.get(3).ok();
     let group_by_json: Option<String> = row.get(4).ok();
@@ -701,14 +710,12 @@ async fn load_metric(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut out = json!({
         "kind": "metric",
         "name": name,
+        "description": description,
         "cube": cube,
         "expression": expression,
         "role": serde_json::from_str::<Value>(&role_s).unwrap_or(json!("all")),
         "filter": filter_obj(filter_expression),
     });
-    if let Some(d) = description {
-        out["description"] = json!(d);
-    }
     if let Some(a) = aggregation {
         out["aggregation"] = json!(a);
     }
@@ -721,7 +728,7 @@ async fn load_metric(conn: &Connection, name: &str) -> Result<Value, AppError> {
 async fn insert_segment(conn: &Connection, body: &Value) -> Result<(), AppError> {
     let name = str_field(body, "name")?;
     let cube = str_field(body, "cube")?;
-    let description = opt_str(body, "description");
+    let description = str_field(body, "description")?;
     let filter_expression = filter_expr(body.get("filter")).ok_or_else(|| {
         AppError::Validation("segment.filter.expression required".into())
     })?;
@@ -749,20 +756,19 @@ async fn load_segment(conn: &Connection, name: &str) -> Result<Value, AppError> 
         .map_err(|e| AppError::Internal(e.into()))?
         .ok_or_else(|| AppError::NotFound(format!("segment/{name}")))?;
     let cube: String = row.get(0).map_err(|e| AppError::Internal(e.into()))?;
-    let description: Option<String> = row.get(1).ok();
+    let description: String = row
+        .get::<String>(1)
+        .unwrap_or_else(|_| name.to_string());
     let filter_expression: String = row.get(2).map_err(|e| AppError::Internal(e.into()))?;
     let role_s: String = row.get(3).map_err(|e| AppError::Internal(e.into()))?;
-    let mut out = json!({
+    Ok(json!({
         "kind": "segment",
         "name": name,
+        "description": description,
         "cube": cube,
         "filter": { "expression": filter_expression },
         "role": serde_json::from_str::<Value>(&role_s).unwrap_or(json!("all")),
-    });
-    if let Some(d) = description {
-        out["description"] = json!(d);
-    }
-    Ok(out)
+    }))
 }
 
 fn str_field<'a>(v: &'a Value, key: &str) -> Result<&'a str, AppError> {

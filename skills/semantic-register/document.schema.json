@@ -392,11 +392,16 @@
     "dimension": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "type", "encryption"],
+      "required": ["name", "description", "type", "encryption"],
       "properties": {
         "name": {
           "$ref": "#/$defs/name",
           "description": "DW 에이전트에게 보이는 컬럼 이름."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "검색·동의어용 서술. search_columns 투영에 포함."
         },
         "type": {
           "enum": ["code", "date", "time", "datetime", "string"],
@@ -426,9 +431,14 @@
     "fact": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "type", "encryption"],
+      "required": ["name", "description", "type", "encryption"],
       "properties": {
         "name": { "$ref": "#/$defs/name" },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "검색·동의어용 서술. search_columns 투영에 포함."
+        },
         "type": {
           "enum": ["amount", "fx", "quantity"],
           "description": "fact 취급 방식. amount=금액, fx=환율, quantity=일반 수량·수치."
@@ -466,11 +476,11 @@
       "description": "cube 에 연결되는 지표. DW 에이전트에게는 그 cube 의 컬럼으로 보인다.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "name", "cube", "expression", "aggregation", "filter"],
+      "required": ["kind", "name", "description", "cube", "expression", "aggregation", "filter"],
       "properties": {
         "kind": { "const": "metric" },
         "name": { "$ref": "#/$defs/name" },
-        "description": { "type": "string" },
+        "description": { "type": "string", "minLength": 1 },
         "cube": { "$ref": "#/$defs/name" },
         "expression": {
           "type": "string",
@@ -516,11 +526,11 @@
       "description": "cube 에 연결되는 이름 있는 필터.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "name", "cube", "filter"],
+      "required": ["kind", "name", "description", "cube", "filter"],
       "properties": {
         "kind": { "const": "segment" },
         "name": { "$ref": "#/$defs/name" },
-        "description": { "type": "string" },
+        "description": { "type": "string", "minLength": 1 },
         "cube": { "$ref": "#/$defs/name" },
         "filter": {
           "$ref": "#/$defs/filter",

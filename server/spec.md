@@ -114,6 +114,7 @@ CREATE TABLE meta_cubes (
 CREATE TABLE meta_cube_dimensions (
     cube_name TEXT REFERENCES meta_cubes(name),
     name TEXT NOT NULL,
+    description TEXT NOT NULL,
     type TEXT CHECK (type IN ('code', 'date', 'time', 'datetime', 'string')),
     column_ref TEXT,
     expression TEXT,
@@ -126,6 +127,7 @@ CREATE TABLE meta_cube_dimensions (
 CREATE TABLE meta_cube_facts (
     cube_name TEXT REFERENCES meta_cubes(name),
     name TEXT NOT NULL,
+    description TEXT NOT NULL,
     type TEXT NOT NULL CHECK (type IN ('amount', 'fx', 'quantity')),
     column_ref TEXT,
     expression TEXT,
@@ -138,7 +140,7 @@ CREATE TABLE meta_cube_facts (
 CREATE TABLE meta_metrics (
     name TEXT PRIMARY KEY,
     cube_name TEXT REFERENCES meta_cubes(name),
-    description TEXT,
+    description TEXT NOT NULL,
     expression TEXT NOT NULL,
     aggregation TEXT CHECK (aggregation IN ('group', 'rollup', 'cube', 'grouping_sets')),
     group_by_json TEXT,
@@ -149,7 +151,7 @@ CREATE TABLE meta_metrics (
 CREATE TABLE meta_segments (
     name TEXT PRIMARY KEY,
     cube_name TEXT REFERENCES meta_cubes(name),
-    description TEXT,
+    description TEXT NOT NULL,
     filter_expression TEXT NOT NULL,
     role_json TEXT DEFAULT '"all"'
 );

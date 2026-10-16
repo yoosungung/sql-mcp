@@ -20,14 +20,14 @@
 
 JSON 교환 정본은 `schema/document.schema.json`이다. `column_index` / `column_index_fts`는 재조립된 등록 JSON을 펼친 **투영**이다. keyword는 **FTS5**이며 순위는 `bm25()`다(별도 BM25 엔진 아님). `embedding` blob으로 vector/hybrid(RRF)를 유지한다.
 
-**검색 대상은 cube · dimension · fact · metric · segment만.** table · view · table 컬럼은 인덱싱하지 않는다. 투영 필드는 **이름·설명**이 기본이고, **dimension·fact만 `type`을 추가**한다(그 외 expression·filter·as_code·role·aggregation 등은 넣지 않음 — 노이즈·성능).
+**검색 대상은 cube · dimension · fact · metric · segment만.** table · view · table 컬럼은 인덱싱하지 않는다. 투영 필드는 **이름·설명**이 기본이고, **dimension·fact만 `type`을 추가**한다(그 외 expression·filter·as_code·role·aggregation 등은 넣지 않음 — 노이즈·성능). cube·dimension·fact·metric·segment의 `description`은 JSON 스키마에서 **필수**다.
 
 | field_role | 출처 | `text` |
 |------------|------|--------|
-| `document` | cube / metric / segment의 `name` + `description`(있으면) | `{name}` 또는 `{name} {description}` |
-| `dimension` | cube `dimensions[]` | `{name} {type}` (`code`/`date`/…) |
-| `fact` | cube `facts[]` | `{name} {type}` (`amount`/`fx`/`quantity`) |
-| `metric` | metric 문서 | `{name}` 또는 `{name} {description}`, `field_role=metric` |
-| `segment` | segment 문서 | `{name}` 또는 `{name} {description}`, `field_role=segment` |
+| `document` | cube의 `name` + `description` | `{name} {description}` |
+| `dimension` | cube `dimensions[]` | `{name} {description} {type}` |
+| `fact` | cube `facts[]` | `{name} {description} {type}` |
+| `metric` | metric 문서 | `{name} {description}`, `field_role=metric` |
+| `segment` | segment 문서 | `{name} {description}`, `field_role=segment` |
 
 FTS에 넣기 전 텍스트에 **한글 등 non-ASCII 구간의 문자 bigram**을 덧붙인다(D14 BM25 강화). CRUD 성공 후 인덱스를 전량 재구축한다. `embedding`은 D14 API가 있을 때만 채운 f32 blob(없으면 NULL).

@@ -49,6 +49,7 @@ impl SemanticStore {
         migrate_fact_type_from_amount_fx(&conn).await?;
         migrate_as_code_json(&conn).await?;
         migrate_add_target_columns(&conn).await?;
+        migrate_add_member_descriptions(&conn).await?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             embedder: None,
@@ -236,6 +237,7 @@ async fn migrate_fact_type_from_amount_fx(conn: &Connection) -> Result<(), AppEr
         CREATE TABLE meta_cube_facts_new (
           cube_name TEXT NOT NULL REFERENCES meta_cubes(name) ON DELETE CASCADE,
           name TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
           type TEXT NOT NULL CHECK (type IN ('amount', 'fx', 'quantity')),
           column_ref TEXT,
           expression TEXT,
@@ -243,8 +245,8 @@ async fn migrate_fact_type_from_amount_fx(conn: &Connection) -> Result<(), AppEr
           role_json TEXT NOT NULL DEFAULT '"all"',
           PRIMARY KEY (cube_name, name)
         ) STRICT;
-        INSERT INTO meta_cube_facts_new (cube_name, name, type, column_ref, expression, encryption, role_json)
-        SELECT cube_name, name,
+        INSERT INTO meta_cube_facts_new (cube_name, name, description, type, column_ref, expression, encryption, role_json)
+        SELECT cube_name, name, name,
                CASE WHEN fx != 0 THEN 'fx' WHEN amount != 0 THEN 'amount' ELSE 'quantity' END,
                column_ref, expression, encryption, role_json
         FROM meta_cube_facts;
@@ -270,6 +272,38 @@ async fn migrate_add_target_columns(conn: &Connection) -> Result<(), AppError> {
         conn.execute(&sql, ())
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
+    }
+    Ok(())
+}
+
+/// Older catalogs lack required `description` on dim/fact; metric/segment may be NULL.
+async fn migrate_add_member_descriptions(conn: &Connection) -> Result<(), AppError> {
+    for table in ["meta_cube_dimensions", "meta_cube_facts"] {
+        if table_has_column(conn, table, "description").await? {
+            continue;
+        }
+        let sql = format!(
+            "ALTER TABLE {table} ADD COLUMN description TEXT NOT NULL DEFAULT ''"
+        );
+        conn.execute(&sql, ())
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?;
+        conn.execute(
+            &format!("UPDATE {table} SET description = name WHERE description = ''"),
+            (),
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    }
+    for table in ["meta_metrics", "meta_segments"] {
+        conn.execute(
+            &format!(
+                "UPDATE {table} SET description = name WHERE description IS NULL OR description = ''"
+            ),
+            (),
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
     }
     Ok(())
 }

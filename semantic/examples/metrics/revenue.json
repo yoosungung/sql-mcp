@@ -1,6 +1,7 @@
 {
   "kind": "metric",
   "name": "revenue",
+  "description": "지역·일자별 판매 금액 합계.",
   "cube": "sales",
   "expression": "sum(sale_amount)",
   "aggregation": "group",

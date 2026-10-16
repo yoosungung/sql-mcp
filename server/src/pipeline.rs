@@ -671,6 +671,7 @@ mod tests {
         docs.push(json!({
             "kind": "metric",
             "name": "revenue_b",
+            "description": "sales_b 지역·일자별 판매 금액 합계.",
             "cube": "sales_b",
             "expression": "sum(sale_amount)",
             "aggregation": "group",

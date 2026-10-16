@@ -84,6 +84,7 @@ def classify_view_column(
             "dimension",
             {
                 "name": view_col,
+                "description": f"Dimension {view_col}.",
                 "type": dtype,
                 "column": view_col,
                 "encryption": False,
@@ -103,6 +104,7 @@ def classify_view_column(
             "fact",
             {
                 "name": view_col,
+                "description": f"Fact {view_col} ({ftype}).",
                 "type": ftype,
                 "column": view_col,
                 "encryption": False,
@@ -115,6 +117,7 @@ def classify_view_column(
         "dimension",
         {
             "name": view_col,
+            "description": f"Dimension {view_col}.",
             "type": dim_type,
             "column": view_col,
             "encryption": False,
@@ -298,6 +301,7 @@ def cube_and_metric_from_view(
         dimensions.append(
             {
                 "name": f0["name"],
+                "description": f"Dimension {f0['name']}.",
                 "type": "string",
                 "column": f0["column"],
                 "encryption": False,
@@ -310,6 +314,7 @@ def cube_and_metric_from_view(
         dimensions.append(
             {
                 "name": "row_key",
+                "description": "Synthetic row key.",
                 "type": "string",
                 "expression": "1",
                 "encryption": False,
@@ -351,6 +356,7 @@ def cube_and_metric_from_view(
         metric = {
             "kind": "metric",
             "name": metric_name,
+            "description": f"Auto metric {metric_name} over {cube_name}.",
             "cube": cube_name,
             "expression": expr,
             "aggregation": "group",

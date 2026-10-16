@@ -23,12 +23,13 @@
 
 ## cube
 
-필수: `kind`, `name`, `view`, `description`, `dimensions`, `facts`.
+필수: `kind`, `name`, `target`, `view`, `description`, `dimensions`, `facts`.
 
 `view`는 view 문서 **하나**.
 
 **dimension**
 
+- `description` **필수** (검색·동의어)
 - `type`: `code` | `date` | `time` | `datetime` | `string`
 - `column`(view 컬럼) **또는** `expression`(view 컬럼명을 쓰는 스칼라) — 둘 중 하나만
 - `encryption`, `role`
@@ -36,6 +37,7 @@
 
 **fact**
 
+- `description` **필수**
 - `type`: `amount` | `fx` | `quantity` (취급 방식 — dim `type`과 같은 축)
 - `column` XOR `expression`
 - `encryption`, `role`
@@ -44,10 +46,11 @@
 
 ## metric
 
-필수: `kind`, `name`, `cube`, `expression`, `aggregation`, `filter`.
+필수: `kind`, `name`, `description`, `cube`, `expression`, `aggregation`, `filter`.
 
 | 필드 | 규칙 |
 |------|------|
+| `description` | 검색용 서술. 비울 수 없음 |
 | `expression` | 연결된 cube의 view 컬럼 연산. 예: `sum(sale_amount)` |
 | `aggregation` | `group` \| `rollup` \| `cube` \| `grouping_sets` |
 | `group_by` | `aggregation=group`일 때 필수에 가깝게: GROUP BY용 **view 컬럼** 이름 배열 |
@@ -56,11 +59,12 @@
 
 ## segment
 
-필수: `kind`, `name`, `cube`, `filter`. `filter`는 비울 수 없음. 식은 cube 멤버 이름. 예: `status_code = 'PAID'`.
+필수: `kind`, `name`, `description`, `cube`, `filter`. `filter`는 비울 수 없음. 식은 cube 멤버 이름. 예: `status_code = 'PAID'`.
 
 ## Quick checks
 
 - [ ] `cube.view` 존재; `column` ∈ view columns
+- [ ] cube·dim·fact·metric·segment `description` 모두 non-empty
 - [ ] `column`과 `expression` 동시 사용 없음
 - [ ] metric `name` ∉ 같은 cube dimension/fact names
 - [ ] `aggregation=group` ⇒ `group_by` ⊆ view columns

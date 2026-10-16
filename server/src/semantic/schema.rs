@@ -52,4 +52,31 @@ mod tests {
             Err(AppError::Validation(_))
         ));
     }
+
+    #[test]
+    fn accepts_example_cube_metric_segment() {
+        for raw in [
+            include_str!("../../../semantic/examples/cubes/sales.json"),
+            include_str!("../../../semantic/examples/metrics/revenue.json"),
+            include_str!("../../../semantic/examples/segments/paid.json"),
+        ] {
+            let body: Value = serde_json::from_str(raw).unwrap();
+            validate_document(&body).unwrap();
+        }
+    }
+
+    #[test]
+    fn rejects_dimension_without_description() {
+        let mut body: Value =
+            serde_json::from_str(include_str!("../../../semantic/examples/cubes/sales.json"))
+                .unwrap();
+        body["dimensions"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("description");
+        assert!(matches!(
+            validate_document(&body),
+            Err(AppError::Validation(_))
+        ));
+    }
 }
