@@ -95,6 +95,8 @@ pub struct ExecuteSqlArgs {
     pub caller_role: Option<String>,
     /// Bind values for `:name` placeholders (used in compiled SQL and union date pruning).
     pub params: Option<std::collections::HashMap<String, String>>,
+    /// When true, compile only and return physical SQL without querying the target.
+    pub dry_run: Option<bool>,
 }
 
 impl SqlMcp {
@@ -340,7 +342,7 @@ impl SqlMcp {
     }
 
     #[tool(
-        description = "Compile semantic SQL (cube/metric/segment) to physical SELECT and run on a target. Free physical SQL is not accepted."
+        description = "Compile semantic SQL (cube/metric/segment) to physical SELECT and run on a target. Free physical SQL is not accepted. Set dry_run=true to compile only (no target query)."
     )]
     async fn execute_sql(
         &self,
@@ -372,6 +374,12 @@ impl SqlMcp {
             Ok(s) => s,
             Err(e) => return tool_err(e),
         };
+        if args.dry_run.unwrap_or(false) {
+            return ok_json(json!({
+                "sql": physical,
+                "dry_run": true,
+            }));
+        }
         let result = match db.execute_select(&physical, self.cfg.max_rows).await {
             Ok(r) => r,
             Err(e) => return tool_err(e),
@@ -505,8 +513,14 @@ fn assert_cube_target(docs: &[Value], cube_name: &str, target: &str) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use async_trait::async_trait;
+
     use crate::config::Config;
-    use crate::target::TargetRegistry;
+    use crate::target::{
+        ColumnInfo, QueryResult, TableInfo, TargetDb, TargetInfo, TargetRegistry,
+    };
 
     async fn seed_examples(store: &SemanticStore) {
         for path in [
@@ -525,6 +539,58 @@ mod tests {
                 .await
                 .unwrap();
         }
+    }
+
+    struct CountingBoomTarget {
+        info: TargetInfo,
+        selects: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl TargetDb for CountingBoomTarget {
+        fn info(&self) -> TargetInfo {
+            self.info.clone()
+        }
+
+        async fn list_tables(&self, _schema: Option<&str>) -> Result<Vec<TableInfo>, AppError> {
+            Ok(vec![])
+        }
+
+        async fn describe_table(
+            &self,
+            _schema: Option<&str>,
+            _table: &str,
+        ) -> Result<Vec<ColumnInfo>, AppError> {
+            Ok(vec![])
+        }
+
+        async fn execute_select(
+            &self,
+            _sql: &str,
+            _max_rows: usize,
+        ) -> Result<QueryResult, AppError> {
+            self.selects.fetch_add(1, Ordering::SeqCst);
+            Err(AppError::Validation("boom: select should not run".into()))
+        }
+
+        async fn sample_column(
+            &self,
+            _schema: Option<&str>,
+            _table: &str,
+            _column: &str,
+            _limit: usize,
+        ) -> Result<Vec<Value>, AppError> {
+            Ok(vec![])
+        }
+    }
+
+    fn tool_json(result: CallToolResult) -> Value {
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        let text = match result.content.first() {
+            Some(ContentBlock::Text(t)) => t.text.as_str(),
+            other => panic!("expected text content, got {other:?}"),
+        };
+        serde_json::from_str(text).expect("tool json")
     }
 
     #[tokio::test]
@@ -590,5 +656,60 @@ mod tests {
             assert_cube_target(&docs, "sales", "other"),
             Err(AppError::Validation(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn execute_sql_dry_run_skips_target_select() {
+        let store = SemanticStore::open(":memory:").await.unwrap();
+        seed_examples(&store).await;
+        let boom = Arc::new(CountingBoomTarget {
+            info: TargetInfo {
+                id: "dw".into(),
+                name: "boom".into(),
+                engine: "sqlite".into(),
+            },
+            selects: AtomicUsize::new(0),
+        });
+        let mut targets = TargetRegistry::empty();
+        targets.insert_for_test(boom.clone());
+        let cfg = Config {
+            listen: "127.0.0.1:0".into(),
+            max_rows: 100,
+            sample_limit: 10,
+            timeout_ms: 1000,
+            targets: vec![],
+        };
+        let mcp = SqlMcp::new(store, targets, cfg);
+        let result = mcp
+            .execute_sql(Parameters(ExecuteSqlArgs {
+                target: "dw".into(),
+                sql: "SELECT revenue FROM sales WHERE paid".into(),
+                caller_role: Some("branch".into()),
+                params: None,
+                dry_run: Some(true),
+            }))
+            .await
+            .unwrap();
+        let body = tool_json(result);
+        assert_eq!(body["dry_run"], true);
+        assert!(body.get("columns").is_none());
+        assert!(body.get("rows").is_none());
+        let sql = body["sql"].as_str().expect("sql");
+        assert!(!sql.is_empty());
+        assert!(sql.to_ascii_lowercase().contains("sum("));
+        assert_eq!(boom.selects.load(Ordering::SeqCst), 0);
+
+        let err = mcp
+            .execute_sql(Parameters(ExecuteSqlArgs {
+                target: "dw".into(),
+                sql: "SELECT revenue FROM sales WHERE paid".into(),
+                caller_role: Some("branch".into()),
+                params: None,
+                dry_run: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(err.is_error, Some(true));
+        assert_eq!(boom.selects.load(Ordering::SeqCst), 1);
     }
 }

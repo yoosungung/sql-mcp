@@ -40,7 +40,7 @@ Rust(axum + `rmcp`) HTTP MCP 서버와 임베디드 libSQL 시맨틱 카탈로�
                      [Target Data Warehouse]
 ```
 
-`execute_sql` → 파이프라인(필수) → 컴파일된 물리 SQL만 타깃에 전달. 클라이언트가 넘긴 문자열을 SELECT 가드만 하고 타깃에 넣는 경로는 없다.
+`execute_sql` → 파이프라인(필수) → 컴파일된 물리 SQL만 타깃에 전달. 클라이언트가 넘긴 문자열을 SELECT 가드만 하고 타깃에 넣는 경로는 없다. `dry_run=true`이면 컴파일·인가까지 동일하게 수행한 뒤 물리 SQL만 반환하고 타깃 SELECT는 하지 않는다.
 
 ## 2. 임베디드 libSQL 카탈로그 스키마
 
@@ -221,7 +221,14 @@ CREATE VIRTUAL TABLE meta_search_fts USING fts5(
 - group_by/프로젝션 dim 중, dimension에 `as_code` 객체가 있으면 집계 서브쿼리 **바깥**에서 LEFT JOIN.
 - ON: `q."{dim}" = code."{key_column}"`. 사전 테이블에도 permission/scope/default + `as_code.where`를 인라인 뷰로 적용.
 - SELECT에 `code."{value_column}" AS "{dim}__value"` 추가.
-- 출력: 타깃으로 보낼 최종 물리 SQL 문자열
+- 출력: 타깃으로 보낼 최종 물리 SQL 문자열(식별자 quote는 D21 프로필)
+
+### Step 8 (실행 경계): DialectProfile emit · 행 상한 (D21)
+
+- Step 1–7의 **의미 변환**은 엔진 중립. 타깃에 넘기기 직전(및 `sample_column` SQL)·실행 래퍼만 `TargetConfig.engine` → `DialectProfile`을 쓴다.
+- 프로필 최소 능력: `quote_ident` · `wrap_row_limit`(Postgres/MySQL/SQLite=`LIMIT`, Oracle=`FETCH FIRST …` 등).
+- (선택) 실행 bind placeholder 정규화 · 신뢰된 식의 날짜 함수 rewrite. pruning용 `:name` 치환(`date_range`)과 실행 bind는 단계를 섞지 않는다.
+- **하지 않음:** 자유 물리 SQL 트랜스파일 · `sqlparser` `Display`에 방언 위임. 파서 `GenericDialect`는 시맨틱/식 **입력** 파싱용으로 유지해도 된다.
 
 ## 4. 개발 시 주의사항 (Checklist)
 
@@ -231,3 +238,5 @@ CREATE VIRTUAL TABLE meta_search_fts USING fts5(
 - [ ] meta_* / FTS / embedding 재구축은 동시성 읽기와 충돌하지 않도록 **단일 Write 트랜잭션**으로 처리할 것.
 - [ ] `execute_sql`에 자유 물리 SQL 우회 경로를 두지 말 것.
 - [ ] JDBC/ODBC/ADBC를 도입하지 말 것 — 타깃은 Postgres·MySQL=`sqlx`, SQLite=`libsql`, Oracle=`oracledb`만.
+- [ ] 물리 SQL quote·행상한·방언 함수는 `DialectProfile`만 통하고, 파이프라인 Step 1–6에 엔진 `if`를 흩뿌리지 말 것(D21).
+- [ ] `sqlparser` `to_string()`/`Display` 결과에 방언을 기대하지 말 것 — emit은 프로필이 담당.

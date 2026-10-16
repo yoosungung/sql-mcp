@@ -10,10 +10,11 @@
 4. **언어.** MCP 서버는 **Rust** + [`rmcp`](https://crates.io/crates/rmcp) (MCP spec `2026-07-28`).
 5. **범위.** **MCP 서버만.** Frontend·Admin UI·Admin API·**세션형 Streamable HTTP**는 **취소(범위 밖)**. Transport는 **일반 HTTP**(배포·원격)와 **stdio**(로컬 자식 프로세스). 둘 다 동일 툴 표면.
 6. **타깃 SQL = 시맨틱 SELECT만.** `execute_sql` 입력은 **시맨틱 SQL**(cube FROM · metric/dimension/segment)이며, 서버가 6단계 파이프라인으로 물리 SELECT를 만든 뒤에만 타깃에 실행한다. **자유 물리 SELECT 경로는 없다.** 컴파일·실행 결과는 단일 SELECT(읽기 CTE 허용)만. INSERT/UPDATE/DELETE/DDL/다중 문장/쓰기 CTE 거부. 행 상한·타임아웃 강제. (문서상 `execute_semantic_sql`은 `execute_sql` 이명.)
-7. **메타데이터 CRUD (예외).** 임베디드 시맨틱 저장소에 한해 MCP 툴로 **CRUD**를 제공한다. 요청/응답 바디는 **JSON**. 타깃 DB 쓰기가 아니다.
-8. **MCP 제공 능력.** (1) 타깃 목록 · **cube** 목록/상세(`list_tables`/`describe_table`) (2) 컬럼 검색(BM25/벡터/hybrid) (3) 컬럼 샘플(+code) (4) 타깃 SELECT SQL (5) **메타데이터 CRUD(JSON)** (6) **Resource:** 등록 문서 JSON Schema(`document.schema.json`) · **Agent Skills**(`skills/` 트리를 Resource로 제공). 그 외 툴·Resource는 기본 표면에 넣지 않는다. DW 에이전트에게는 메타 CRUD 도구를 주지 않는다. 이 에이전트에게 테이블은 cube이고 컬럼은 dimension, fact, metric이다.
-9. **시크릿.** 로그·에러·툴 응답에 DSN/비밀번호를 실지 않는다. 타깃 자격 증명은 기동 설정으로만 주입(채팅으로 비밀번호 받지 않음). 메타 CRUD JSON에도 시크릿 필드를 넣지 않는다.
-10. **문서 우선 · TDD.**
+7. **타깃 방언은 emit 어댑터(D21).** 시맨틱 컴파일(파싱·전개·pruning·식별자 치환·필터 푸시다운)은 **엔진 중립**이다. 엔진별 차이는 `TargetConfig.engine`에 묶인 **DialectProfile**이 물리 문자열을 낼 때·행 상한 래퍼·(해당 시) bind/날짜 함수 rewrite에서만 반영한다. 자유 SQL 트랜스파일과 `sqlparser` `Display`에 방언을 맡기지 않는다(파서 Dialect는 입력 파싱용).
+8. **메타데이터 CRUD (예외).** 임베디드 시맨틱 저장소에 한해 MCP 툴로 **CRUD**를 제공한다. 요청/응답 바디는 **JSON**. 타깃 DB 쓰기가 아니다.
+9. **MCP 제공 능력.** (1) 타깃 목록 · **cube** 목록/상세(`list_tables`/`describe_table`) (2) 컬럼 검색(BM25/벡터/hybrid) (3) 컬럼 샘플(+code) (4) 타깃 SELECT SQL (5) **메타데이터 CRUD(JSON)** (6) **Resource:** 등록 문서 JSON Schema(`document.schema.json`) · **Agent Skills**(`skills/` 트리를 Resource로 제공). 그 외 툴·Resource는 기본 표면에 넣지 않는다. DW 에이전트에게는 메타 CRUD 도구를 주지 않는다. 이 에이전트에게 테이블은 cube이고 컬럼은 dimension, fact, metric이다.
+10. **시크릿.** 로그·에러·툴 응답에 DSN/비밀번호를 실지 않는다. 타깃 자격 증명은 기동 설정으로만 주입(채팅으로 비밀번호 받지 않음). 메타 CRUD JSON에도 시크릿 필드를 넣지 않는다.
+11. **문서 우선 · TDD.**
 
 테이블 필터의 식은 물리 컬럼 이름을 쓴다. cube, metric, segment의 식은 그 cube의 dimension, fact 이름을 쓴다. 필터·metric·segment 식은 코딩 에이전트가 작성한 **신뢰된 SQL 조각**이며 새 DSL을 두지 않는다(D16). 서버는 `sqlparser`로 파싱한 뒤 AST를 제한한다: metric `expression`은 스칼라·집계식만, segment·filter는 단일 boolean 식만. 서브쿼리·다중 문장·쓰기·쓰기 CTE는 거부한다.
 
@@ -73,7 +74,7 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 | `describe_table` | **cube** 상세 | `table`(cube name), `target?` | dimensions·facts·metrics·segments | `target`이면 cube.target 일치 |
 | `search_columns` | 컬럼 검색 | `query`, `target?`, `mode?`, `limit?` | 매칭 메타 | §3.2.2 |
 | `sample_column` | dim/fact 샘플 | `target`, `cube`, `member`, `limit?` | 샘플·`resolved`·`as_code` | §3.4 — **cube.target == target** |
-| `execute_sql` | 시맨틱 SQL 컴파일·실행 | `target`, `sql`, `caller_role?`, `params?` | 행·메타·`sql`(물리) | **시맨틱 SELECT만** · **cube.target == target** |
+| `execute_sql` | 시맨틱 SQL 컴파일·실행 | `target`, `sql`, `caller_role?`, `params?`, `dry_run?` | 행·메타·`sql`(물리); `dry_run=true`면 `{ sql, dry_run: true }`만 | **시맨틱 SELECT만** · **cube.target == target** · `dry_run`이면 타깃 SELECT 생략 |
 
 ### 3.3 Tools — 메타데이터 CRUD (JSON)
 
@@ -160,6 +161,19 @@ HTTP ▶ rmcp tools
           ├─ search_*    ──▶ (장차) FTS/vector
           └─ list/describe/sample/execute ──▶ target DB (by id)
 ```
+
+### 5.1 타깃 DialectProfile (형태, D21)
+
+컴파일러와 타깃 클라이언트 **사이**의 emit 계약. 내부 모듈 배치는 [server/DESIGN.md](server/DESIGN.md).
+
+| 능력 | 역할 | 엔진 예 |
+|------|------|---------|
+| `quote_ident` | 식별자 인용 | Postgres/SQLite `"…"` · MySQL `` `…` `` · Oracle `"…"` |
+| `wrap_row_limit` | 행 상한 래퍼 | `LIMIT n` · Oracle `FETCH FIRST n ROWS ONLY` 등 |
+| bind 스타일 (선택) | 실행 바인드 placeholder | `$1` · `?` · `:name` — pruning용 `:name`과 실행 bind는 단계를 분리 |
+| 함수 rewrite (선택) | 신뢰된 식의 방언 의존 함수 | 예: `date_trunc` → MySQL/Oracle 대응식. 화이트리스트 밖은 거절 |
+
+`pipeline`/`compile`은 엔진 중립 AST·조각을 만들고, **최종 물리 문자열·샘플 SQL·실행 래퍼**만 프로필을 통과한다.
 
 ## 6. 설정 형태 (초안)
 

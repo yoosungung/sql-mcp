@@ -59,6 +59,13 @@ impl TargetRegistry {
             .cloned()
             .ok_or_else(|| AppError::NotFound(format!("target {id}")))
     }
+
+    #[cfg(test)]
+    pub fn insert_for_test(&mut self, db: Arc<dyn TargetDb>) {
+        let info = db.info();
+        self.targets.insert(info.id.clone(), db);
+        self.infos.push(info);
+    }
 }
 
 async fn build_target(

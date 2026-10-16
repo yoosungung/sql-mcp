@@ -40,4 +40,4 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
  
 ## 3. Status
  
-M0–M4 완료: 타입별 `meta_*` · 시맨틱-only `execute_sql` · 요약뷰/join·union pruning · AST 조립 · bind/OR 날짜 disjoint · transport=HTTP+stdio(로컬). table/view/cube `target` · `list_tables`/`describe_table`=cube 표면(D20). 타깃 엔진: Postgres·MySQL(`sqlx`) · SQLite(`libsql`) · Oracle(`oracledb` thin). 후속: 운영 하드닝(필요 시). 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 파이프라인 [server/spec.md](server/spec.md).
+M0–M4 완료: 타입별 `meta_*` · 시맨틱-only `execute_sql` · 요약뷰/join·union pruning · AST 조립 · bind/OR 날짜 disjoint · transport=HTTP+stdio(로컬). table/view/cube `target` · `list_tables`/`describe_table`=cube 표면(D20). 타깃 엔진: Postgres·MySQL(`sqlx`) · SQLite(`libsql`) · Oracle(`oracledb` thin). **D21 결정:** Cube식 `DialectProfile` emit(컴파일 중립 · quote/`LIMIT`/`FETCH`만 엔진별). 후속: D21 본구현 · 운영 하드닝(필요 시). 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 파이프라인 [server/spec.md](server/spec.md).

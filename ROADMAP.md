@@ -114,6 +114,10 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 
 - [x] semantic SQL에서 같은 `target`인 cube끼리 JOIN / UNION(·EXCEPT/INTERSECT) (다른 target 거절; 각 JOIN 측 cube는 metric ≥1)
 
+### 후속 — execute_sql dry_run
+
+- [x] `execute_sql.dry_run`: 시맨틱 컴파일·인가만 하고 타깃 SELECT 생략, `{ sql, dry_run: true }` 반환
+
 ### 후속 — 타깃 DialectProfile (D21)
 
 - [ ] `DialectProfile` 추상화: `quote_ident` · `wrap_row_limit` · (선택) bind/날짜 함수 rewrite — `TargetConfig.engine`으로 선택

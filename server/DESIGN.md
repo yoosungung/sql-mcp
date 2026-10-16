@@ -8,6 +8,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 - **stdio**(로컬): `--stdio` 또는 `SQL_MCP_TRANSPORT=stdio` → `rmcp` `stdio()`. 로그는 stderr. 동일 `SqlMcp` 핸들러.
 - **시맨틱**: 프로세스 내 `libsql` 0.9(`core`) · 타입별 `meta_*` + `column_index`/FTS5 · `metadata_*` JSON
 - **컴파일**: `pipeline` (시맨틱 SQL → 물리 SELECT). 상세 [spec.md](spec.md)
+- **방언(D21)**: 컴파일은 엔진 중립. 물리 emit·행상한·(선택) bind/날짜 rewrite만 `DialectProfile`(`TargetConfig.engine`)
 - **타깃**: 엔진 **Postgres**·**MySQL**(`sqlx` 0.9) · **SQLite**(`libsql` 로컬) · **Oracle**(`oracledb` thin, Instant Client 없음) · SELECT only · ADBC/JDBC/ODBC 비채택
 - **로컬 테스트 DB**: BIRD Mini-Dev SQLite → 저장소 루트 `target_db/` ([target_db/README.md](../target_db/README.md))
 
@@ -18,6 +19,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `select_guard` | SQL 단일 SELECT(읽기 CTE 허용) AST 검사 |
 | `expr_guard` | D16 식 AST 제한 · D18 컴파일 시 식별자 검사 |
 | `mask` | D17 `encryption` 응답 마스킹(null) |
+| `dialect` | **(D21, 예정)** `DialectProfile`: `quote_ident` · `wrap_row_limit` · 선택 bind/함수 rewrite. `engine` → 프로필 |
 | `compile` | table/metric → 물리 SQL: 요약뷰·join/union pruning·필터 푸시다운·encryption NULL |
 | `ast_rewrite` | sqlparser VisitorMut로 식 식별자 → 물리 식 치환 |
 | `ast_select` | SELECT/WHERE/GROUP BY AST 조립·파서 정규화 |
@@ -42,11 +44,25 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 3. `metadata_update`는 **전체 replace**(D15)
 4. CRUD 성공 후 `column_index` 재구축
 
+## DialectProfile (D21)
+
+Cube.js `*Query` 어댑터와 같은 역할: **생성기 쪽 방언**, 자유 SQL 트랜스파일이 아니다.
+
+| 원칙 | 내용 |
+|------|------|
+| 중립 컴파일 | Step 1–6(파싱·metric/segment·요약뷰·pruning·치환·필터)은 `engine`에 의존하지 않음 |
+| emit만 분기 | `quote_ident` · FROM/식별자 조립 · Step 7 조인 문자열 · `sample_column` SQL · 타깃 `wrap_row_limit` |
+| sqlparser | `GenericDialect`(또는 입력용 Dialect)로 **파싱**. `Statement::to_string()`/`Display`에 방언을 맡기지 않음 |
+| 신뢰 식 | D16 화이트리스트. 방언 의존 함수는 프로필 rewrite 또는 등록 시 엔진 표기. 미지원이면 `validation` |
+| 비채택 | SQLGlot식 전체 트랜스파일 · 엔진마다 파이프라인 복제 · ADBC/JDBC |
+
+**현황:** `compile::quote_ident`·타깃 LIMIT 래퍼가 ANSI `"…"` + `LIMIT`로 고정. D21 구현 시 프로필로 이전(ROADMAP 후속).
+
 ## 타깃 탐색
 
 - `list_tables` / `describe_table`: 시맨틱 **cube** 조회(툴 이름 유지). `list_tables(target?)`는 cube 목록, `describe_table(table, target?)`는 cube + dimensions/facts + 연결 metric/segment. 물리 `information_schema` 경로 없음.
 - `search_columns`: `keyword` | `vector` | `hybrid`(기본). 임베더 없으면 vector/hybrid→keyword.
-- `sample_column` / `execute_sql`: 해석된 **cube.target**이 툴 인자 `target`과 같아야 한다(SQL에 cube가 여러 개면 **전부** 동일 target이고 인자와도 일치). `execute_sql`은 동일 target cube **JOIN/UNION** 허용. `sample_column`은 mappings 또는 dimension `as_code` 해석 후 타깃 샘플. encryption 마스킹(D17).
+- `sample_column` / `execute_sql`: 해석된 **cube.target**이 툴 인자 `target`과 같아야 한다(SQL에 cube가 여러 개면 **전부** 동일 target이고 인자와도 일치). `execute_sql`은 동일 target cube **JOIN/UNION** 허용. `dry_run=true`면 컴파일 후 타깃 SELECT를 건너뛰고 `{ sql, dry_run: true }`만 반환. `sample_column`은 mappings 또는 dimension `as_code` 해석 후 타깃 샘플. encryption 마스킹(D17).
 - Skills extension: capabilities에 `io.modelcontextprotocol/skills` (빈 설정). `skills/list` · `skills/get` → `skills_ext` (Resource URI·내용과 동일, SHA-256 digest). `resources/directory/read` 없음.
 
 ## 설정
