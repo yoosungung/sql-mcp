@@ -5,7 +5,6 @@
 ## 역할
 
 - **코딩 에이전트**가 `table` / `view` JSON을 작성한다.
-- **DW 에이전트**는 시맨틱 질의만 하며, 메타 CRUD를 쓰지 않는다.
 - 참조 방향: `table → view → cube → metric|segment` (cube 이하는 다른 스킬).
 
 ## 이름
@@ -34,7 +33,7 @@
 
 ## view
 
-필수: `kind`, `name`, `combine`, `sources`, `columns`. `combine` 없으면 view가 아니다.
+필수: `kind`, `name`, `combine`, `sources`, `columns`. `combine` table 1개도 join으로 한다.
 
 | combine | sources | 추가 |
 |---------|---------|------|
