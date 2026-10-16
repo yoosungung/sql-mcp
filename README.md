@@ -49,12 +49,17 @@ export SQL_MCP_SEMANTIC_PATH="$HOME/.sql-mcp/semantic.db"
 export SQL_MCP_CONFIG="$HOME/bin/config.toml"
 export SQL_MCP_TARGET_DW_URL='postgres://USER:PASS@HOST:5432/DB'
 
+# 옵션·환경 변수 요약
+~/bin/sql-mcp --help
+
 # 로컬 에이전트용 (Cursor / Claude Desktop 권장)
 ~/bin/sql-mcp --stdio
 
 # 또는 HTTP (원격·공유). MCP: POST http://127.0.0.1:8080/mcp
 ~/bin/sql-mcp
 ```
+
+기동이 실패하면 stderr에 `sql-mcp: …`와 설정/DB 경로·힌트가 나옵니다 (`SQL_MCP_CONFIG`, `SQL_MCP_SEMANTIC_PATH`, listen 포트 등).
 
 시맨틱 DB 디렉터리는 미리 만들어 두세요 (`mkdir -p ~/.sql-mcp`). 같은 `SQL_MCP_SEMANTIC_PATH`를 HTTP와 stdio가 **동시에** 열지 마세요.
 

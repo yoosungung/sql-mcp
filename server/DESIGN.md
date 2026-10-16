@@ -6,6 +6,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 
 - **일반 HTTP**(기본): `rmcp` `StreamableHttpService`를 **stateless + JSON response**로 기동. 세션 ID·장수 SSE는 쓰지 않는다.
 - **stdio**(로컬): `--stdio` 또는 `SQL_MCP_TRANSPORT=stdio` → `rmcp` `stdio()`. 로그는 stderr. 동일 `SqlMcp` 핸들러.
+- **CLI UX**: `-h`/`--help`는 stdout 도움말 후 exit 0(설정·DB를 열지 않음). 알 수 없는 옵션은 stderr+도움말 후 exit 2. 기동 실패(설정 경로·semantic DB·listen bind)는 `sql-mcp: …` + 경로/env 힌트.
 - **시맨틱**: 프로세스 내 `libsql` 0.9(`core`) · 타입별 `meta_*` + `column_index`/FTS5 · `metadata_*` JSON
 - **컴파일**: `pipeline` (시맨틱 SQL → 물리 SELECT). 상세 [spec.md](spec.md)
 - **방언(D21)**: 컴파일은 엔진 중립. 물리 emit·행상한·(선택) bind/날짜 rewrite만 `DialectProfile`(`TargetConfig.engine`)
@@ -36,6 +37,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `skill_resources` | `skills/` embed · Resource URI/MIME · list/read |
 | `http` | axum 리스너 `/mcp` (일반 HTTP) |
 | `stdio` | 로컬 stdin/stdout MCP (`--stdio`) |
+| `cli` | 바이너리 argv: `-h`/`--help` · 알 수 없는 플래그 · 기동 실패 시 경로/힌트(stderr) |
 
 ## 검증
 
@@ -90,6 +92,7 @@ export SQL_MCP_SEMANTIC_PATH=./data/semantic.db
 export SQL_MCP_CONFIG=./server/examples/config.example.toml
 cargo run -p sql-mcp
 # GET /health · POST /mcp
+cargo run -p sql-mcp -- --help
 
 # 로컬 stdio (Cursor mcp.json 예: examples/mcp.stdio.example.json)
 cargo run -p sql-mcp -- --stdio

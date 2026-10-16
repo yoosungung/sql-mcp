@@ -29,17 +29,30 @@ impl SemanticStore {
             ":memory:".to_string()
         } else {
             if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| AppError::Internal(e.into()))?;
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        AppError::Validation(format!(
+                            "cannot create semantic DB directory {}: {e} (set SQL_MCP_SEMANTIC_PATH; see --help)",
+                            parent.display()
+                        ))
+                    })?;
+                }
             }
             path.to_string_lossy().into_owned()
         };
         let db = Builder::new_local(&path_str)
             .build()
             .await
-            .map_err(|e| AppError::Connection(e.into()))?;
-        let conn = db
-            .connect()
-            .map_err(|e| AppError::Connection(e.into()))?;
+            .map_err(|e| {
+                AppError::Connection(anyhow::anyhow!(
+                    "cannot open semantic DB at {path_str}: {e}"
+                ))
+            })?;
+        let conn = db.connect().map_err(|e| {
+            AppError::Connection(anyhow::anyhow!(
+                "cannot connect to semantic DB at {path_str}: {e}"
+            ))
+        })?;
         conn.execute_batch("PRAGMA foreign_keys=ON;")
             .await
             .map_err(|e| AppError::Internal(e.into()))?;

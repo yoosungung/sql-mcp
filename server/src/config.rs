@@ -44,8 +44,19 @@ fn default_timeout_ms() -> u64 {
 
 impl Config {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, AppError> {
-        let raw = fs::read_to_string(path).map_err(|e| AppError::Internal(e.into()))?;
-        let mut cfg: Config = toml::from_str(&raw).map_err(|e| AppError::Validation(e.to_string()))?;
+        let path = path.as_ref();
+        let raw = fs::read_to_string(path).map_err(|e| {
+            AppError::Validation(format!(
+                "cannot read config {}: {e} (set SQL_MCP_CONFIG or create the file; see --help)",
+                path.display()
+            ))
+        })?;
+        let mut cfg: Config = toml::from_str(&raw).map_err(|e| {
+            AppError::Validation(format!(
+                "invalid config {}: {e}",
+                path.display()
+            ))
+        })?;
         if let Ok(listen) = env::var("SQL_MCP_LISTEN") {
             cfg.listen = listen;
         }
@@ -94,5 +105,33 @@ impl Config {
         env::var("SQL_MCP_CONFIG")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("./server/examples/config.example.toml"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn missing_config_names_path_and_hint() {
+        let dir = tempdir().unwrap();
+        let missing = dir.path().join("no-such-config.toml");
+        let err = Config::load(&missing).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains(missing.to_string_lossy().as_ref()), "{msg}");
+        assert!(msg.contains("SQL_MCP_CONFIG"), "{msg}");
+        assert!(msg.contains("--help"), "{msg}");
+    }
+
+    #[test]
+    fn invalid_toml_names_path() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("bad.toml");
+        fs::write(&path, "listen = [").unwrap();
+        let err = Config::load(&path).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains(path.to_string_lossy().as_ref()), "{msg}");
+        assert!(msg.contains("invalid config"), "{msg}");
     }
 }

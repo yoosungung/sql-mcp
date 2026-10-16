@@ -1,5 +1,6 @@
 pub mod ast_rewrite;
 pub mod ast_select;
+pub mod cli;
 pub mod code_detect;
 pub mod compile;
 pub mod config;
