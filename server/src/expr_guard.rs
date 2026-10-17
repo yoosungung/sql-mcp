@@ -28,6 +28,60 @@ pub fn assert_metric_expr(expr: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// D23 ad-hoc projection: same AST as metric expression, but must include an aggregate.
+pub fn assert_adhoc_agg_expr(expr: &str) -> Result<(), AppError> {
+    assert_metric_expr(expr)?;
+    let (normalized, _) = replace_binds(expr);
+    let e = parse_as_select_expr(&normalized)?;
+    if !contains_aggregate(&e) {
+        return Err(AppError::Validation(
+            "ad-hoc projection must be an aggregate expression".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn contains_aggregate(expr: &Expr) -> bool {
+    match expr {
+        Expr::Function(func) => {
+            let lower = func.name.to_string().to_ascii_lowercase();
+            if matches!(lower.as_str(), "sum" | "count" | "avg" | "min" | "max") {
+                return true;
+            }
+            match &func.args {
+                FunctionArguments::List(list) => list.args.iter().any(|a| match a {
+                    FunctionArg::Unnamed(FunctionArgExpr::Expr(e))
+                    | FunctionArg::Named {
+                        arg: FunctionArgExpr::Expr(e),
+                        ..
+                    } => contains_aggregate(e),
+                    _ => false,
+                }),
+                _ => false,
+            }
+        }
+        Expr::UnaryOp { expr, .. } | Expr::Cast { expr, .. } | Expr::Nested(expr) => {
+            contains_aggregate(expr)
+        }
+        Expr::BinaryOp { left, right, .. } => contains_aggregate(left) || contains_aggregate(right),
+        Expr::Case {
+            operand,
+            conditions,
+            else_result,
+            ..
+        } => {
+            operand.as_ref().is_some_and(|o| contains_aggregate(o))
+                || conditions.iter().any(|cw| {
+                    contains_aggregate(&cw.condition) || contains_aggregate(&cw.result)
+                })
+                || else_result
+                    .as_ref()
+                    .is_some_and(|e| contains_aggregate(e))
+        }
+        _ => false,
+    }
+}
+
 /// Filter / segment predicate: single boolean expr (D16).
 pub fn assert_filter_expr(expr: &str) -> Result<(), AppError> {
     let (normalized, _) = replace_binds(expr);
@@ -415,6 +469,12 @@ mod tests {
     fn accepts_metric_sum() {
         assert_metric_expr("sum(sale_amount)").unwrap();
         assert_metric_expr("sale_amount * fx_rate").unwrap();
+    }
+
+    #[test]
+    fn adhoc_requires_aggregate() {
+        assert_adhoc_agg_expr("sum(sale_amount)").unwrap();
+        assert!(assert_adhoc_agg_expr("sale_amount * fx_rate").is_err());
     }
 
     #[test]

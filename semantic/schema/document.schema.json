@@ -120,7 +120,7 @@
         "description": { "type": "string" },
         "target": {
           "$ref": "#/$defs/name",
-          "description": "MCP 타깃 연결 id (설정 TargetConfig.id)."
+          "description": "MCP database name (`list_databases.name` = TargetConfig.id)."
         },
         "db": {
           "$ref": "#/$defs/physical_ident",
@@ -218,7 +218,7 @@
         "name": { "$ref": "#/$defs/name" },
         "target": {
           "$ref": "#/$defs/name",
-          "description": "MCP 타깃 연결 id. sources의 leaf table target과 같아야 한다."
+          "description": "MCP database name (`list_databases.name`). sources의 leaf table target과 같아야 한다."
         },
         "description": { "type": "string" },
         "combine": {
@@ -379,7 +379,7 @@
         "name": { "$ref": "#/$defs/name" },
         "target": {
           "$ref": "#/$defs/name",
-          "description": "MCP 타깃 연결 id. 연결된 view.target과 같아야 한다."
+          "description": "MCP database name (`list_databases.name`). 연결된 view.target과 같아야 한다."
         },
         "view": {
           "$ref": "#/$defs/name",

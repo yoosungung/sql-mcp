@@ -20,9 +20,9 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
 | `target_db/README.md` | BIRD Mini-Dev SQLite 로컬 타깃 사용법 | `target_db/` |
 | `server/spec.md` | 시맨틱 SQL 6단계 컴파일·타입별 `meta_*` 상세 | `server/` |
 | `skills/` | 코딩 에이전트용 Agent Skills 정본: `semantic-table-view` → `semantic-cube-metric-segment` → (`semantic-from-qa`) → `semantic-register`. MCP Resource(`https://sql-mcp.local/skills/…`). Cursor는 `.cursor/skills` → `../skills` | `skills/` |
- 
-규칙:
- 
+
+#### 규칙:
+
 - **ARCHITECTURE.md §1 (계약) vs §2 이후 (형태).** §1은 "지켜야 하는 규칙(왜)" — 짧고 단정적. §2 이후는 "그 규칙을 구현하는 모양(어떻게)" — 스키마·필드·이벤트 목록. 규칙이 바뀌면 §1을 먼저 고치고 §2 이후를 따라 고친다. 두 부분을 다른 파일로 쪼개면 동기화 부담만 늘어 단일 문서로 둔다.
 - **ARCHITECTURE.md vs `<comp>/DESIGN.md`.** ARCHITECTURE는 컴포넌트 *간*, 서브폴더 DESIGN은 해당 컴포넌트 *내부*. 두 쪽에 같은 내용을 적지 않는다.
 - **README.md vs ARCHITECTURE.md / DESIGN.md.** README는 **인간 사용자**(MCP 설치·메타·DW 질의)용이다. 기여자 온보딩은 이 파일. 계약·내부 설계는 README에 복사하지 않고 [ARCHITECTURE.md](ARCHITECTURE.md)·`<comp>/DESIGN.md`로 **링크만** 한다. 
@@ -40,4 +40,4 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
  
 ## 3. Status
  
-M0–M5 완료: 타입별 `meta_*`(인메모리 스냅샷 + 단일 트랜잭션 증분 인덱싱) · 시맨틱-only `execute_sql`(복수 metric · 동적 `GROUP BY`/`ROLLUP`/`CUBE`/`GROUPING SETS` · 일반 `WHERE`/`HAVING`/`ORDER BY`/`LIMIT` · `:bind` 안전 치환) · 요약뷰/join·union pruning · 전 계층 RBAC(`role` 검증 · `permission_filters` Fail-Closed · `sample_column` 보안 필터 · 큐브 스코프 `encryption` 마스킹) · transport=HTTP+stdio(로컬). table/view/cube `target` · `list_tables`/`describe_table`=cube 표면(D20) · `search_columns(target)` 필터. 타깃 엔진: Postgres·MySQL(`sqlx`) · SQLite(`libsql`) · Oracle(`oracledb` thin). **D21:** `DialectProfile` emit(`date_trunc` rewrite · quote · `LIMIT`/`FETCH`; 실행 bind rewrite 비채택). **D22:** `physical_ident` vs 시맨틱 `name`. 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 파이프라인 [server/spec.md](server/spec.md).
+M0–M5 완료: 타입별 `meta_*`(인메모리 스냅샷 + 단일 트랜잭션 증분 인덱싱) · 시맨틱-only `execute_sql`(복수 metric · 동적 `GROUP BY`/`ROLLUP`/`CUBE`/`GROUPING SETS` · 일반 `WHERE`/`HAVING`/`ORDER BY`/`LIMIT` · `:bind` 안전 치환) · 요약뷰/join·union pruning · 전 계층 RBAC(`role` 검증 · `permission_filters` Fail-Closed · `sample_column` 보안 필터 · 큐브 스코프 `encryption` 마스킹) · transport=HTTP+stdio(로컬). table/view/cube `target` · DW 표면 `list_databases`·`database` 인자 · `list_tables`/`describe_table`=cube 표면(D20) · `search_columns(database)` 필터. 타깃 엔진: Postgres·MySQL(`sqlx`) · SQLite(`libsql`) · Oracle(`oracledb` thin). **D21:** `DialectProfile` emit(`date_trunc` rewrite · quote · `LIMIT`/`FETCH`; 실행 bind rewrite 비채택). **D22:** `physical_ident` vs 시맨틱 `name`. **D23:** 명명 metric ↔ ad-hoc 집계 **혼용 금지**(단일 cube ad-hoc `sum(fact)` 등 허용). 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 파이프라인 [server/spec.md](server/spec.md).

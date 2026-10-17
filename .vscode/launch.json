@@ -15,6 +15,7 @@
         "SQL_MCP_SEMANTIC_PATH": "${workspaceFolder}/data/semantic.db",
         "SQL_MCP_CONFIG": "${workspaceFolder}/server/examples/config.bird.toml",
         "SQL_MCP_LISTEN": "127.0.0.1:8090",
+        "SQL_MCP_MODE": "query",
         "SQL_MCP_TARGET_SUPERHERO_URL": "sqlite:${workspaceFolder}/target_db/superhero/superhero.sqlite?mode=ro",
         "SQL_MCP_TARGET_STUDENT_CLUB_URL": "sqlite:${workspaceFolder}/target_db/student_club/student_club.sqlite?mode=ro",
         "SQL_MCP_TARGET_TOXICOLOGY_URL": "sqlite:${workspaceFolder}/target_db/toxicology/toxicology.sqlite?mode=ro",

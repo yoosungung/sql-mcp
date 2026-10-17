@@ -61,9 +61,11 @@ Cube.js `*Query` 어댑터와 같은 역할: **생성기 쪽 방언**, 자유 SQ
 
 ## 타깃 탐색 및 보안
 
-- `list_tables` / `describe_table`: 시맨틱 **cube** 조회(툴 이름 유지). `list_tables(target?)`는 cube 목록, `describe_table(table, target?)`는 cube + dimensions/facts + 연결 metric/segment. 물리 `information_schema` 경로 없음.
-- `search_columns`: `keyword` | `vector` | `hybrid`(기본). `target` 지정 시 해당 타깃 항목만 반환. 임베더 없으면 vector/hybrid→keyword.
-- `sample_column` / `execute_sql`: 해석된 **cube.target**이 툴 인자 `target`과 같아야 한다(SQL에 cube가 여러 개면 **전부** 동일 target이고 인자와도 일치). `execute_sql`은 동일 target cube **JOIN/UNION**·복수 metric·동적 `GROUP BY`(`ROLLUP`/`CUBE`/`GROUPING SETS`)·일반 `WHERE`·`HAVING`·`ORDER BY`·`LIMIT`/`OFFSET`·`:name` 바인드 치환을 허용한다. `dry_run=true`면 컴파일 후 타깃 SELECT를 건너뛰고 `{ sql, dry_run: true }`만 반환. `sample_column`은 mappings 또는 dimension `as_code` 해석 후 인라인 보안 필터를 적용해 타깃 샘플. 큐브 스코프 `encryption` 마스킹(D17) 및 전 계층 `role` 검증.
+- DW 조회 툴 `description`·서버 `instructions`는 **에이전트 선택 가이드**(언제 쓰고/쓰지 않는지·다음 스텝). 구현 용어(cube/물리 SQL)는 툴 설명에 넣지 않는다.
+- `list_databases`: 설정 타깃 목록. 출력 `name`(=`TargetConfig.id`·문서 `target`)·`description`·`engine`(시크릿 제외).
+- `list_tables` / `describe_table`: 시맨틱 **cube** 조회(툴 이름 유지). `list_tables(database?)`는 DW용 요약 `{ database, name, description }`만(`database`=`cube.target`). `describe_table(table, database?, caller_role?)`는 DW 상세: `database`/`name`/`description` + role-필터된 `dimensions`/`facts`/`metrics`/`segments`(멤버는 `name`·`description`·`type`·`encryption`·선택 `as_code`; metric은 `expression`·`aggregation`·`group_by`·`filter` 식 문자열; segment는 `filter` 식 문자열). `role`·`kind`·`view`·물리 `column`·metric/segment `cube`는 숨김. 물리 `information_schema` 경로 없음.
+- `search_columns`: `keyword` | `vector` | `hybrid`(기본). DW 응답 `{ database, table, kind, name, description, score }` (`kind`=`table`\|`dimension`\|`fact`\|`metric`\|`segment`). `database`·`caller_role` 필터. 임베더 없으면 vector/hybrid→keyword.
+- `sample_column` / `execute_sql`: 해석된 **cube.target**이 툴 인자 `database`와 같아야 한다(SQL에 cube가 여러 개면 **전부** 동일 target이고 인자와도 일치). `execute_sql`은 동일 target cube **JOIN/UNION**·복수 metric·동적 `GROUP BY`(`ROLLUP`/`CUBE`/`GROUPING SETS`)·일반 `WHERE`·`HAVING`·`ORDER BY`·`LIMIT`/`OFFSET`·`:name` 바인드 치환을 허용한다. **D23:** 명명 metric과 ad-hoc 집계(`sum(fact)` 등)는 **혼용 금지**; ad-hoc은 단일 cube FROM만(JOIN 거절). 실행 응답은 `{ columns, rows, row_count, execution_time_ms }`(+`max_rows` 도달 시 `truncated: true`); 물리 `sql`은 `dry_run=true`일 때만 `{ sql, dry_run: true }`. `sample_column(database, table, name)`은 mappings 또는 dimension `as_code` 해석 후 인라인 보안 필터로 샘플하고 DW 응답 `{ database, table, name, as_code, masked, values }`만 반환(물리 `resolved`/`sql` 숨김). 큐브 스코프 `encryption` 마스킹(D17) 및 전 계층 `role` 검증.
 - Skills extension: capabilities에 `io.modelcontextprotocol/skills` (빈 설정). `skills/list` · `skills/get` → `skills_ext` (Resource URI·내용과 동일, SHA-256 digest). `resources/directory/read` 없음.
 
 ## 설정
@@ -75,7 +77,7 @@ Cube.js `*Query` 어댑터와 같은 역할: **생성기 쪽 방언**, 자유 SQ
 | `SQL_MCP_LISTEN` | 바인드 주소(기본 `127.0.0.1:8080`, HTTP 모드) |
 | `SQL_MCP_TRANSPORT` | `stdio`면 stdio 모드(`--stdio`와 동일). 미설정·기타는 HTTP |
 | `SQL_MCP_MAX_ROWS` / `SQL_MCP_SAMPLE_LIMIT` / `SQL_MCP_TIMEOUT_MS` | 상한 및 쿼리 타임아웃 |
-| `SQL_MCP_READONLY_METADATA` | `true`/`1`이면 DW 에이전트 모드로 `metadata_*` CRUD 비활성화 |
+| `SQL_MCP_MODE` | `query`(기본)=DW 질의 · 메타 변경 금지 · `author`=메타 CRUD 허용 |
 | `SQL_MCP_DEFAULT_ROLE` | `caller_role` 미지정 시 기본 적용할 역할 |
 | `SQL_MCP_EMBEDDING_URL` / `SQL_MCP_EMBEDDING_API_KEY` | 둘 다 있으면 임베딩·vector/hybrid. 없으면 keyword(BM25)만(D14) |
 | `SQL_MCP_EMBEDDING_MODEL` | 기본 `text-embedding-3-small` |

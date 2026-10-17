@@ -868,6 +868,10 @@ pub fn compile_cube_query(
                     "encrypted member {id} cannot be aggregated in metric {m_name}"
                 )));
             }
+            // D23: ephemeral ad-hoc metrics use role=all — enforce member RBAC on idents.
+            if m_name.starts_with("__adhoc_") {
+                check_member_role(cube, &id, role)?;
+            }
         }
         if let Some(f_expr) = filter_expr(m_doc.get("filter")) {
             assert_filter_expr(f_expr)?;

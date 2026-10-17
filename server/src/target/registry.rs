@@ -14,8 +14,9 @@ use super::TargetDb;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TargetInfo {
+    /// Same as `TargetConfig.id` / MCP `database` / document `target`.
     pub id: String,
-    pub name: String,
+    pub description: String,
     pub engine: String,
 }
 
@@ -32,7 +33,7 @@ impl TargetRegistry {
         for t in &cfg.targets {
             let info = TargetInfo {
                 id: t.id.clone(),
-                name: t.name.clone(),
+                description: t.description.clone(),
                 engine: t.engine.clone(),
             };
             let client = build_target(t, info.clone()).await?;
@@ -57,7 +58,7 @@ impl TargetRegistry {
         self.targets
             .get(id)
             .cloned()
-            .ok_or_else(|| AppError::NotFound(format!("target {id}")))
+            .ok_or_else(|| AppError::NotFound(format!("database {id}")))
     }
 
     #[cfg(test)]

@@ -6,7 +6,7 @@ timeout_ms = 30000
 
 [[targets]]
 id = "dw"
-name = "Data Warehouse"
+description = "Data Warehouse"
 engine = "postgres"
 url_env = "SQL_MCP_TARGET_DW_URL"
 

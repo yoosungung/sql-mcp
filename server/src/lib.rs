@@ -22,7 +22,7 @@ pub mod stdio;
 pub mod target;
 pub mod tools;
 
-pub use config::Config;
+pub use config::{Config, McpMode};
 pub use semantic::SemanticStore;
 pub use target::TargetRegistry;
 pub use tools::SqlMcp;

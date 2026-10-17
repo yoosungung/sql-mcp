@@ -252,10 +252,11 @@ fn extract_index_rows_with_targets(
                 .cloned()
                 .or_else(|| doc.get("target").and_then(|v| v.as_str()).map(str::to_string))
                 .unwrap_or_else(|| "dw".to_string());
+            // doc_name = cube (DW `table`); field_name = metric/segment name.
             rows.push(IndexRow {
                 target,
                 doc_kind: kind.into(),
-                doc_name: name.into(),
+                doc_name: cube.into(),
                 field_name: name.into(),
                 field_role: kind.into(),
                 text: name_desc_text(name, doc),
@@ -524,18 +525,92 @@ fn augment_fts_text(text: &str) -> String {
     out
 }
 
-pub fn hits_to_json(hits: &[SearchHit]) -> Value {
+/// DW agent surface: `{ database, table, kind, name, description, score }`.
+/// `field_role=document` → `kind=table`. Metric/segment index rows use `doc_name` as cube (`table`).
+pub fn hits_to_dw_json(hits: &[SearchHit]) -> Value {
     json!({
-        "items": hits.iter().map(|h| json!({
-            "target": h.target,
-            "doc_kind": h.doc_kind,
-            "doc_name": h.doc_name,
-            "field_name": h.field_name,
-            "field_role": h.field_role,
-            "text": h.text,
-            "score": h.score,
-            "mode": h.mode,
-        })).collect::<Vec<_>>()
+        "items": hits.iter().map(hit_to_dw_item).collect::<Vec<_>>()
+    })
+}
+
+fn hit_to_dw_item(h: &SearchHit) -> Value {
+    let (kind, table, name) = match h.field_role.as_str() {
+        "document" => ("table", h.doc_name.as_str(), h.doc_name.as_str()),
+        role => (role, h.doc_name.as_str(), h.field_name.as_str()),
+    };
+    json!({
+        "database": h.target,
+        "table": table,
+        "kind": kind,
+        "name": name,
+        "description": description_from_index_text(name, &h.text),
+        "score": h.score,
+    })
+}
+
+fn description_from_index_text(name: &str, text: &str) -> String {
+    let prefix = format!("{name} ");
+    if let Some(rest) = text.strip_prefix(&prefix) {
+        rest.to_string()
+    } else if text == name {
+        String::new()
+    } else {
+        text.to_string()
+    }
+}
+
+/// Keep hit if the referenced cube/member is visible to `caller` role.
+pub fn hit_visible_for_role(hit: &SearchHit, docs: &[Value], caller: Option<&str>) -> bool {
+    use crate::compile::check_role_access;
+    match hit.field_role.as_str() {
+        "document" => {
+            let Some(cube) = find_doc(docs, "cube", &hit.doc_name) else {
+                return false;
+            };
+            check_role_access(cube.get("role"), caller).is_ok()
+        }
+        "dimension" | "fact" => {
+            let Some(cube) = find_doc(docs, "cube", &hit.doc_name) else {
+                return false;
+            };
+            if check_role_access(cube.get("role"), caller).is_err() {
+                return false;
+            }
+            let key = if hit.field_role == "dimension" {
+                "dimensions"
+            } else {
+                "facts"
+            };
+            let Some(items) = cube.get(key).and_then(|v| v.as_array()) else {
+                return false;
+            };
+            items.iter().any(|m| {
+                m.get("name").and_then(|v| v.as_str()) == Some(hit.field_name.as_str())
+                    && check_role_access(m.get("role"), caller).is_ok()
+            })
+        }
+        "metric" | "segment" => {
+            let Some(doc) = find_doc(docs, &hit.field_role, &hit.field_name) else {
+                return false;
+            };
+            let cube_name = doc.get("cube").and_then(|v| v.as_str()).unwrap_or("");
+            if !cube_name.is_empty() {
+                if let Some(cube) = find_doc(docs, "cube", cube_name) {
+                    if check_role_access(cube.get("role"), caller).is_err() {
+                        return false;
+                    }
+                }
+            }
+            check_role_access(doc.get("role"), caller).is_ok()
+        }
+        _ => true,
+    }
+}
+
+fn find_doc<'a>(docs: &'a [Value], kind: &str, name: &str) -> Option<&'a Value> {
+    docs.iter().find(|d| {
+        d.get("kind").and_then(|v| v.as_str()) == Some(kind)
+            && d.get("name").and_then(|v| v.as_str()) == Some(name)
     })
 }
 
@@ -648,8 +723,37 @@ mod tests {
         let rows = extract_index_rows(&metric);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].field_role, "metric");
+        assert_eq!(rows[0].doc_name, "sales");
+        assert_eq!(rows[0].field_name, "revenue");
         assert_eq!(rows[0].text, "revenue 지역·일자별 판매 금액 합계.");
         assert!(!rows[0].text.contains("sum"));
+        let dw = hit_to_dw_item(&SearchHit {
+            target: "dw".into(),
+            doc_kind: "metric".into(),
+            doc_name: "sales".into(),
+            field_name: "revenue".into(),
+            field_role: "metric".into(),
+            text: rows[0].text.clone(),
+            score: 1.0,
+            mode: "keyword".into(),
+        });
+        assert_eq!(dw["kind"], "metric");
+        assert_eq!(dw["table"], "sales");
+        assert_eq!(dw["name"], "revenue");
+        assert_eq!(dw["description"], "지역·일자별 판매 금액 합계.");
+        let table_hit = hit_to_dw_item(&SearchHit {
+            target: "dw".into(),
+            doc_kind: "cube".into(),
+            doc_name: "sales".into(),
+            field_name: "sales".into(),
+            field_role: "document".into(),
+            text: "sales 주문과 고객을 묶은 매출.".into(),
+            score: 0.5,
+            mode: "keyword".into(),
+        });
+        assert_eq!(table_hit["kind"], "table");
+        assert_eq!(table_hit["table"], "sales");
+        assert_eq!(table_hit["name"], "sales");
 
         let cube: Value =
             serde_json::from_str(include_str!("../../semantic/examples/cubes/sales.json")).unwrap();

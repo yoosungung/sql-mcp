@@ -36,7 +36,7 @@ timeout_ms = 5000
     let tools = client.list_tools(Default::default()).await.expect("list_tools");
     let names: Vec<_> = tools.tools.iter().map(|t| t.name.as_ref()).collect();
     assert!(
-        names.iter().any(|n| *n == "list_targets"),
+        names.iter().any(|n| *n == "list_databases"),
         "tools={names:?}"
     );
 

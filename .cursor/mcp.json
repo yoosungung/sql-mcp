@@ -22,7 +22,7 @@
           "SQL_MCP_TARGET_THROMBOSIS_URL": "sqlite:./target_db/thrombosis_prediction/thrombosis_prediction.sqlite?mode=ro",
           "SQL_MCP_TARGET_CALIFORNIA_SCHOOLS_URL": "sqlite:./target_db/california_schools/california_schools.sqlite?mode=ro",
           "SQL_MCP_TARGET_FORMULA_1_URL": "sqlite:./target_db/formula_1/formula_1.sqlite?mode=ro",
-          "SQL_MCP_READONLY_METADATA": "false"
+          "SQL_MCP_MODE": "author"
         }
       }
     }

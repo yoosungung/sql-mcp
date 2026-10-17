@@ -279,7 +279,7 @@ mod tests {
         }
         let info = TargetInfo {
             id: "t".into(),
-            name: "test".into(),
+            description: "test".into(),
             engine: "sqlite".into(),
         };
         let target = SqliteTarget::connect(info, &format!("sqlite:{path_str}?mode=ro"))

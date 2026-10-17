@@ -22,7 +22,7 @@ AI 코딩 에이전트(Cursor, Claude 등)가 **데이터 웨어하우스(DW)** 
 
 ## 1. 받기
 
-Release에서 OS에 맞는 **`sql-mcp` 바이너리** 또는 **컨테이너 이미지**를 받습니다. 저장소 클론·Rust 빌드는 필요 없습니다.
+Release에서 OS에 맞는 `sql-mcp` **바이너리** 또는 **컨테이너 이미지**를 받습니다. 저장소 클론·Rust 빌드는 필요 없습니다.
 
 ### 바이너리
 
@@ -95,7 +95,8 @@ HTTP MCP: `POST http://127.0.0.1:8080/mcp` · 헬스: `GET /health`.
       "env": {
         "SQL_MCP_SEMANTIC_PATH": "/Users/YOU/.sql-mcp/semantic.db",
         "SQL_MCP_CONFIG": "/Users/YOU/bin/config.toml",
-        "SQL_MCP_TARGET_DW_URL": "postgres://USER:PASS@HOST:5432/DB"
+        "SQL_MCP_TARGET_DW_URL": "postgres://USER:PASS@HOST:5432/DB",
+        "SQL_MCP_MODE": "auithor"
       }
     }
   }
@@ -119,7 +120,7 @@ HTTP MCP: `POST http://127.0.0.1:8080/mcp` · 헬스: `GET /health`.
 
 ## 3. 메타 구성
 
-물리 DW 카탈로그는 에이전트(또는 기존 DW 클라이언트)가 **MCP 밖에서** 읽고, 아래 순서로 JSON을 만든 뒤 MCP `metadata_*`로 등록합니다.
+물리 DW 카탈로그는 에이전트(또는 기존 DW 클라이언트)가 **MCP 밖에서** 읽고, 아래 순서로 JSON을 만든 뒤 MCP `metadata_`*로 등록합니다.
 
 ```text
 table → view → cube → metric | segment
@@ -132,13 +133,13 @@ table → view → cube → metric | segment
 | 툴 | 용도 |
 |----|------|
 | `search_columns` | 시맨틱 컬럼/멤버 검색 |
-| `sample_column` | cube 멤버 샘플(+코드사전) |
+| `sample_column` | table 멤버 샘플(`database`/`table`/`name`, +코드사전) |
 | `execute_sql` | **시맨틱 SQL만** → 물리 SELECT 컴파일·실행 |
-| `list_targets` / `list_tables` / `describe_table` | 타깃 목록 · **cube** 목록/상세 |
+| `list_databases` / `list_tables` / `describe_table` | database 목록 · table 요약(`database`/`name`/`description`) · cube 상세 |
 
 `execute_sql`에 자유 물리 SELECT는 없습니다. cube FROM, metric/dimension/segment 기준만 허용됩니다.
 
 예시 프롬프트:
 
-- 「매출 cube에서 지난달 region별 revenue metric을 구해줘」
-- 「status 관련 dimension 찾아 sample 보여줘」
+- 「매출에서 지난달 region별 revenue metric을 구해줘」
+- 「status 관련 column을 찾아 sample 보여줘」

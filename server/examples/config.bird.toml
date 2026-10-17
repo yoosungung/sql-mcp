@@ -7,36 +7,36 @@ timeout_ms = 30000
 
 [[targets]]
 id = "superhero"
-name = "BIRD superhero"
+description = "BIRD superhero"
 engine = "sqlite"
 url_env = "SQL_MCP_TARGET_SUPERHERO_URL"
 
 [[targets]]
 id = "student_club"
-name = "BIRD student_club"
+description = "BIRD student_club"
 engine = "sqlite"
 url_env = "SQL_MCP_TARGET_STUDENT_CLUB_URL"
 
 [[targets]]
 id = "toxicology"
-name = "BIRD toxicology"
+description = "BIRD toxicology"
 engine = "sqlite"
 url_env = "SQL_MCP_TARGET_TOXICOLOGY_URL"
 
 [[targets]]
 id = "thrombosis_prediction"
-name = "BIRD thrombosis_prediction"
+description = "BIRD thrombosis_prediction"
 engine = "sqlite"
 url_env = "SQL_MCP_TARGET_THROMBOSIS_URL"
 
 [[targets]]
 id = "california_schools"
-name = "BIRD california_schools"
+description = "BIRD california_schools"
 engine = "sqlite"
 url_env = "SQL_MCP_TARGET_CALIFORNIA_SCHOOLS_URL"
 
 [[targets]]
 id = "formula_1"
-name = "BIRD formula_1"
+description = "BIRD formula_1"
 engine = "sqlite"
 url_env = "SQL_MCP_TARGET_FORMULA_1_URL"
