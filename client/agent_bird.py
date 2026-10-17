@@ -82,25 +82,33 @@ def log_agent_trace(
             print(f"  content: {_clip(text, log_max)}", file=file)
     print("--- end trace ---", file=file)
 
-SYSTEM = """You are a data analyst using the sql-mcp MCP tools.
-Query the warehouse via semantic tools only:
+SYSTEM = """You are a data analyst. Answer questions using only sql-mcp tools:
 list_databases, list_tables, describe_table, search_columns, sample_column, execute_sql.
-execute_sql accepts semantic SQL on cubes only (not raw physical SQL). Modes (do not mix):
-(A) named metrics (+ dimensions), (B) ad-hoc aggregates like sum(fact)/count(*),
-(C) dim/fact-only ungrouped rows: SELECT dim, fact FROM cube WHERE … (no GROUP BY/HAVING).
-Prefer search_columns then describe_table before execute_sql.
-Answer with the final numeric/text result and briefly note which tools you used.
+
+Workflow:
+1. Call list_tables(database=db_id), then describe_table / search_columns to inspect cubes and members.
+2. Run execute_sql with semantic SQL, then return the final answer.
+
+Semantic SQL rules:
+- FROM/JOIN must use cube names (never physical table names or T1/T2 aliases). Qualify joined members as `cube.member`.
+- Never use `SELECT *`.
+- Grouped queries: use named metrics, `SUM`/`COUNT`/`AVG`/`MIN`/`MAX`, `GROUP BY`, `HAVING`.
+- Ungrouped queries: `SELECT` dimensions/facts without `GROUP BY` or `HAVING` (use `SELECT DISTINCT` when joining cubes without aggregation).
+- Expressions: use `+ - * /` and `date_trunc('year'|'month'|'day', col)` — never `DIVIDE()`, `YEAR()`, `STRFTIME()`, `EXTRACT()`.
+- Follow Evidence filter literals exactly (use `sample_column` if unsure; escape single quotes as `''`).
+- On validation/parse error, fix the SQL instead of retrying the same query.
 """
 
 
-def _user_prompt(q) -> str:
+def user_prompt(q) -> str:
     evidence = q.evidence.strip() or "(none)"
     return (
         f"Database (db_id / MCP database name): {q.db_id}\n"
         f"Difficulty: {q.difficulty}\n"
-        f"Evidence: {evidence}\n\n"
+        f"Evidence (use these literals exactly in filters): {evidence}\n\n"
         f"Question: {q.question}\n\n"
-        "Use sql-mcp tools to answer. Do not invent table names; discover them via tools."
+        "Use sql-mcp tools only. Discover cubes/members via tools; "
+        "write semantic SQL (D23). Match Evidence strings exactly."
     )
 
 
@@ -148,7 +156,7 @@ async def invoke_bird_agent(
         )
         agent = create_agent(model, tools, system_prompt=SYSTEM)
         result = await agent.ainvoke(
-            {"messages": [{"role": "user", "content": _user_prompt(q)}]}
+            {"messages": [{"role": "user", "content": user_prompt(q)}]}
         )
     messages = result.get("messages") or []
     final = ""

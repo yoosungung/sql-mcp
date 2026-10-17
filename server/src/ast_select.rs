@@ -7,6 +7,7 @@ use crate::error::AppError;
 
 #[derive(Debug, Clone, Default)]
 pub struct SelectClauses {
+    pub distinct: bool,
     pub aggregation: Option<String>,
     pub having: Option<String>,
     pub order_by: Vec<String>,
@@ -30,7 +31,7 @@ pub fn assemble_select(
     )
 }
 
-/// Build `SELECT … FROM … [WHERE …] [GROUP BY [ROLLUP|CUBE|GROUPING SETS] …] [HAVING …] [ORDER BY …] [LIMIT …] [OFFSET …]`
+/// Build `SELECT [DISTINCT] … FROM … [WHERE …] [GROUP BY [ROLLUP|CUBE|GROUPING SETS] …] [HAVING …] [ORDER BY …] [LIMIT …] [OFFSET …]`
 /// and normalize through the parser AST.
 pub fn assemble_select_with_clauses(
     projections: &[(String, String)],
@@ -47,7 +48,8 @@ pub fn assemble_select_with_clauses(
         .map(|(expr, alias)| format!("({expr}) AS \"{alias}\""))
         .collect::<Vec<_>>()
         .join(", ");
-    let mut sql = format!("SELECT {proj} FROM {from_sql}");
+    let distinct_kw = if clauses.distinct { "DISTINCT " } else { "" };
+    let mut sql = format!("SELECT {distinct_kw}{proj} FROM {from_sql}");
     if !where_parts.is_empty() {
         let w = where_parts
             .iter()
@@ -146,8 +148,9 @@ mod tests {
     }
 
     #[test]
-    fn assembles_rollup_having_order_limit() {
+    fn assembles_distinct_and_rollup_having_order_limit() {
         let clauses = SelectClauses {
+            distinct: true,
             aggregation: Some("rollup".into()),
             having: Some("sum(\"orders\".\"sale_amount\") > 100".into()),
             order_by: vec!["\"revenue\" DESC".into()],
@@ -166,6 +169,7 @@ mod tests {
         )
         .unwrap();
         let u = sql.to_ascii_uppercase();
+        assert!(u.contains("SELECT DISTINCT"), "{sql}");
         assert!(u.contains("ROLLUP"), "{sql}");
         assert!(u.contains("HAVING"), "{sql}");
         assert!(u.contains("ORDER BY"), "{sql}");

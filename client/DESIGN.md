@@ -5,8 +5,9 @@ BIRD Mini-Dev **질문-SQL**을 넣고, LangChain v1 `create_agent()` + `MCPAdap
 ## 범위
 
 - Q-SQL 로더: `bird_qa.py` ← `target_db/bird_qa/mini_dev_sqlite.json` (`fetch_bird.sh`가 zip에서 추출)
-- 에이전트: `agent_bird.py` — **HTTP만** (sql-mcp 기동은 client 밖)
-- 평가 스냅샷: `bird_eval.py` + `run_eval.py` → `client/eval/eval.json` (개선 루프용; EX 자동 채점은 후속)
+- 에이전트: `agent_bird.py` — **HTTP만** (sql-mcp 기동은 client 밖). `SYSTEM`에 D23(통합 Grouped `(A)`/`(B)` 혼합·파생 수식·Ungrouped `(C)`·`SELECT DISTINCT` Cube JOIN)·허용 함수(`/`·`date_trunc`)·`ORDER BY`·이스케이프·재시도 규칙 고정(eval `dw_agent` 실패 대응)
+- 평가 스냅샷: `bird_eval.py` + `run_eval.py` → `client/eval/eval.json`
+- EX 채점: `bird_eval.score_eval_doc` — 마지막 성공 `execute_sql` rows vs `gold_rows` (unordered set). 실패는 `dw_agent` / `sql_mcp_code` / `semantic_layer`로 분류 → `client/eval/score_report.json`
 
 ## 흐름
 
@@ -31,6 +32,14 @@ BIRD gold `SQL`은 **물리 SELECT**이므로 `execute_sql`(시맨틱-only)에 �
 | `question` / `evidence` / `gold_sql` | BIRD Mini-Dev |
 | `gold_rows` / `gold_error` | 물리 SQLite 실행 결과 |
 | `agent.final` / `agent.tool_calls` | DW agent 최종 답 + MCP tool 궤적 |
+
+### EX · 실패 3분류
+
+| bucket | 의미 |
+|--------|------|
+| `dw_agent` | 시맨틱 표면으로 답이 가능한데 에이전트 SQL/로직이 틀림 |
+| `sql_mcp_code` | 유효해 보이는 시맨틱 SQL이 파서·컴파일러에서 거절/오류 |
+| `semantic_layer` | 메타(metric/dimension/view) 부족으로 표현 불가 |
 
 ## Commands
 
@@ -63,6 +72,11 @@ python agent_bird.py --db superhero --show-gold
 python run_eval.py --db superhero --limit 3 --skip-agent   # gold만
 python run_eval.py --url http://127.0.0.1:8090/mcp --concurrency 8
 # → client/eval/eval.json
+
+# EX 채점 + 실패 3분류
+python -c "import json; from pathlib import Path; from bird_eval import score_eval_doc; \
+d=json.loads(Path('eval/eval.json').read_text()); \
+Path('eval/score_report.json').write_text(json.dumps(score_eval_doc(d),indent=2,ensure_ascii=False)+chr(10))"
 
 # Cursor/VS Code 디버그 (.vscode/launch.json)
 # - Debug sql-mcp (BIRD)              — :8090

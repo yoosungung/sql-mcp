@@ -27,7 +27,8 @@ async fn spawn_server() -> (String, tokio::task::JoinHandle<()>) {
                 store.clone(),
                 TargetRegistry::empty(),
                 (*cfg).clone(),
-            ))
+            )
+            .with_mode(sql_mcp::config::McpMode::Author))
         }) as Arc<dyn Fn() -> Result<SqlMcp, std::io::Error> + Send + Sync>
     };
 

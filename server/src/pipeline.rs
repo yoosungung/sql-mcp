@@ -18,7 +18,10 @@ use crate::compile::{
 };
 use crate::dialect::DialectProfile;
 use crate::error::AppError;
-use crate::expr_guard::{assert_adhoc_agg_expr, assert_idents_known, extract_idents};
+use crate::expr_guard::{
+    assert_adhoc_agg_expr, assert_idents_known, assert_scalar_expr, contains_aggregate_sql,
+    extract_idents,
+};
 use crate::select_guard::assert_select_only;
 use serde_json::json;
 
@@ -185,27 +188,35 @@ fn compile_single_cube(
     role: Option<&str>,
     binds: Option<&HashMap<String, String>>,
 ) -> Result<String, AppError> {
+    let distinct = select.distinct.is_some();
     let (cube_alias, cube_name) = relation_alias_cube(&select.from[0].relation)?;
     let classified =
-        classify_projection_for_cube(select, docs, &cube_name, Some(&cube_alias), true)?;
+        classify_projection_for_cube(select, docs, &cube_name, Some(&cube_alias), true, None)?;
     ensure_projection_mode(&classified)?;
 
     let (segments, where_exprs) =
         extract_where_for_cube(select, docs, &cube_name, Some(&cube_alias), true, role)?;
-    let (explicit_group_by, aggregation) =
-        extract_group_by_for_cube(select, &cube_name, &cube_alias)?;
+    let (explicit_group_by, aggregation) = extract_group_by_for_cube(
+        select,
+        &cube_name,
+        &cube_alias,
+        &classified.projections,
+        &classified.dims,
+    )?;
     let having = extract_having_for_cube(select, &cube_name, &cube_alias)?;
     let order_by = extract_order_by(query, Some((&cube_alias, &cube_name)), &[])?;
     let limit = extract_limit(query, binds)?;
     let offset = extract_offset(query, binds)?;
 
-    let adhoc = !classified.adhoc_metrics.is_empty();
-    let ungrouped = classified.named_metrics.is_empty() && !adhoc;
-    let dims = classified.dims.clone();
-    let projections = classified.projections.clone();
-    let (docs_owned, metrics) =
-        materialize_adhoc_metrics(docs, &cube_name, &classified, &dims, &explicit_group_by)?;
-    let docs_ref: &[Value] = docs_owned.as_deref().unwrap_or(docs);
+    let has_named = !classified.named_metrics.is_empty();
+    let has_adhoc = !classified.adhoc_metrics.is_empty();
+    let has_explicit_gb = explicit_group_by.is_some() || aggregation.is_some();
+    let has_agg_order = order_by_has_aggregate_or_metric(&order_by, docs, &cube_name);
+
+    // D23 2-mode grain determination:
+    // Enter Grouped mode whenever SELECT projects metrics/aggregates, or GROUP BY / rollup is present,
+    // or ORDER BY aggregates/references a metric.
+    let ungrouped = !has_named && !has_adhoc && !has_explicit_gb && !has_agg_order;
 
     if ungrouped {
         if having.is_some() {
@@ -213,18 +224,20 @@ fn compile_single_cube(
                 "HAVING is not allowed in dim/fact-only ungrouped SELECT (D23)".into(),
             ));
         }
-        if explicit_group_by.is_some() || aggregation.is_some() {
-            return Err(AppError::Validation(
-                "GROUP BY is not allowed in dim/fact-only ungrouped SELECT (D23)".into(),
-            ));
-        }
     }
 
-    let explicit_group_by = if adhoc {
+    let dims = classified.dims.clone();
+    let projections = classified.projections.clone();
+    let (docs_owned, metrics) =
+        materialize_adhoc_metrics(docs, &cube_name, &classified, &dims, &explicit_group_by)?;
+    let docs_ref: &[Value] = docs_owned.as_deref().unwrap_or(docs);
+
+    let explicit_group_by = if !ungrouped {
         match explicit_group_by {
             Some(gb) => Some(gb),
             None if !dims.is_empty() => Some(dims.clone()),
-            None => Some(Vec::new()), // global aggregate
+            None if has_adhoc && !has_named => Some(Vec::new()), // global aggregate
+            None => None,
         }
     } else {
         explicit_group_by
@@ -243,9 +256,32 @@ fn compile_single_cube(
         limit,
         offset,
         ungrouped,
+        distinct,
     };
 
     compile_cube_query(docs_ref, &cube_name, &spec, role, binds)
+}
+
+fn order_by_has_aggregate_or_metric(order_by: &[String], docs: &[Value], cube_name: &str) -> bool {
+    let metric_names: HashSet<&str> = docs
+        .iter()
+        .filter(|d| {
+            d.get("kind").and_then(|v| v.as_str()) == Some("metric")
+                && d.get("cube").and_then(|v| v.as_str()) == Some(cube_name)
+        })
+        .filter_map(|d| d.get("name").and_then(|v| v.as_str()))
+        .collect();
+    for ob in order_by {
+        if contains_aggregate_sql(ob).unwrap_or(false) {
+            return true;
+        }
+        if let Ok(ids) = extract_idents(ob) {
+            if ids.iter().any(|id| metric_names.contains(id.as_str())) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn compile_cube_join(
@@ -255,6 +291,7 @@ fn compile_cube_join(
     role: Option<&str>,
     binds: Option<&HashMap<String, String>>,
 ) -> Result<String, AppError> {
+    let distinct = select.distinct.is_some();
     let tw = &select.from[0];
     let mut sides: Vec<(String, String)> = Vec::new(); // (alias, cube_name)
     let (alias0, cube0) = relation_alias_cube(&tw.relation)?;
@@ -281,67 +318,121 @@ fn compile_cube_join(
         rewritten_joins.push((alias, join_kw, on_sql));
     }
 
-    let mut subqueries: HashMap<String, String> = HashMap::new();
+    // Classify each side; D23 allows mixing named metrics and ad-hoc aggregates in Grouped mode.
+    let mut side_class: Vec<(String, String, ClassifiedProjection)> = Vec::new();
+    let mut any_named = false;
+    let mut any_adhoc = false;
     for (alias, cube_name) in &sides {
-        let classified =
-            classify_projection_for_cube(select, docs, cube_name, Some(alias), false)?;
+        let classified = classify_projection_for_cube(
+            select,
+            docs,
+            cube_name,
+            Some(alias),
+            false,
+            Some(&sides),
+        )?;
+        if !classified.named_metrics.is_empty() {
+            any_named = true;
+        }
         if !classified.adhoc_metrics.is_empty() {
+            any_adhoc = true;
+        }
+        side_class.push((alias.clone(), cube_name.clone(), classified));
+    }
+
+    let has_explicit_gb = matches!(&select.group_by, GroupByExpr::Expressions(exprs, _) if !exprs.is_empty());
+    let mode_ungrouped = !any_named && !any_adhoc && !has_explicit_gb;
+
+    if mode_ungrouped {
+        if select.having.is_some() {
             return Err(AppError::Validation(
-                "ad-hoc aggregation requires a single-cube FROM (not allowed in JOIN)".into(),
+                "HAVING is not allowed in dim/fact-only ungrouped SELECT (D23)".into(),
             ));
         }
-        let metrics = classified.named_metrics;
-        let mut dims = classified.dims;
-        if metrics.is_empty() {
-            return Err(AppError::Validation(format!(
-                "joined cube {cube_name} (alias {alias}) must project at least one metric"
-            )));
+        if !distinct {
+            return Err(AppError::Validation(
+                "ungrouped cube JOIN requires SELECT DISTINCT, GROUP BY, or metrics/aggregates to prevent fan-out (D23)".into(),
+            ));
         }
-        // If dimensions were explicitly projected for this side, ensure any JOIN ON dimensions
-        // for this side are also included so the outer ON clause can reference them.
-        if !dims.is_empty() {
-            if let Some(on_dims) = on_dims_per_side.get(alias) {
-                for od in on_dims {
-                    if !dims.iter().any(|d| d == od) {
-                        dims.push(od.clone());
-                    }
+    }
+
+    let mut subqueries: HashMap<String, String> = HashMap::new();
+    for (alias, cube_name, classified) in &side_class {
+        let mut dims = classified.dims.clone();
+        if let Some(on_dims) = on_dims_per_side.get(alias) {
+            for od in on_dims {
+                if !dims.iter().any(|d| d == od) {
+                    dims.push(od.clone());
                 }
             }
         }
+
         let (segments, where_exprs) =
             extract_where_for_cube(select, docs, cube_name, Some(alias), false, role)?;
-        let mut sub_projs = Vec::new();
-        for d in &dims {
-            sub_projs.push(CubeProjection {
-                member: d.clone(),
-                alias: d.clone(),
-            });
-        }
-        for m in &metrics {
-            sub_projs.push(CubeProjection {
-                member: m.clone(),
-                alias: m.clone(),
-            });
-        }
-        let spec = CubeQuerySpec {
-            projections: if dims.is_empty() {
-                Vec::new()
+
+        let (docs_ref_owned, metrics, explicit_group_by, ungrouped) = if mode_ungrouped {
+            if dims.is_empty() {
+                return Err(AppError::Validation(format!(
+                    "joined cube {cube_name} (alias {alias}) must project at least one dimension or fact"
+                )));
+            }
+            (None, Vec::new(), None, true)
+        } else {
+            let side_gb = group_by_dims_for_join_side(select, cube_name, alias, &dims)?;
+            let (owned, metric_names) =
+                materialize_adhoc_metrics(docs, cube_name, classified, &dims, &side_gb)?;
+            if metric_names.is_empty() && dims.is_empty() {
+                return Err(AppError::Validation(format!(
+                    "joined cube {cube_name} (alias {alias}) must project or join on at least one dimension or metric"
+                )));
+            }
+            let gb_for_spec = if !classified.named_metrics.is_empty()
+                && classified.adhoc_metrics.is_empty()
+                && dims.is_empty()
+            {
+                None
             } else {
-                sub_projs
-            },
+                side_gb
+            };
+            (owned, metric_names, gb_for_spec, false)
+        };
+
+        let docs_ref: &[Value] = docs_ref_owned.as_deref().unwrap_or(docs);
+
+        let mut sub_projs = classified.projections.clone();
+        for d in &dims {
+            if !sub_projs
+                .iter()
+                .any(|p| p.member == *d || p.alias == *d)
+            {
+                sub_projs.push(CubeProjection {
+                    member: d.clone(),
+                    alias: d.clone(),
+                });
+            }
+        }
+        let projections = if ungrouped || !dims.is_empty() || !sub_projs.is_empty() {
+            sub_projs
+        } else {
+            Vec::new()
+        };
+
+        let spec = CubeQuerySpec {
+            projections,
             metrics,
             dimensions: dims,
             segments,
             where_exprs,
-            explicit_group_by: None,
+            explicit_group_by,
             aggregation: None,
             having: None,
             order_by: Vec::new(),
             limit: None,
             offset: None,
-            ungrouped: false,
+            ungrouped,
+            distinct: ungrouped && distinct,
         };
-        let physical = compile_cube_query(docs, cube_name, &spec, role, binds)?;
+        let physical = compile_cube_query(docs_ref, cube_name, &spec, role, binds)?;
         subqueries.insert(alias.clone(), physical);
     }
 
@@ -356,15 +447,29 @@ fn compile_cube_join(
         from_sql.push_str(&format!(" {join_kw} ({phys}) AS {qalias} ON {on_sql}"));
     }
 
-    let mut proj_parts = Vec::new();
-    for item in &select.projection {
-        let (alias_opt, member, out_alias) = projection_member(item)?;
-        let (side_alias, _cube) =
-            resolve_member_side(docs, &sides, alias_opt.as_deref(), &member)?;
-        let qside = quote_ident(&side_alias)?;
-        let qmem = quote_ident(&member)?;
-        let qout = quote_ident(&out_alias)?;
-        proj_parts.push(format!("{qside}.{qmem} AS {qout}"));
+    let mut proj_parts = Vec::with_capacity(select.projection.len());
+    for idx in 0..select.projection.len() {
+        let mut found: Option<(&str, &str)> = None;
+        for (alias, _cube, classified) in &side_class {
+            if let Some((_, out_alias)) = classified
+                .attributed_items
+                .iter()
+                .find(|(item_idx, _)| *item_idx == idx)
+            {
+                found = Some((alias.as_str(), out_alias.as_str()));
+                break;
+            }
+        }
+        let (side_alias, out_alias) = found.ok_or_else(|| {
+            AppError::Validation(format!(
+                "projection item #{} ({}) could not be attributed to a joined cube",
+                idx + 1,
+                select.projection[idx]
+            ))
+        })?;
+        let qside = quote_ident(side_alias)?;
+        let qout = quote_ident(out_alias)?;
+        proj_parts.push(format!("{qside}.{qout} AS {qout}"));
     }
     if proj_parts.is_empty() {
         return Err(AppError::Validation(
@@ -372,7 +477,8 @@ fn compile_cube_join(
         ));
     }
 
-    let mut sql = format!("SELECT {} FROM {}", proj_parts.join(", "), from_sql);
+    let select_kw = if distinct { "SELECT DISTINCT" } else { "SELECT" };
+    let mut sql = format!("{select_kw} {} FROM {}", proj_parts.join(", "), from_sql);
     let order_by = extract_order_by(query, None, &sides)?;
     if !order_by.is_empty() {
         sql.push_str(" ORDER BY ");
@@ -387,6 +493,90 @@ fn compile_cube_join(
         sql.push_str(&off);
     }
     Ok(sql)
+}
+
+/// GROUP BY dims for one JOIN side: keep this cube's qualifiers, skip others; merge projected dims.
+fn group_by_dims_for_join_side(
+    select: &Select,
+    cube_name: &str,
+    cube_alias: &str,
+    projected_dims: &[String],
+) -> Result<Option<Vec<String>>, AppError> {
+    let GroupByExpr::Expressions(exprs, _) = &select.group_by else {
+        return Ok(if projected_dims.is_empty() {
+            Some(Vec::new())
+        } else {
+            Some(projected_dims.to_vec())
+        });
+    };
+    if exprs.is_empty() {
+        return Ok(if projected_dims.is_empty() {
+            Some(Vec::new())
+        } else {
+            Some(projected_dims.to_vec())
+        });
+    }
+    let mut dims = Vec::new();
+    for e in exprs {
+        match try_extract_cube_ident_for_side(e, cube_name, cube_alias) {
+            Ok(Some(d)) => {
+                if projected_dims.iter().any(|x| x == &d) && !dims.iter().any(|x| x == &d) {
+                    dims.push(d);
+                }
+            }
+            Ok(None) => {} // other side's qualifier — skip
+            Err(e) => return Err(e),
+        }
+    }
+    for d in projected_dims {
+        if !dims.iter().any(|x| x == d) {
+            dims.push(d.clone());
+        }
+    }
+    Ok(Some(dims))
+}
+
+fn try_extract_cube_ident_for_side(
+    expr: &Expr,
+    cube_name: &str,
+    cube_alias: &str,
+) -> Result<Option<String>, AppError> {
+    match expr {
+        Expr::Identifier(id) => Ok(Some(id.value.clone())),
+        Expr::Value(v) if v.to_string().parse::<usize>().is_ok() => Ok(None),
+        Expr::CompoundIdentifier(parts) if parts.len() == 2 => {
+            let q = &parts[0].value;
+            let n = &parts[1].value;
+            if q != cube_name && q != cube_alias {
+                return Ok(None);
+            }
+            Ok(Some(n.clone()))
+        }
+        Expr::Nested(inner) => try_extract_cube_ident_for_side(inner, cube_name, cube_alias),
+        Expr::Rollup(_) | Expr::Cube(_) | Expr::GroupingSets(_) => Err(AppError::Validation(
+            "ROLLUP/CUBE/GROUPING SETS not supported in cube JOIN ad-hoc GROUP BY".into(),
+        )),
+        other => {
+            let empty = HashMap::new();
+            let mut quals = Vec::new();
+            let mut bare = Vec::new();
+            collect_expr_quals_and_idents(other, &mut quals, &mut bare);
+            if !quals.is_empty() && quals.iter().any(|q| q != cube_name && q != cube_alias) {
+                return Ok(None);
+            }
+            let stripped = expand_segments_and_strip_qualifier(
+                other,
+                &empty,
+                cube_name,
+                Some(cube_alias),
+                false,
+                None,
+            )?;
+            let s = stripped.to_string();
+            assert_scalar_expr(&s)?;
+            Ok(Some(s))
+        }
+    }
 }
 
 fn join_keyword(op: &JoinOperator) -> Result<&'static str, AppError> {
@@ -570,14 +760,17 @@ fn record_on_dim(
     on_dims_per_side: &mut HashMap<String, Vec<String>>,
 ) -> Result<(), AppError> {
     let cube = find_doc(docs, "cube", cube_name)?;
-    if let Some(dims) = cube.get("dimensions").and_then(|v| v.as_array()) {
-        if dims
-            .iter()
-            .any(|d| d.get("name").and_then(|v| v.as_str()) == Some(member))
-        {
-            let entry = on_dims_per_side.entry(side_alias.to_string()).or_default();
-            if !entry.iter().any(|x| x == member) {
-                entry.push(member.to_string());
+    for key in ["dimensions", "facts"] {
+        if let Some(items) = cube.get(key).and_then(|v| v.as_array()) {
+            if items
+                .iter()
+                .any(|d| d.get("name").and_then(|v| v.as_str()) == Some(member))
+            {
+                let entry = on_dims_per_side.entry(side_alias.to_string()).or_default();
+                if !entry.iter().any(|x| x == member) {
+                    entry.push(member.to_string());
+                }
+                return Ok(());
             }
         }
     }
@@ -591,30 +784,23 @@ struct ClassifiedProjection {
     /// (internal metric name `__adhoc_N`, SQL expression, output alias)
     adhoc_metrics: Vec<(String, String, String)>,
     dims: Vec<String>,
+    /// (0-based index in `select.projection`, output alias) claimed by this cube side.
+    attributed_items: Vec<(usize, String)>,
 }
 
 fn ensure_projection_mode(c: &ClassifiedProjection) -> Result<(), AppError> {
     let named = !c.named_metrics.is_empty();
     let adhoc = !c.adhoc_metrics.is_empty();
     let members = !c.dims.is_empty();
-    // (A) named metrics (+ optional dims) and (B) ad-hoc (+ optional dims) must not mix.
-    if named && adhoc {
+    if !named && !adhoc && !members && c.projections.is_empty() {
         return Err(AppError::Validation(
-            "cannot mix named metrics and ad-hoc aggregates in one SELECT (D23)".into(),
+            "semantic SELECT must project a named metric, ad-hoc aggregate, or dimension/fact (D23)".into(),
         ));
-    }
-    // (C) dim/fact-only ungrouped when neither named nor ad-hoc.
-    if !named && !adhoc {
-        if !members {
-            return Err(AppError::Validation(
-                "semantic SELECT must project a named metric, ad-hoc aggregate, or dimension/fact (D23)".into(),
-            ));
-        }
     }
     Ok(())
 }
 
-/// Build ephemeral metric docs for ad-hoc mode; return owned docs + metric names.
+/// Build ephemeral metric docs for ad-hoc aggregates; return owned docs + all metric names (named + ad-hoc).
 fn materialize_adhoc_metrics(
     docs: &[Value],
     cube_name: &str,
@@ -629,54 +815,33 @@ fn materialize_adhoc_metrics(
     let cube = find_doc(docs, "cube", cube_name)?;
     let mut known = HashSet::new();
     let mut all_dim_names = Vec::new();
-    if let Some(items) = cube.get("dimensions").and_then(|v| v.as_array()) {
-        for item in items {
-            if let Some(n) = item.get("name").and_then(|v| v.as_str()) {
-                known.insert(n.to_string());
-                all_dim_names.push(n.to_string());
-            }
-        }
-    }
-    if let Some(items) = cube.get("facts").and_then(|v| v.as_array()) {
-        for item in items {
-            if let Some(n) = item.get("name").and_then(|v| v.as_str()) {
-                known.insert(n.to_string());
-            }
-        }
-    }
-
-    // Allowed GROUP BY = all cube dimensions (query picks a subset via GROUP BY / projection).
-    let mut allowed_gb = all_dim_names;
-    for d in dims {
-        if !allowed_gb.iter().any(|x| x == d) {
-            // facts projected as grain are unusual; only dimensions belong in group_by.
-            if cube
-                .get("dimensions")
-                .and_then(|v| v.as_array())
-                .is_some_and(|a| a.iter().any(|i| i.get("name").and_then(|v| v.as_str()) == Some(d)))
-            {
-                allowed_gb.push(d.clone());
-            }
-        }
-    }
-    if let Some(gb) = explicit_group_by {
-        for d in gb {
-            if !allowed_gb.iter().any(|x| x == d) {
-                // Still allow explicitly grouped dimensions only if they exist on the cube.
-                if known.contains(d)
-                    && cube.get("dimensions").and_then(|v| v.as_array()).is_some_and(|a| {
-                        a.iter()
-                            .any(|i| i.get("name").and_then(|v| v.as_str()) == Some(d.as_str()))
-                    })
-                {
-                    allowed_gb.push(d.clone());
+    for key in ["dimensions", "facts"] {
+        if let Some(items) = cube.get(key).and_then(|v| v.as_array()) {
+            for item in items {
+                if let Some(n) = item.get("name").and_then(|v| v.as_str()) {
+                    known.insert(n.to_string());
+                    all_dim_names.push(n.to_string());
                 }
             }
         }
     }
 
+    let mut allowed_gb = all_dim_names;
+    for d in dims {
+        if !allowed_gb.iter().any(|x| x == d) {
+            allowed_gb.push(d.clone());
+        }
+    }
+    if let Some(gb) = explicit_group_by {
+        for d in gb {
+            if !allowed_gb.iter().any(|x| x == d) {
+                allowed_gb.push(d.clone());
+            }
+        }
+    }
+
     let mut owned = docs.to_vec();
-    let mut metric_names = Vec::new();
+    let mut metric_names = classified.named_metrics.clone();
     for (internal, expr, _alias) in &classified.adhoc_metrics {
         assert_adhoc_agg_expr(expr)?;
         assert_idents_known(expr, &known)?;
@@ -696,60 +861,35 @@ fn materialize_adhoc_metrics(
     Ok((Some(owned), metric_names))
 }
 
-fn projection_member(item: &SelectItem) -> Result<(Option<String>, String, String), AppError> {
+fn try_projection_member(
+    item: &SelectItem,
+) -> Result<Option<(Option<String>, String, String)>, AppError> {
     match item {
         SelectItem::UnnamedExpr(Expr::Identifier(id)) => {
-            Ok((None, id.value.clone(), id.value.clone()))
+            Ok(Some((None, id.value.clone(), id.value.clone())))
         }
-        SelectItem::UnnamedExpr(Expr::CompoundIdentifier(parts)) if parts.len() == 2 => Ok((
+        SelectItem::UnnamedExpr(Expr::CompoundIdentifier(parts)) if parts.len() == 2 => Ok(Some((
             Some(parts[0].value.clone()),
             parts[1].value.clone(),
             parts[1].value.clone(),
-        )),
+        ))),
         SelectItem::ExprWithAlias {
             expr: Expr::Identifier(id),
             alias,
-        } => Ok((None, id.value.clone(), alias.value.clone())),
+        } => Ok(Some((None, id.value.clone(), alias.value.clone()))),
         SelectItem::ExprWithAlias {
             expr: Expr::CompoundIdentifier(parts),
             alias,
-        } if parts.len() == 2 => Ok((
+        } if parts.len() == 2 => Ok(Some((
             Some(parts[0].value.clone()),
             parts[1].value.clone(),
             alias.value.clone(),
-        )),
+        ))),
         SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(_, _) => Err(
             AppError::Validation("SELECT * not allowed in semantic SQL".into()),
         ),
-        _ => Err(AppError::Validation(
-            "semantic projection must be [cube.]member identifiers".into(),
-        )),
+        _ => Ok(None),
     }
-}
-
-fn projection_adhoc(
-    item: &SelectItem,
-) -> Result<Option<(String /*expr*/, String /*out_alias*/)>, AppError> {
-    let (expr, alias_opt) = match item {
-        SelectItem::UnnamedExpr(e) => (e, None),
-        SelectItem::ExprWithAlias { expr, alias } => (expr, Some(alias.value.clone())),
-        SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(_, _) => {
-            return Err(AppError::Validation(
-                "SELECT * not allowed in semantic SQL".into(),
-            ));
-        }
-    };
-    // Member identifiers are handled separately.
-    if matches!(
-        expr,
-        Expr::Identifier(_) | Expr::CompoundIdentifier(_)
-    ) {
-        return Ok(None);
-    }
-    let expr_sql = expr.to_string();
-    assert_adhoc_agg_expr(&expr_sql)?;
-    let out_alias = alias_opt.unwrap_or_else(|| sanitize_adhoc_alias(&expr_sql));
-    Ok(Some((expr_sql, out_alias)))
 }
 
 fn sanitize_adhoc_alias(expr: &str) -> String {
@@ -838,12 +978,297 @@ fn member_on_cube(docs: &[Value], cube_name: &str, member: &str) -> Result<bool,
     Ok(false)
 }
 
+/// Attribute a complex expression in Cube JOIN to `side_alias` (`cube_name`) and strip qualifiers.
+/// - If qualified, all qualifiers must belong to `side_alias` / `cube_name`.
+/// - If unqualified and has identifiers, must uniquely resolve to `side_alias`.
+/// - If unqualified with 0 identifiers (e.g. `COUNT(*)`), attributed to `sides[0]`.
+fn complex_expr_for_join_side(
+    raw_expr: &Expr,
+    docs: &[Value],
+    cube_name: &str,
+    side_alias: &str,
+    sides: &[(String, String)],
+    known_on_this_side: &HashSet<String>,
+) -> Result<Option<Expr>, AppError> {
+    let mut expr = raw_expr.clone();
+    let mut foreign = false;
+    let mut saw_side = false;
+    strip_adhoc_join_qualifiers(
+        &mut expr,
+        cube_name,
+        side_alias,
+        known_on_this_side,
+        &mut foreign,
+        &mut saw_side,
+    )?;
+    if foreign {
+        return Ok(None);
+    }
+    if saw_side {
+        let idents = extract_idents(&expr.to_string())?;
+        if idents.iter().any(|id| !known_on_this_side.contains(id)) {
+            return Ok(None);
+        }
+        return Ok(Some(expr));
+    }
+
+    // Unqualified expression in Cube JOIN:
+    let idents = extract_idents(&expr.to_string())?;
+    if idents.is_empty() {
+        // e.g. COUNT(*) — attribute to the primary (leftmost) cube side.
+        if sides.first().map(|(a, _)| a.as_str()) == Some(side_alias) {
+            return Ok(Some(expr));
+        }
+        return Ok(None);
+    }
+
+    let mut matching_sides = Vec::new();
+    for (al, cname) in sides {
+        let mut all_match = true;
+        for id in &idents {
+            if !member_on_cube(docs, cname, id)? {
+                all_match = false;
+                break;
+            }
+        }
+        if all_match {
+            matching_sides.push(al.as_str());
+        }
+    }
+    match matching_sides.len() {
+        0 => Err(AppError::Validation(format!(
+            "unknown semantic member in expression: {raw_expr}"
+        ))),
+        1 => {
+            if matching_sides[0] == side_alias {
+                Ok(Some(expr))
+            } else {
+                Ok(None)
+            }
+        }
+        _ => Err(AppError::Validation(format!(
+            "ambiguous unqualified expression {raw_expr} in cube JOIN; qualify with cube alias"
+        ))),
+    }
+}
+
+fn strip_adhoc_join_qualifiers(
+    expr: &mut Expr,
+    cube_name: &str,
+    side_alias: &str,
+    member_names: &HashSet<String>,
+    foreign: &mut bool,
+    saw_side: &mut bool,
+) -> Result<(), AppError> {
+    match expr {
+        Expr::CompoundIdentifier(parts) if parts.len() == 2 => {
+            let q = parts[0].value.clone();
+            let n = parts[1].value.clone();
+            if q == cube_name || q == side_alias {
+                if !member_names.contains(&n) {
+                    return Err(AppError::Validation(format!(
+                        "unknown member {n} on cube {cube_name}"
+                    )));
+                }
+                *saw_side = true;
+                *expr = Expr::Identifier(Ident::new(n));
+            } else {
+                *foreign = true;
+            }
+            Ok(())
+        }
+        Expr::Identifier(_) => Ok(()),
+        Expr::UnaryOp { expr: inner, .. }
+        | Expr::Nested(inner)
+        | Expr::Cast { expr: inner, .. } => strip_adhoc_join_qualifiers(
+            inner,
+            cube_name,
+            side_alias,
+            member_names,
+            foreign,
+            saw_side,
+        ),
+        Expr::BinaryOp { left, right, .. } => {
+            strip_adhoc_join_qualifiers(
+                left,
+                cube_name,
+                side_alias,
+                member_names,
+                foreign,
+                saw_side,
+            )?;
+            strip_adhoc_join_qualifiers(
+                right,
+                cube_name,
+                side_alias,
+                member_names,
+                foreign,
+                saw_side,
+            )
+        }
+        Expr::Function(func) => {
+            if let sqlparser::ast::FunctionArguments::List(list) = &mut func.args {
+                for arg in &mut list.args {
+                    match arg {
+                        sqlparser::ast::FunctionArg::Unnamed(
+                            sqlparser::ast::FunctionArgExpr::Expr(e),
+                        )
+                        | sqlparser::ast::FunctionArg::Named {
+                            arg: sqlparser::ast::FunctionArgExpr::Expr(e),
+                            ..
+                        } => {
+                            strip_adhoc_join_qualifiers(
+                                e,
+                                cube_name,
+                                side_alias,
+                                member_names,
+                                foreign,
+                                saw_side,
+                            )?;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Ok(())
+        }
+        Expr::Case {
+            operand,
+            conditions,
+            else_result,
+            ..
+        } => {
+            if let Some(op) = operand.as_mut() {
+                strip_adhoc_join_qualifiers(
+                    op,
+                    cube_name,
+                    side_alias,
+                    member_names,
+                    foreign,
+                    saw_side,
+                )?;
+            }
+            for cw in conditions.iter_mut() {
+                strip_adhoc_join_qualifiers(
+                    &mut cw.condition,
+                    cube_name,
+                    side_alias,
+                    member_names,
+                    foreign,
+                    saw_side,
+                )?;
+                strip_adhoc_join_qualifiers(
+                    &mut cw.result,
+                    cube_name,
+                    side_alias,
+                    member_names,
+                    foreign,
+                    saw_side,
+                )?;
+            }
+            if let Some(el) = else_result.as_mut() {
+                strip_adhoc_join_qualifiers(
+                    el,
+                    cube_name,
+                    side_alias,
+                    member_names,
+                    foreign,
+                    saw_side,
+                )?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Replace aggregate function calls (`sum/count/avg/min/max`) inside a hybrid expression
+/// with ephemeral metric identifiers `__adhoc_N`.
+fn replace_agg_calls_with_adhoc(
+    expr: &mut Expr,
+    member_names: &HashSet<String>,
+    adhoc_idx: &mut usize,
+    adhoc_metrics: &mut Vec<(String, String, String)>,
+) -> Result<(), AppError> {
+    match expr {
+        Expr::Function(func) => {
+            let fname = func.name.to_string().to_ascii_lowercase();
+            if matches!(fname.as_str(), "sum" | "count" | "avg" | "min" | "max") {
+                let func_sql = expr.to_string();
+                assert_adhoc_agg_expr(&func_sql)?;
+                assert_idents_known(&func_sql, member_names)?;
+                let internal = format!("__adhoc_{}", *adhoc_idx);
+                *adhoc_idx += 1;
+                adhoc_metrics.push((internal.clone(), func_sql, internal.clone()));
+                *expr = Expr::Identifier(Ident::new(internal));
+                return Ok(());
+            }
+            if let sqlparser::ast::FunctionArguments::List(list) = &mut func.args {
+                for arg in &mut list.args {
+                    match arg {
+                        sqlparser::ast::FunctionArg::Unnamed(
+                            sqlparser::ast::FunctionArgExpr::Expr(e),
+                        )
+                        | sqlparser::ast::FunctionArg::Named {
+                            arg: sqlparser::ast::FunctionArgExpr::Expr(e),
+                            ..
+                        } => {
+                            replace_agg_calls_with_adhoc(e, member_names, adhoc_idx, adhoc_metrics)?;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Ok(())
+        }
+        Expr::BinaryOp { left, right, .. } => {
+            replace_agg_calls_with_adhoc(left, member_names, adhoc_idx, adhoc_metrics)?;
+            replace_agg_calls_with_adhoc(right, member_names, adhoc_idx, adhoc_metrics)
+        }
+        Expr::UnaryOp { expr: inner, .. }
+        | Expr::Nested(inner)
+        | Expr::Cast { expr: inner, .. } => {
+            replace_agg_calls_with_adhoc(inner, member_names, adhoc_idx, adhoc_metrics)
+        }
+        Expr::Case {
+            operand,
+            conditions,
+            else_result,
+            ..
+        } => {
+            if let Some(op) = operand.as_mut() {
+                replace_agg_calls_with_adhoc(op, member_names, adhoc_idx, adhoc_metrics)?;
+            }
+            for cw in conditions.iter_mut() {
+                replace_agg_calls_with_adhoc(
+                    &mut cw.condition,
+                    member_names,
+                    adhoc_idx,
+                    adhoc_metrics,
+                )?;
+                replace_agg_calls_with_adhoc(
+                    &mut cw.result,
+                    member_names,
+                    adhoc_idx,
+                    adhoc_metrics,
+                )?;
+            }
+            if let Some(el) = else_result.as_mut() {
+                replace_agg_calls_with_adhoc(el, member_names, adhoc_idx, adhoc_metrics)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
 fn classify_projection_for_cube(
     select: &Select,
     docs: &[Value],
     cube_name: &str,
     only_alias: Option<&str>,
     is_single_cube: bool,
+    join_sides: Option<&[(String, String)]>,
 ) -> Result<ClassifiedProjection, AppError> {
     let metric_names: HashSet<String> = docs
         .iter()
@@ -861,75 +1286,189 @@ fn classify_projection_for_cube(
             for item in items {
                 if let Some(n) = item.get("name").and_then(|v| v.as_str()) {
                     member_names.insert(n.to_string());
-                    if key == "dimensions" || key == "facts" {
-                        dim_names.insert(n.to_string());
-                    }
+                    dim_names.insert(n.to_string());
                 }
             }
         }
     }
+    let mut known_on_side = member_names.clone();
+    known_on_side.extend(metric_names.iter().cloned());
 
     let mut out = ClassifiedProjection::default();
     let mut adhoc_idx = 0usize;
-    for item in &select.projection {
-        if let Some((expr_sql, out_alias)) = projection_adhoc(item)? {
-            if !is_single_cube {
-                // Attribute to this cube only if all idents belong here; else skip/reject later.
-                let idents = extract_idents(&expr_sql)?;
-                if idents.iter().any(|id| !member_names.contains(id)) {
-                    continue;
+    let empty_seg = HashMap::new();
+
+    for (idx, item) in select.projection.iter().enumerate() {
+        if let Some((qual, member, out_alias)) = try_projection_member(item)? {
+            if let Some(only) = only_alias {
+                match &qual {
+                    Some(q) if q != only && q != cube_name => {
+                        if is_single_cube {
+                            return Err(AppError::Validation(format!(
+                                "qualifier {q} does not match FROM cube {cube_name}"
+                            )));
+                        }
+                        if let Some(sides) = join_sides {
+                            if !sides.iter().any(|(a, c)| a == q || c == q) {
+                                return Err(AppError::Validation(format!(
+                                    "unknown cube qualifier {q} for member {member}"
+                                )));
+                            }
+                        }
+                        continue;
+                    }
+                    None if !is_single_cube => {
+                        if let Some(sides) = join_sides {
+                            let (owner_alias, _) =
+                                resolve_member_side(docs, sides, None, &member)?;
+                            if owner_alias != only {
+                                continue;
+                            }
+                        } else if !metric_names.contains(&member) && !dim_names.contains(&member) {
+                            continue;
+                        }
+                    }
+                    _ => {}
                 }
             }
-            let internal = format!("__adhoc_{adhoc_idx}");
-            adhoc_idx += 1;
-            out.adhoc_metrics
-                .push((internal.clone(), expr_sql, out_alias.clone()));
-            out.projections.push(CubeProjection {
-                member: internal,
-                alias: out_alias,
-            });
+            if metric_names.contains(&member) {
+                if !out.named_metrics.iter().any(|m| m == &member) {
+                    out.named_metrics.push(member.clone());
+                }
+                out.projections.push(CubeProjection {
+                    member,
+                    alias: out_alias.clone(),
+                });
+                out.attributed_items.push((idx, out_alias));
+            } else if dim_names.contains(&member) {
+                if !out.dims.iter().any(|d| d == &member) {
+                    out.dims.push(member.clone());
+                }
+                out.projections.push(CubeProjection {
+                    member,
+                    alias: out_alias.clone(),
+                });
+                out.attributed_items.push((idx, out_alias));
+            } else if is_single_cube || qual.is_some() {
+                return Err(AppError::Validation(format!(
+                    "unknown semantic member: {member}"
+                )));
+            }
             continue;
         }
 
-        let (qual, member, out_alias) = projection_member(item)?;
-        if let Some(only) = only_alias {
-            match &qual {
-                Some(q) if q != only && q != cube_name => {
-                    if is_single_cube {
-                        return Err(AppError::Validation(format!(
-                            "qualifier {q} does not match FROM cube {cube_name}"
-                        )));
-                    }
-                    continue;
-                }
-                None if !is_single_cube => {
-                    if !metric_names.contains(&member) && !dim_names.contains(&member) {
-                        continue;
-                    }
-                }
-                _ => {}
+        let (raw_expr, alias_opt) = match item {
+            SelectItem::UnnamedExpr(e) => (e, None),
+            SelectItem::ExprWithAlias { expr, alias } => (expr, Some(alias.value.clone())),
+            SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(_, _) => {
+                return Err(AppError::Validation(
+                    "SELECT * not allowed in semantic SQL".into(),
+                ));
             }
-        }
-        if metric_names.contains(&member) {
-            if !out.named_metrics.iter().any(|m| m == &member) {
-                out.named_metrics.push(member.clone());
+        };
+
+        let mut stripped_expr = if is_single_cube {
+            expand_segments_and_strip_qualifier(
+                raw_expr,
+                &empty_seg,
+                cube_name,
+                only_alias,
+                true,
+                None,
+            )?
+        } else {
+            let Some(alias) = only_alias else {
+                continue;
+            };
+            match complex_expr_for_join_side(
+                raw_expr,
+                docs,
+                cube_name,
+                alias,
+                join_sides.unwrap_or(&[]),
+                &known_on_side,
+            )? {
+                Some(e) => e,
+                None => continue,
+            }
+        };
+
+        let stripped_sql = stripped_expr.to_string();
+        let out_alias = alias_opt.unwrap_or_else(|| sanitize_adhoc_alias(&stripped_sql));
+        let ids = extract_idents(&stripped_sql)?;
+        let refs_named_metric = ids.iter().any(|id| metric_names.contains(id));
+        let has_agg = contains_aggregate_sql(&stripped_sql)?;
+
+        if !refs_named_metric && has_agg {
+            // Pure ad-hoc aggregate expression (e.g., sum(sale_amount), round(avg(x), 2)).
+            assert_adhoc_agg_expr(&stripped_sql)?;
+            assert_idents_known(&stripped_sql, &member_names)?;
+            let internal = format!("__adhoc_{adhoc_idx}");
+            adhoc_idx += 1;
+            out.adhoc_metrics
+                .push((internal.clone(), stripped_sql, out_alias.clone()));
+            out.projections.push(CubeProjection {
+                member: internal,
+                alias: out_alias.clone(),
+            });
+            out.attributed_items.push((idx, out_alias));
+        } else if refs_named_metric && !has_agg {
+            // Derived expression over named metric(s) (e.g., round(revenue, 2), paid_revenue / revenue).
+            assert_scalar_expr(&stripped_sql)?;
+            assert_idents_known(&stripped_sql, &metric_names)?;
+            for id in ids {
+                if !out.named_metrics.iter().any(|m| m == &id) {
+                    out.named_metrics.push(id);
+                }
             }
             out.projections.push(CubeProjection {
-                member,
-                alias: out_alias,
+                member: stripped_sql,
+                alias: out_alias.clone(),
             });
-        } else if dim_names.contains(&member) {
-            if !out.dims.iter().any(|d| d == &member) {
-                out.dims.push(member.clone());
+            out.attributed_items.push((idx, out_alias));
+        } else if refs_named_metric && has_agg {
+            // Hybrid expression combining named metric(s) and ad-hoc aggregate(s) (e.g., revenue / count(*)).
+            replace_agg_calls_with_adhoc(
+                &mut stripped_expr,
+                &member_names,
+                &mut adhoc_idx,
+                &mut out.adhoc_metrics,
+            )?;
+            let composite_sql = stripped_expr.to_string();
+            assert_scalar_expr(&composite_sql)?;
+            for id in extract_idents(&composite_sql)? {
+                if metric_names.contains(&id) {
+                    if !out.named_metrics.iter().any(|m| m == &id) {
+                        out.named_metrics.push(id);
+                    }
+                } else if !id.starts_with("__adhoc_") {
+                    return Err(AppError::Validation(format!(
+                        "cannot mix unaggregated member {id} with metric in expression: {stripped_sql}"
+                    )));
+                }
             }
             out.projections.push(CubeProjection {
-                member,
-                alias: out_alias,
+                member: composite_sql,
+                alias: out_alias.clone(),
             });
-        } else if is_single_cube || qual.is_some() {
-            return Err(AppError::Validation(format!(
-                "unknown semantic member: {member}"
-            )));
+            out.attributed_items.push((idx, out_alias));
+        } else {
+            // Non-aggregate scalar expression over cube dimensions/facts (e.g., date_trunc('month', order_date), sale_amount * fx_rate).
+            if ids.is_empty() {
+                return Err(AppError::Validation(
+                    "semantic SELECT projection must reference a cube member or metric".into(),
+                ));
+            }
+            assert_scalar_expr(&stripped_sql)?;
+            assert_idents_known(&stripped_sql, &member_names)?;
+            if !out.dims.iter().any(|d| d == &stripped_sql) {
+                out.dims.push(stripped_sql.clone());
+            }
+            out.projections.push(CubeProjection {
+                member: stripped_sql,
+                alias: out_alias.clone(),
+            });
+            out.attributed_items.push((idx, out_alias));
         }
     }
     Ok(out)
@@ -975,8 +1514,14 @@ fn extract_where_for_cube(
         if !is_single_cube && !expr_belongs_to_cube(conj, docs, cube_name, only_alias)? {
             continue;
         }
-        let rewritten =
-            expand_segments_and_strip_qualifier(conj, &seg_map, cube_name, only_alias, is_single_cube, role)?;
+        let rewritten = expand_segments_and_strip_qualifier(
+            conj,
+            &seg_map,
+            cube_name,
+            only_alias,
+            is_single_cube,
+            role,
+        )?;
         where_exprs.push(rewritten.to_string());
     }
 
@@ -1072,10 +1617,16 @@ fn collect_expr_quals_and_idents(expr: &Expr, quals: &mut Vec<String>, bare: &mu
             collect_expr_quals_and_idents(left, quals, bare);
             collect_expr_quals_and_idents(right, quals, bare);
         }
-        Expr::UnaryOp { expr, .. } | Expr::Nested(expr) | Expr::IsNull(expr) | Expr::IsNotNull(expr) => {
+        Expr::UnaryOp { expr, .. }
+        | Expr::Nested(expr)
+        | Expr::IsNull(expr)
+        | Expr::IsNotNull(expr)
+        | Expr::Cast { expr, .. } => {
             collect_expr_quals_and_idents(expr, quals, bare);
         }
-        Expr::Between { expr, low, high, .. } => {
+        Expr::Between {
+            expr, low, high, ..
+        } => {
             collect_expr_quals_and_idents(expr, quals, bare);
             collect_expr_quals_and_idents(low, quals, bare);
             collect_expr_quals_and_idents(high, quals, bare);
@@ -1089,6 +1640,41 @@ fn collect_expr_quals_and_idents(expr: &Expr, quals: &mut Vec<String>, bare: &mu
         Expr::Like { expr, pattern, .. } | Expr::ILike { expr, pattern, .. } => {
             collect_expr_quals_and_idents(expr, quals, bare);
             collect_expr_quals_and_idents(pattern, quals, bare);
+        }
+        Expr::Function(func) => {
+            if let sqlparser::ast::FunctionArguments::List(list) = &func.args {
+                for arg in &list.args {
+                    match arg {
+                        sqlparser::ast::FunctionArg::Unnamed(
+                            sqlparser::ast::FunctionArgExpr::Expr(e),
+                        )
+                        | sqlparser::ast::FunctionArg::Named {
+                            arg: sqlparser::ast::FunctionArgExpr::Expr(e),
+                            ..
+                        } => {
+                            collect_expr_quals_and_idents(e, quals, bare);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        Expr::Case {
+            operand,
+            conditions,
+            else_result,
+            ..
+        } => {
+            if let Some(op) = operand {
+                collect_expr_quals_and_idents(op, quals, bare);
+            }
+            for cw in conditions {
+                collect_expr_quals_and_idents(&cw.condition, quals, bare);
+                collect_expr_quals_and_idents(&cw.result, quals, bare);
+            }
+            if let Some(el) = else_result {
+                collect_expr_quals_and_idents(el, quals, bare);
+            }
         }
         _ => {}
     }
@@ -1196,6 +1782,64 @@ fn rewrite_where_ast(
             rewrite_where_ast(e, seg_map, cube_name, only_alias, is_single_cube, role)?;
             rewrite_where_ast(pattern, seg_map, cube_name, only_alias, is_single_cube, role)
         }
+        Expr::Function(func) => {
+            if let sqlparser::ast::FunctionArguments::List(list) = &mut func.args {
+                for arg in &mut list.args {
+                    match arg {
+                        sqlparser::ast::FunctionArg::Unnamed(
+                            sqlparser::ast::FunctionArgExpr::Expr(e),
+                        )
+                        | sqlparser::ast::FunctionArg::Named {
+                            arg: sqlparser::ast::FunctionArgExpr::Expr(e),
+                            ..
+                        } => {
+                            rewrite_where_ast(
+                                e,
+                                seg_map,
+                                cube_name,
+                                only_alias,
+                                is_single_cube,
+                                role,
+                            )?;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Ok(())
+        }
+        Expr::Case {
+            operand,
+            conditions,
+            else_result,
+            ..
+        } => {
+            if let Some(op) = operand.as_mut() {
+                rewrite_where_ast(op, seg_map, cube_name, only_alias, is_single_cube, role)?;
+            }
+            for cw in conditions.iter_mut() {
+                rewrite_where_ast(
+                    &mut cw.condition,
+                    seg_map,
+                    cube_name,
+                    only_alias,
+                    is_single_cube,
+                    role,
+                )?;
+                rewrite_where_ast(
+                    &mut cw.result,
+                    seg_map,
+                    cube_name,
+                    only_alias,
+                    is_single_cube,
+                    role,
+                )?;
+            }
+            if let Some(el) = else_result.as_mut() {
+                rewrite_where_ast(el, seg_map, cube_name, only_alias, is_single_cube, role)?;
+            }
+            Ok(())
+        }
         _ => Ok(()),
     }
 }
@@ -1219,6 +1863,8 @@ fn extract_group_by_for_cube(
     select: &Select,
     cube_name: &str,
     cube_alias: &str,
+    projections: &[CubeProjection],
+    dim_exprs: &[String],
 ) -> Result<(Option<Vec<String>>, Option<String>), AppError> {
     let GroupByExpr::Expressions(exprs, _) = &select.group_by else {
         return Ok((None, None));
@@ -1234,7 +1880,13 @@ fn extract_group_by_for_cube(
                 agg_mode = Some("rollup".to_string());
                 for g in groups {
                     for item in g {
-                        dims.push(extract_cube_ident(item, cube_name, cube_alias)?);
+                        dims.push(extract_cube_group_expr(
+                            item,
+                            cube_name,
+                            cube_alias,
+                            projections,
+                            dim_exprs,
+                        )?);
                     }
                 }
             }
@@ -1242,7 +1894,13 @@ fn extract_group_by_for_cube(
                 agg_mode = Some("cube".to_string());
                 for g in groups {
                     for item in g {
-                        dims.push(extract_cube_ident(item, cube_name, cube_alias)?);
+                        dims.push(extract_cube_group_expr(
+                            item,
+                            cube_name,
+                            cube_alias,
+                            projections,
+                            dim_exprs,
+                        )?);
                     }
                 }
             }
@@ -1250,25 +1908,59 @@ fn extract_group_by_for_cube(
                 agg_mode = Some("grouping_sets".to_string());
                 for g in groups {
                     for item in g {
-                        dims.push(extract_cube_ident(item, cube_name, cube_alias)?);
+                        dims.push(extract_cube_group_expr(
+                            item,
+                            cube_name,
+                            cube_alias,
+                            projections,
+                            dim_exprs,
+                        )?);
                     }
                 }
             }
             other => {
-                dims.push(extract_cube_ident(other, cube_name, cube_alias)?);
+                dims.push(extract_cube_group_expr(
+                    other,
+                    cube_name,
+                    cube_alias,
+                    projections,
+                    dim_exprs,
+                )?);
             }
         }
     }
     Ok((Some(dims), agg_mode))
 }
 
-fn extract_cube_ident(
+fn extract_cube_group_expr(
     expr: &Expr,
     cube_name: &str,
     cube_alias: &str,
+    projections: &[CubeProjection],
+    dim_exprs: &[String],
 ) -> Result<String, AppError> {
     match expr {
-        Expr::Identifier(id) => Ok(id.value.clone()),
+        Expr::Value(v) => {
+            if let Ok(pos) = v.to_string().parse::<usize>() {
+                if pos >= 1 && pos <= projections.len() {
+                    let target = &projections[pos - 1].member;
+                    if dim_exprs.iter().any(|d| d == target) {
+                        return Ok(target.clone());
+                    }
+                }
+            }
+            Err(AppError::Validation(format!(
+                "invalid GROUP BY position: {v}"
+            )))
+        }
+        Expr::Identifier(id) => {
+            if let Some(proj) = projections.iter().find(|p| p.alias == id.value) {
+                if dim_exprs.iter().any(|d| d == &proj.member) {
+                    return Ok(proj.member.clone());
+                }
+            }
+            Ok(id.value.clone())
+        }
         Expr::CompoundIdentifier(parts) if parts.len() == 2 => {
             let q = &parts[0].value;
             let n = &parts[1].value;
@@ -1279,10 +1971,23 @@ fn extract_cube_ident(
             }
             Ok(n.clone())
         }
-        Expr::Nested(inner) => extract_cube_ident(inner, cube_name, cube_alias),
-        other => Err(AppError::Validation(format!(
-            "unsupported GROUP BY expression: {other}"
-        ))),
+        Expr::Nested(inner) => {
+            extract_cube_group_expr(inner, cube_name, cube_alias, projections, dim_exprs)
+        }
+        other => {
+            let empty = HashMap::new();
+            let stripped = expand_segments_and_strip_qualifier(
+                other,
+                &empty,
+                cube_name,
+                Some(cube_alias),
+                true,
+                None,
+            )?;
+            let s = stripped.to_string();
+            assert_scalar_expr(&s)?;
+            Ok(s)
+        }
     }
 }
 
@@ -1322,35 +2027,57 @@ fn extract_order_by(
             "ORDER BY ALL is not supported in semantic SQL".into(),
         ));
     };
+    let empty = HashMap::new();
     let mut out = Vec::new();
     for OrderByExpr { expr, options, .. } in exprs {
-        let target = match expr {
-            Expr::Identifier(id) => quote_ident(&id.value)?,
-            Expr::CompoundIdentifier(parts) if parts.len() == 2 => {
-                let qname = &parts[0].value;
-                let col = &parts[1].value;
-                if let Some((alias, cname)) = single_cube {
+        let target = if let Some((alias, cname)) = single_cube {
+            match expr {
+                Expr::Identifier(id) => quote_ident(&id.value)?,
+                Expr::CompoundIdentifier(parts) if parts.len() == 2 => {
+                    let qname = &parts[0].value;
+                    let col = &parts[1].value;
                     if qname != alias && qname != cname {
                         return Err(AppError::Validation(format!(
                             "ORDER BY qualifier {qname} does not match cube {cname}"
                         )));
                     }
                     quote_ident(col)?
-                } else if let Some((side_alias, _)) = join_sides
-                    .iter()
-                    .find(|(a, c)| a == qname || c == qname)
-                {
-                    format!("{}.{}", quote_ident(side_alias)?, quote_ident(col)?)
-                } else {
-                    return Err(AppError::Validation(format!(
-                        "unknown ORDER BY qualifier: {qname}"
-                    )));
+                }
+                Expr::Value(v) if v.to_string().parse::<usize>().is_ok() => v.to_string(),
+                other => {
+                    let stripped = expand_segments_and_strip_qualifier(
+                        other,
+                        &empty,
+                        cname,
+                        Some(alias),
+                        true,
+                        None,
+                    )?;
+                    stripped.to_string()
                 }
             }
-            other => {
-                return Err(AppError::Validation(format!(
-                    "ORDER BY must reference a semantic column or alias, got: {other}"
-                )));
+        } else {
+            match expr {
+                Expr::Identifier(id) => quote_ident(&id.value)?,
+                Expr::CompoundIdentifier(parts) if parts.len() == 2 => {
+                    let qname = &parts[0].value;
+                    let col = &parts[1].value;
+                    if let Some((side_alias, _)) =
+                        join_sides.iter().find(|(a, c)| a == qname || c == qname)
+                    {
+                        format!("{}.{}", quote_ident(side_alias)?, quote_ident(col)?)
+                    } else {
+                        return Err(AppError::Validation(format!(
+                            "unknown ORDER BY qualifier: {qname}"
+                        )));
+                    }
+                }
+                Expr::Value(v) if v.to_string().parse::<usize>().is_ok() => v.to_string(),
+                other => {
+                    return Err(AppError::Validation(format!(
+                        "ORDER BY must reference a semantic column or alias, got: {other}"
+                    )));
+                }
             }
         };
         let mut item = target;
@@ -1849,23 +2576,36 @@ mod tests {
     }
 
     #[test]
-    fn rejects_group_by_in_dim_fact_ungrouped() {
+    fn compiles_dim_only_group_by_and_having_and_agg_order_by() {
         let docs = example_docs();
-        let err = compile_semantic_sql(
+        let sql = compile_semantic_sql(
             &docs,
             "SELECT region_code FROM sales GROUP BY region_code",
             Some("finance"),
         )
-        .unwrap_err();
-        assert!(
-            matches!(err, AppError::Validation(ref m) if m.to_ascii_lowercase().contains("group") || m.contains("ungrouped")),
-            "{err:?}"
-        );
+        .unwrap();
+        let upper = sql.to_ascii_uppercase();
+        assert!(upper.contains("GROUP BY"), "expected GROUP BY in {sql}");
+        assert_select_only(&sql).unwrap();
+
+        let sql_having = compile_semantic_sql(
+            &docs,
+            "SELECT region_code FROM sales WHERE status_code <> 'CANCEL' \
+             GROUP BY region_code HAVING COUNT(*) > 20 ORDER BY SUM(sale_amount) DESC LIMIT 1",
+            Some("finance"),
+        )
+        .unwrap();
+        let u2 = sql_having.to_ascii_uppercase();
+        assert!(u2.contains("GROUP BY"), "{sql_having}");
+        assert!(u2.contains("HAVING COUNT(*) > 20"), "{sql_having}");
+        assert!(u2.contains("ORDER BY SUM("), "{sql_having}");
+        assert_select_only(&sql_having).unwrap();
     }
 
     #[test]
-    fn rejects_ungrouped_in_cube_join() {
+    fn rejects_ungrouped_cube_join_without_distinct_and_allows_distinct_or_grouped() {
         let docs = docs_with_second_cube("dw");
+        // Non-DISTINCT ungrouped Cube JOIN is rejected to prevent Chasm Trap fan-out.
         let err = compile_semantic_sql(
             &docs,
             "SELECT sales.region_code, sales_b.region_code \
@@ -1873,7 +2613,35 @@ mod tests {
             Some("finance"),
         )
         .unwrap_err();
-        assert!(matches!(err, AppError::Validation(_)), "{err:?}");
+        assert!(
+            matches!(err, AppError::Validation(ref m) if m.contains("DISTINCT") || m.contains("fan-out")),
+            "{err:?}"
+        );
+
+        // SELECT DISTINCT ungrouped Cube JOIN is allowed.
+        let distinct_sql = compile_semantic_sql(
+            &docs,
+            "SELECT DISTINCT sales.region_code, sales_b.region_code AS reg_b \
+             FROM sales JOIN sales_b ON sales.region_code = sales_b.region_code",
+            Some("finance"),
+        )
+        .unwrap();
+        let u = distinct_sql.to_ascii_uppercase();
+        assert!(u.contains("SELECT DISTINCT"), "{distinct_sql}");
+        assert!(u.contains("JOIN"), "{distinct_sql}");
+        assert_select_only(&distinct_sql).unwrap();
+
+        // Explicit GROUP BY Cube JOIN without metrics is also allowed.
+        let grouped_sql = compile_semantic_sql(
+            &docs,
+            "SELECT sales.region_code, sales_b.region_code AS reg_b \
+             FROM sales JOIN sales_b ON sales.region_code = sales_b.region_code \
+             GROUP BY sales.region_code, sales_b.region_code",
+            Some("finance"),
+        )
+        .unwrap();
+        assert!(grouped_sql.to_ascii_uppercase().contains("GROUP BY"), "{grouped_sql}");
+        assert_select_only(&grouped_sql).unwrap();
     }
 
     #[test]
@@ -1906,18 +2674,42 @@ mod tests {
     }
 
     #[test]
-    fn rejects_mixing_named_metric_and_adhoc() {
+    fn compiles_mixing_named_metric_and_adhoc_and_enforces_named_grain() {
         let docs = example_docs();
+        let sql = compile_semantic_sql(
+            &docs,
+            "SELECT region_code, revenue, sum(sale_amount) AS total, \
+             revenue / count(*) AS avg_rev, round(revenue, 2) AS rev_round \
+             FROM sales GROUP BY region_code",
+            Some("finance"),
+        )
+        .unwrap();
+        let upper = sql.to_ascii_uppercase();
+        assert!(upper.contains("SUM("), "{sql}");
+        assert!(upper.contains("COUNT(*)"), "{sql}");
+        assert!(upper.contains("ROUND("), "{sql}");
+        assert_select_only(&sql).unwrap();
+
+        // Named metric `revenue` only allows `region_code` and `order_date` in group_by, so `customer_id` is rejected when mixed with `revenue`.
         let err = compile_semantic_sql(
             &docs,
-            "SELECT region_code, revenue, sum(sale_amount) AS total FROM sales",
+            "SELECT customer_id, revenue, count(*) AS cnt FROM sales",
             Some("finance"),
         )
         .unwrap_err();
         assert!(
-            matches!(err, AppError::Validation(ref m) if m.contains("mix") || m.contains("혼용") || m.contains("ad-hoc") || m.contains("adhoc")),
+            matches!(err, AppError::Validation(ref m) if m.contains("not in metric group_by")),
             "{err:?}"
         );
+
+        // Pure ad-hoc aggregate without `revenue` can group by `customer_id`.
+        let adhoc_ok = compile_semantic_sql(
+            &docs,
+            "SELECT customer_id, count(*) AS cnt FROM sales",
+            Some("finance"),
+        )
+        .unwrap();
+        assert!(adhoc_ok.to_ascii_uppercase().contains("GROUP BY"), "{adhoc_ok}");
     }
 
     #[test]
@@ -1933,15 +2725,79 @@ mod tests {
     }
 
     #[test]
-    fn rejects_adhoc_in_cube_join() {
+    fn compiles_mixing_named_and_adhoc_in_cube_join_and_filter_only_side() {
         let docs = docs_with_second_cube("dw");
-        let err = compile_semantic_sql(
+        // Mixing named metric + ad-hoc aggregate across or within joined cubes is allowed.
+        let sql = compile_semantic_sql(
             &docs,
-            "SELECT sales.revenue, sum(sale_amount) AS total \
+            "SELECT sales.revenue, sum(sales_b.sale_amount) AS total \
              FROM sales JOIN sales_b ON sales.region_code = sales_b.region_code",
             Some("finance"),
         )
-        .unwrap_err();
-        assert!(matches!(err, AppError::Validation(_)), "{err:?}");
+        .unwrap();
+        let u = sql.to_ascii_uppercase();
+        assert!(u.contains("JOIN"), "{sql}");
+        assert!(u.contains("SUM("), "{sql}");
+        assert_select_only(&sql).unwrap();
+
+        // Joined side `sales_b` with 0 metrics (used only for join/filtering) compiles as a grouped subquery.
+        let filter_side_sql = compile_semantic_sql(
+            &docs,
+            "SELECT sales.revenue, sum(sales.sale_amount) AS total \
+             FROM sales JOIN sales_b ON sales.region_code = sales_b.region_code \
+             WHERE sales_b.status_code = 'PAID'",
+            Some("finance"),
+        )
+        .unwrap();
+        assert!(filter_side_sql.to_ascii_uppercase().contains("JOIN"), "{filter_side_sql}");
+        assert_select_only(&filter_side_sql).unwrap();
+    }
+
+    #[test]
+    fn compiles_adhoc_cube_join() {
+        let docs = docs_with_second_cube("dw");
+        let sql = compile_semantic_sql(
+            &docs,
+            "SELECT sales.region_code, sum(sales.sale_amount) AS a, sum(sales_b.sale_amount) AS b \
+             FROM sales JOIN sales_b ON sales.region_code = sales_b.region_code \
+             GROUP BY sales.region_code",
+            Some("finance"),
+        )
+        .unwrap();
+        let u = sql.to_ascii_uppercase();
+        assert!(u.contains("JOIN"), "{sql}");
+        assert!(u.contains("SUM("), "{sql}");
+        assert_select_only(&sql).unwrap();
+    }
+
+    #[test]
+    fn compiles_scalar_expressions_and_unprojected_order_by() {
+        let docs = example_docs();
+        // Scalar date_trunc in SELECT + GROUP BY by alias + positional ORDER BY
+        let sql_grouped = compile_semantic_sql(
+            &docs,
+            "SELECT date_trunc('month', order_date) AS m, sum(sale_amount) AS total \
+             FROM sales GROUP BY m ORDER BY 2 DESC",
+            Some("finance"),
+        )
+        .unwrap();
+        let ug = sql_grouped.to_ascii_uppercase();
+        assert!(ug.contains("DATE_TRUNC"), "{sql_grouped}");
+        assert!(ug.contains("GROUP BY"), "{sql_grouped}");
+        assert!(ug.contains("ORDER BY 2 DESC"), "{sql_grouped}");
+        assert_select_only(&sql_grouped).unwrap();
+
+        // Ungrouped scalar arithmetic in SELECT + unprojected cube member in ORDER BY
+        let sql_ungrouped = compile_semantic_sql(
+            &docs,
+            "SELECT sale_amount * fx_rate AS krw_amount \
+             FROM sales WHERE status_code = 'PAID' ORDER BY order_date DESC LIMIT 5",
+            Some("finance"),
+        )
+        .unwrap();
+        let uu = sql_ungrouped.to_ascii_uppercase();
+        assert!(!uu.contains("GROUP BY"), "{sql_ungrouped}");
+        assert!(uu.contains("ORDER BY \"ORDERS\".\"ORDER_DATE\" DESC"), "{sql_ungrouped}");
+        assert_select_only(&sql_ungrouped).unwrap();
     }
 }

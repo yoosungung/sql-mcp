@@ -6,7 +6,7 @@
 ## 0. 확정 전제 (계획과 동일)
 
 1. **카탈로그는 타입별 `meta_*` 테이블**에 저장한다. `document(kind,name,body)` 단일 blob 정본은 쓰지 않는다. MCP `metadata_*` **입출력은 JSON**(`document.schema.json`)이며, 저장 시 타입별 행으로 분해·조회 시 JSON으로 재조립한다.
-2. **타깃 질의는 시맨틱 SELECT만.** 자유 물리 SELECT 경로는 없다(D19). 공개 툴 `execute_sql`의 입력은 시맨틱 SQL이고, 6단계 컴파일 후에만 물리 SQL이 생성·실행된다. (문서·다이어그램의 `execute_semantic_sql`은 **이명** — 공개 툴명을 바꾸지 않는다.) **D23:** 한 SELECT는 (A) 명명 metric · (B) ad-hoc 집계 · (C) dim/fact-only ungrouped 중 하나만 — 혼용 거절. (B)는 단일 cube · `sum|count|avg|min|max`(…) 등 집계식(fact/dim만). (C)는 dim·fact 프로젝션만 · GROUP BY/HAVING 없음 · 단일 cube. JOIN에서는 (B)(C) 거절.
+2. **타깃 질의는 시맨틱 SELECT만.** 자유 물리 SELECT 경로는 없다(D19). 공개 툴 `execute_sql`의 입력은 시맨틱 SQL이고, 6단계 컴파일 후에만 물리 SQL이 생성·실행된다. (문서·다이어그램의 `execute_semantic_sql`은 **이명** — 공개 툴명을 바꾸지 않는다.) **D23:** 시맨틱 SELECT는 그레인 기반 2-모드로 동작한다 — **(1) Grouped(집계) 모드:** 명명 metric · ad-hoc 집계(`sum/count/avg/min/max`) · metric 파생 연산 **동일 SELECT 혼용 허용**, 차원 스칼라 식(`date_trunc` 등) 및 차원-only `GROUP BY`/`HAVING` 허용, `HAVING`/`ORDER BY` 집계식 허용, 동일 `target` cube JOIN 허용(metric 없는 JOIN 측은 참조 차원 `GROUP BY` 서브쿼리로 다대다 팬아웃 방지). **(2) Ungrouped(행 상세) 모드:** metric·집계·`GROUP BY`·`HAVING` 없는 dim·fact(+비집계 스칼라 식) 프로젝션, `SELECT DISTINCT` 지원, 비-`DISTINCT` 상세 조회 시 요약 뷰(`summary: true`) 우회(원천 뷰 선택) 및 비-`DISTINCT` cube JOIN 거절.
 3. **툴 표면 유지:** `execute_sql`, `sample_column`, `search_columns`, `metadata_*` 등 현행 이름. `sample_cube_data`는 `sample_column`의 이명이다.
 4. **타깃 접속:** Postgres·MySQL=`sqlx`, SQLite=`libsql`(로컬), Oracle=`oracledb`(thin). JDBC/ODBC/ADBC는 쓰지 않는다.
 5. **검색:** keyword는 **FTS5**(순위는 `bm25()` — 별도 BM25 엔진이 아님). **vector + hybrid(RRF) 유지.** 구조화 FTS(`meta_search_fts`)와 embedding side table을 쓰며, FTS를 이중으로 두지 않는다.
@@ -118,18 +118,18 @@ CREATE VIRTUAL TABLE column_index_fts USING fts5(
 
 - 동작:
   - WHERE 전개: 세그먼트 식별자는 `meta_segments.filter_expression`으로 치환하고, 일반 dimension/fact 조건식은 AST 제한(`assert_filter_expr`) 및 식별자 검증(`assert_idents_known`) 후 보존한다.
-  - Metric 전개: 단일·복수 metric을 지원한다. 단일 metric(또는 동일 필터)은 `filter_expression`을 WHERE AND로 두고, 복수 metric에서 개별 필터가 다르면 `CASE WHEN (filter) THEN expr END`로 집계 내부에 주입한다.
-  - Group By 결정: SELECT/GROUP BY에 명시된 dimension 부분집합(생략 시 `metric.group_by` 기본값)을 사용하며, `aggregation`이 `rollup`/`cube`/`grouping_sets`이면 해당 그룹핑 절을 생성한다.
+  - Metric 및 집계 전개(D23): 명명 metric, ad-hoc 집계(`sum/count/avg/min/max`), metric 간 파생 연산을 동일 SELECT에서 함께 지원한다. 단일 metric(또는 모든 활성 metric의 필터가 동일)이면 `filter_expression`을 WHERE AND로 두고, 복수 metric에서 개별 필터(또는 무필터 ad-hoc 혼합)가 다르면 `CASE WHEN (filter) THEN expr END`로 집계 내부에 주입한다.
+  - Group By 결정: 명시된 `GROUP BY`(차원 식별자·프로젝션 별칭·위치 `1..N`·차원 스칼라 식) → 없으면 프로젝션된 dimension(및 차원 스칼라 식) → 둘 다 없으면 명명 metric 전용 질의는 `metric.group_by` 기본값, ad-hoc 포함 질의는 전역 집계를 사용한다. 각 명명 metric(`aggregation=group`)은 활성 차원이 자신의 `metric.group_by`에 속하는지 개별 검증하며, `aggregation`이 `rollup`/`cube`/`grouping_sets`이면 해당 그룹핑 절을 생성한다. 프로젝션에 metric 없이 차원만 두고 `GROUP BY`/`HAVING`/집계 `ORDER BY`를 쓴 질의도 Grouped 모드로 컴파일한다.
   - 가산성: `COUNT(DISTINCT)` / `AVG` / `MEDIAN` 등이면 `is_semi_additive` — 요약 뷰 그레뉼러리티 불일치 방지.
-- 출력: Dimension·Fact 기준 큐브 SQL 계획 + 필터 목록 + `HAVING`/`ORDER BY`/`LIMIT`/`OFFSET`
+- 출력: Dimension·Fact 기준 큐브 SQL 계획 + 필터 목록 + `DISTINCT`/`HAVING`/`ORDER BY`/`LIMIT`/`OFFSET`
 
 ### Step 3: 요약 뷰(Summary View) 우선 라우팅 및 커버리지 검증
 
 - 동작:
-  - Cube의 View가 `combine: "select"`이고 `prefer: "summary"`이면 `summary: true` source를 우선.
-  - ReqCols = Projection ∪ GROUP BY ∪ WHERE ∪ Metric Filter 컬럼.
-  - 요약 뷰의 `meta_view_columns`가 ReqCols를 커버하는지 확인. 비가산(`is_semi_additive`) metric이면 요약 뷰 컬럼 집합이 `ReqCols`와 **정확히 일치**할 때만 채택.
-  - 조건을 만족하는 최적 요약 뷰를 고르고, 없으면 기본(원천) View.
+  - Cube의 View가 `combine: "select"`이고 `prefer: "summary"`일 때, **Grouped 모드(또는 `SELECT DISTINCT`)**이면 `summary: true` source를 우선하고, **비-`DISTINCT` Ungrouped 상세 행 조회(D23)**이면 사전 집계 왜곡을 막기 위해 `summary: false` 원천 뷰를 우선한다.
+  - ReqCols = Projection ∪ GROUP BY ∪ WHERE ∪ HAVING ∪ ORDER BY ∪ Metric Filter 컬럼.
+  - 후보 뷰의 `meta_view_columns`가 ReqCols를 커버하는지 확인. 비가산(`is_semi_additive`) metric이면 요약 뷰 컬럼 집합이 `ReqCols`와 **정확히 일치**할 때만 채택.
+  - 조건을 만족하는 최적 뷰를 고르고, 없으면 기본(원천) View.
 - 출력: 선택된 단일 View (join, union, minus)
 
 ### Step 4: 테이블 가지치기 (Join 그래프 최소 경로 & Union Pruning)

@@ -28,12 +28,25 @@ pub fn assert_metric_expr(expr: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// D23 scalar expression over dimensions/facts (no aggregate functions allowed).
+pub fn assert_scalar_expr(expr: &str) -> Result<(), AppError> {
+    let (normalized, _) = replace_binds(expr);
+    let e = parse_as_select_expr(&normalized)?;
+    walk_value_expr(&e, false)?;
+    Ok(())
+}
+
+/// Return true if `expr` is a valid metric/value expression that contains an aggregate function.
+pub fn contains_aggregate_sql(expr: &str) -> Result<bool, AppError> {
+    let (normalized, _) = replace_binds(expr);
+    let e = parse_as_select_expr(&normalized)?;
+    Ok(contains_aggregate(&e))
+}
+
 /// D23 ad-hoc projection: same AST as metric expression, but must include an aggregate.
 pub fn assert_adhoc_agg_expr(expr: &str) -> Result<(), AppError> {
     assert_metric_expr(expr)?;
-    let (normalized, _) = replace_binds(expr);
-    let e = parse_as_select_expr(&normalized)?;
-    if !contains_aggregate(&e) {
+    if !contains_aggregate_sql(expr)? {
         return Err(AppError::Validation(
             "ad-hoc projection must be an aggregate expression".into(),
         ));
@@ -82,11 +95,19 @@ fn contains_aggregate(expr: &Expr) -> bool {
     }
 }
 
-/// Filter / segment predicate: single boolean expr (D16).
+/// Filter / segment predicate: single boolean expr (D16, no aggregates).
 pub fn assert_filter_expr(expr: &str) -> Result<(), AppError> {
     let (normalized, _) = replace_binds(expr);
     let e = parse_as_where_expr(&normalized)?;
-    walk_bool_expr(&e)?;
+    walk_bool_expr_opts(&e, false)?;
+    Ok(())
+}
+
+/// HAVING predicate: single boolean expr where value operands may contain aggregates (D23).
+pub fn assert_having_expr(expr: &str) -> Result<(), AppError> {
+    let (normalized, _) = replace_binds(expr);
+    let e = parse_as_where_expr(&normalized)?;
+    walk_bool_expr_opts(&e, true)?;
     Ok(())
 }
 
@@ -262,7 +283,7 @@ fn walk_value_expr(expr: &Expr, allow_agg: bool) -> Result<(), AppError> {
                 if operand.is_some() {
                     walk_value_expr(&cw.condition, allow_agg)?;
                 } else {
-                    walk_bool_expr(&cw.condition)?;
+                    walk_bool_expr_opts(&cw.condition, false)?;
                 }
                 walk_value_expr(&cw.result, allow_agg)?;
             }
@@ -293,18 +314,18 @@ fn walk_value_expr(expr: &Expr, allow_agg: bool) -> Result<(), AppError> {
     }
 }
 
-fn walk_bool_expr(expr: &Expr) -> Result<(), AppError> {
+fn walk_bool_expr_opts(expr: &Expr, allow_agg: bool) -> Result<(), AppError> {
     reject_subquery(expr)?;
     match expr {
-        Expr::Nested(inner) => walk_bool_expr(inner),
+        Expr::Nested(inner) => walk_bool_expr_opts(inner, allow_agg),
         Expr::UnaryOp {
             op: UnaryOperator::Not,
             expr,
-        } => walk_bool_expr(expr),
+        } => walk_bool_expr_opts(expr, allow_agg),
         Expr::BinaryOp { left, op, right } => match op {
             BinaryOperator::And | BinaryOperator::Or | BinaryOperator::Xor => {
-                walk_bool_expr(left)?;
-                walk_bool_expr(right)
+                walk_bool_expr_opts(left, allow_agg)?;
+                walk_bool_expr_opts(right, allow_agg)
             }
             BinaryOperator::Eq
             | BinaryOperator::NotEq
@@ -312,31 +333,31 @@ fn walk_bool_expr(expr: &Expr) -> Result<(), AppError> {
             | BinaryOperator::LtEq
             | BinaryOperator::Gt
             | BinaryOperator::GtEq => {
-                walk_value_expr(left, false)?;
-                walk_value_expr(right, false)
+                walk_value_expr(left, allow_agg)?;
+                walk_value_expr(right, allow_agg)
             }
             _ => Err(AppError::Validation(format!(
                 "binary op not allowed in filter: {op}"
             ))),
         },
         Expr::Like { expr, pattern, .. } | Expr::ILike { expr, pattern, .. } => {
-            walk_value_expr(expr, false)?;
-            walk_value_expr(pattern, false)
+            walk_value_expr(expr, allow_agg)?;
+            walk_value_expr(pattern, allow_agg)
         }
-        Expr::IsNull(inner) | Expr::IsNotNull(inner) => walk_value_expr(inner, false),
+        Expr::IsNull(inner) | Expr::IsNotNull(inner) => walk_value_expr(inner, allow_agg),
         Expr::InList { expr, list, .. } => {
-            walk_value_expr(expr, false)?;
+            walk_value_expr(expr, allow_agg)?;
             for item in list {
-                walk_value_expr(item, false)?;
+                walk_value_expr(item, allow_agg)?;
             }
             Ok(())
         }
         Expr::Between {
             expr, low, high, ..
         } => {
-            walk_value_expr(expr, false)?;
-            walk_value_expr(low, false)?;
-            walk_value_expr(high, false)
+            walk_value_expr(expr, allow_agg)?;
+            walk_value_expr(low, allow_agg)?;
+            walk_value_expr(high, allow_agg)
         }
         Expr::Function(func) => {
             let name = func.name.to_string();
@@ -346,7 +367,7 @@ fn walk_bool_expr(expr: &Expr) -> Result<(), AppError> {
                     "function not allowed in filter: {name}"
                 )));
             }
-            walk_function_args(&func.args, false)
+            walk_function_args(&func.args, allow_agg)
         }
         other => Err(AppError::Validation(format!(
             "unsupported filter expression form: {other}"
@@ -475,6 +496,21 @@ mod tests {
     fn adhoc_requires_aggregate() {
         assert_adhoc_agg_expr("sum(sale_amount)").unwrap();
         assert!(assert_adhoc_agg_expr("sale_amount * fx_rate").is_err());
+    }
+
+    #[test]
+    fn scalar_expr_rejects_aggregate_but_accepts_math_and_date_trunc() {
+        assert_scalar_expr("sale_amount * fx_rate").unwrap();
+        assert_scalar_expr("date_trunc('month', order_date)").unwrap();
+        assert!(assert_scalar_expr("sum(sale_amount)").is_err());
+    }
+
+    #[test]
+    fn having_expr_accepts_aggregates_and_scalars() {
+        assert_having_expr("COUNT(*) > 20").unwrap();
+        assert_having_expr("sum(sale_amount) >= 100 AND region_code = 'KR'").unwrap();
+        assert_having_expr("(a - b) > avg(a - b)").unwrap();
+        assert!(assert_filter_expr("COUNT(*) > 20").is_err());
     }
 
     #[test]

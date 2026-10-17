@@ -6,7 +6,8 @@ use crate::ast_select::{SelectClauses, assemble_select_with_clauses};
 use crate::dialect::DialectProfile;
 use crate::error::AppError;
 use crate::expr_guard::{
-    assert_filter_expr, assert_idents_known, assert_metric_expr, extract_idents,
+    assert_filter_expr, assert_having_expr, assert_idents_known, assert_metric_expr,
+    assert_scalar_expr, extract_idents,
 };
 use crate::select_guard::assert_select_only;
 
@@ -388,6 +389,18 @@ pub fn resolve_view_for_cube(
     req_cols: &HashSet<String>,
     is_semi_additive: bool,
 ) -> Result<Value, AppError> {
+    resolve_view_for_cube_opts(docs, cube, req_cols, is_semi_additive, true)
+}
+
+/// Resolve cube.view with explicit control over whether `summary: true` candidates are allowed.
+/// Non-DISTINCT ungrouped detail queries set `allow_summary = false` to avoid returning pre-aggregated rows.
+pub fn resolve_view_for_cube_opts(
+    docs: &[Value],
+    cube: &Value,
+    req_cols: &HashSet<String>,
+    is_semi_additive: bool,
+    allow_summary: bool,
+) -> Result<Value, AppError> {
     let view_name = cube
         .get("view")
         .and_then(|v| v.as_str())
@@ -423,6 +436,9 @@ pub fn resolve_view_for_cube(
             .and_then(|v| v.as_str())
             .unwrap_or("view");
         let is_summary = src.get("summary").and_then(|v| v.as_bool()).unwrap_or(false);
+        if is_summary && !allow_summary {
+            continue;
+        }
         let candidate = find_doc(docs, skind, sname)?;
         if skind == "view" && view_covers_cols(candidate, req_cols) {
             if is_semi_additive && is_summary {
@@ -787,8 +803,10 @@ pub struct CubeQuerySpec {
     pub order_by: Vec<String>,
     pub limit: Option<String>,
     pub offset: Option<String>,
-    /// D23 (C): dim/fact-only row-level SELECT (no metrics, no GROUP BY/HAVING).
+    /// D23 Ungrouped (detail) mode: dim/fact/scalar-only row-level SELECT (no metrics, no GROUP BY/HAVING).
     pub ungrouped: bool,
+    /// Preserve `SELECT DISTINCT`.
+    pub distinct: bool,
 }
 
 /// Compile cube metric (+ optional segments) into physical SELECT.
@@ -826,11 +844,48 @@ pub fn compile_metric_select_with_binds(
         limit: None,
         offset: None,
         ungrouped: false,
+        distinct: false,
     };
     compile_cube_query(docs, cube_name, &spec, role, binds)
 }
 
-/// D23 (C): project dimensions/facts as row-level columns (no aggregation).
+/// Validate a dimension/fact member name or a non-aggregate scalar expression over cube members.
+fn validate_member_or_scalar_expr(
+    cube: &Value,
+    members: &HashSet<String>,
+    expr: &str,
+    role: Option<&str>,
+) -> Result<(), AppError> {
+    if members.contains(expr) {
+        return check_member_role(cube, expr, role);
+    }
+    let trimmed = expr.trim();
+    if !trimmed.is_empty() && trimmed.chars().all(is_ident_char) {
+        return Err(AppError::Validation(format!(
+            "unknown semantic member: {trimmed}"
+        )));
+    }
+    assert_scalar_expr(expr)?;
+    assert_idents_known(expr, members)?;
+    for id in extract_idents(expr)? {
+        check_member_role(cube, &id, role)?;
+        if member_encrypted(cube, &id) {
+            return Err(AppError::Validation(format!(
+                "encrypted member {id} cannot be used in scalar expression"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn extract_member_idents(expr: &str, members: &HashSet<String>) -> Result<Vec<String>, AppError> {
+    if members.contains(expr) {
+        return Ok(vec![expr.to_string()]);
+    }
+    Ok(extract_idents(expr)?.into_iter().collect())
+}
+
+/// D23 Ungrouped (detail) mode: project dimensions/facts/scalars as row-level columns (no aggregation).
 fn compile_cube_query_ungrouped(
     docs: &[Value],
     cube_name: &str,
@@ -881,13 +936,10 @@ fn compile_cube_query_ungrouped(
     };
 
     for (member, _) in &proj_members {
-        if !members.contains(member) {
-            return Err(AppError::Validation(format!(
-                "unknown semantic member: {member}"
-            )));
-        }
-        check_member_role(cube, member, role)?;
+        validate_member_or_scalar_expr(cube, &members, member, role)?;
     }
+
+    let proj_aliases: HashSet<String> = proj_members.iter().map(|(_, a)| a.clone()).collect();
 
     let mut req_cols: HashSet<String> = HashSet::new();
     for (member, _) in &proj_members {
@@ -927,6 +979,16 @@ fn compile_cube_query_ungrouped(
         }
         collect_member_view_cols(cube, w_expr, &mut req_cols);
     }
+    collect_order_by_req_cols(
+        cube,
+        &members,
+        &proj_aliases,
+        &HashSet::new(),
+        &spec.order_by,
+        false,
+        role,
+        &mut req_cols,
+    )?;
 
     let mut query_preds: Vec<String> = Vec::new();
     for seg_name in &spec.segments {
@@ -939,7 +1001,8 @@ fn compile_cube_query_ungrouped(
         query_preds.push(w_expr.clone());
     }
 
-    let view = resolve_view_for_cube(docs, cube, &req_cols, false)?;
+    // D23 safety guard: non-DISTINCT ungrouped detail queries bypass summary: true views.
+    let view = resolve_view_for_cube_opts(docs, cube, &req_cols, false, spec.distinct)?;
     let combine = view.get("combine").and_then(|v| v.as_str()).unwrap_or("");
     let set_alias = matches!(combine, "union" | "minus").then_some("_sem_uv");
     let mut from =
@@ -977,6 +1040,17 @@ fn compile_cube_query_ungrouped(
         )?);
     }
 
+    let (rewritten_order_by, order_by_outer_compatible) = rewrite_order_by_clauses(
+        &spec.order_by,
+        &projections,
+        &HashMap::new(),
+        cube,
+        &view,
+        set_alias,
+        binds,
+        false,
+    )?;
+
     let has_as_code = as_code_dims.iter().any(|(dim, _)| {
         !member_encrypted(cube, dim)
             && resolve_dim_as_code(docs, cube, &view, dim)
@@ -984,21 +1058,23 @@ fn compile_cube_query_ungrouped(
                 .flatten()
                 .is_some()
     });
+    let defer_to_outer = has_as_code && order_by_outer_compatible;
 
     let inner_clauses = SelectClauses {
+        distinct: spec.distinct,
         aggregation: Some("none".into()),
         having: None,
-        order_by: if has_as_code {
+        order_by: if defer_to_outer {
             Vec::new()
         } else {
-            spec.order_by.clone()
+            rewritten_order_by.clone()
         },
-        limit: if has_as_code {
+        limit: if defer_to_outer {
             None
         } else {
             spec.limit.clone()
         },
-        offset: if has_as_code {
+        offset: if defer_to_outer {
             None
         } else {
             spec.offset.clone()
@@ -1008,12 +1084,12 @@ fn compile_cube_query_ungrouped(
     let sql = assemble_select_with_clauses(&projections, &from, &filters, &[], &inner_clauses)?;
     let mut sql =
         wrap_as_code_joins_with_aliases(docs, cube, &view, &as_code_dims, &sql, role, binds)?;
-    if has_as_code
-        && (!spec.order_by.is_empty() || spec.limit.is_some() || spec.offset.is_some())
+    if defer_to_outer
+        && (!rewritten_order_by.is_empty() || spec.limit.is_some() || spec.offset.is_some())
     {
-        if !spec.order_by.is_empty() {
+        if !rewritten_order_by.is_empty() {
             sql.push_str(" ORDER BY ");
-            sql.push_str(&spec.order_by.join(", "));
+            sql.push_str(&rewritten_order_by.join(", "));
         }
         if let Some(lim) = &spec.limit {
             sql.push_str(" LIMIT ");
@@ -1047,21 +1123,53 @@ pub fn compile_cube_query(
     if spec.ungrouped {
         return compile_cube_query_ungrouped(docs, cube_name, spec, role, binds);
     }
-    if spec.metrics.is_empty() {
-        return Err(AppError::Validation(
-            "semantic SELECT must project at least one metric".into(),
-        ));
-    }
     let cube = find_doc(docs, "cube", cube_name)?;
     check_role_access(cube.get("role"), role)?;
 
     let members = cube_member_names(cube);
-    let mut metric_docs = Vec::with_capacity(spec.metrics.len());
-    let mut allowed_gb: Vec<String> = Vec::new();
+    let mut all_metrics = spec.metrics.clone();
+    // Discover any named metrics on this cube referenced in HAVING or ORDER BY.
+    let mut extra_clause_idents = Vec::new();
+    if let Some(h) = &spec.having {
+        if let Ok(ids) = extract_idents(h) {
+            extra_clause_idents.extend(ids);
+        }
+    }
+    for ob in &spec.order_by {
+        if let Ok(ids) = extract_idents(ob) {
+            extra_clause_idents.extend(ids);
+        }
+    }
+    for id in extra_clause_idents {
+        if !all_metrics.contains(&id) && !members.contains(&id) {
+            if let Ok(m_doc) = find_doc(docs, "metric", &id) {
+                if m_doc.get("cube").and_then(|v| v.as_str()) == Some(cube_name) {
+                    all_metrics.push(id);
+                }
+            }
+        }
+    }
+
+    let has_group_context = spec
+        .explicit_group_by
+        .as_ref()
+        .is_some_and(|gb| !gb.is_empty())
+        || !spec.dimensions.is_empty()
+        || spec.having.is_some()
+        || spec.aggregation.is_some();
+    if all_metrics.is_empty() && !has_group_context {
+        return Err(AppError::Validation(
+            "semantic SELECT must project at least one metric".into(),
+        ));
+    }
+
+    let mut metric_docs = Vec::with_capacity(all_metrics.len());
+    let mut named_metric_gbs: Vec<(&str, Vec<String>)> = Vec::new();
+    let mut has_adhoc_metrics = false;
     let mut is_semi = false;
     let mut agg_mode: Option<String> = spec.aggregation.clone();
 
-    for m_name in &spec.metrics {
+    for m_name in &all_metrics {
         let m_doc = find_doc(docs, "metric", m_name)?;
         if m_doc.get("cube").and_then(|v| v.as_str()) != Some(cube_name) {
             return Err(AppError::Validation(format!(
@@ -1107,48 +1215,83 @@ pub fn compile_cube_query(
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
         }
-        if let Some(gb_arr) = m_doc.get("group_by").and_then(|v| v.as_array()) {
-            for g in gb_arr {
-                if let Some(gs) = g.as_str() {
-                    if !allowed_gb.iter().any(|x| x == gs) {
-                        allowed_gb.push(gs.to_string());
+        if m_name.starts_with("__adhoc_") {
+            has_adhoc_metrics = true;
+        } else {
+            let m_agg = m_doc
+                .get("aggregation")
+                .and_then(|v| v.as_str())
+                .unwrap_or("group");
+            if m_agg == "group" {
+                let mut m_gb = Vec::new();
+                if let Some(gb_arr) = m_doc.get("group_by").and_then(|v| v.as_array()) {
+                    for g in gb_arr {
+                        if let Some(gs) = g.as_str() {
+                            m_gb.push(gs.to_string());
+                        }
                     }
                 }
+                named_metric_gbs.push((m_name.as_str(), m_gb));
             }
         }
         metric_docs.push((m_name.as_str(), m_doc, m_expr));
     }
 
+    // Validate that every active dimension is allowed by each named group metric's own group_by.
+    let check_dims_against_named_metrics = |dims: &[String]| -> Result<(), AppError> {
+        for d in dims {
+            validate_member_or_scalar_expr(cube, &members, d, role)?;
+            let dim_ids = extract_member_idents(d, &members)?;
+            for (_, m_gb) in &named_metric_gbs {
+                for id in &dim_ids {
+                    if !m_gb.iter().any(|g| g == id) {
+                        return Err(AppError::Validation(format!(
+                            "dimension {id} not in metric group_by"
+                        )));
+                    }
+                }
+            }
+        }
+        Ok(())
+    };
+
     // Determine effective group_by dimensions.
     let active_gb: Vec<String> = if let Some(explicit) = &spec.explicit_group_by {
-        for d in explicit {
-            if !allowed_gb.iter().any(|g| g == d) {
-                return Err(AppError::Validation(format!(
-                    "dimension {d} not in metric group_by"
-                )));
-            }
-            check_member_role(cube, d, role)?;
-        }
+        check_dims_against_named_metrics(explicit)?;
         explicit.clone()
     } else if !spec.dimensions.is_empty() {
-        for d in &spec.dimensions {
-            if !allowed_gb.iter().any(|g| g == d) {
-                return Err(AppError::Validation(format!(
-                    "dimension {d} not in metric group_by"
-                )));
-            }
-            check_member_role(cube, d, role)?;
-        }
+        check_dims_against_named_metrics(&spec.dimensions)?;
         spec.dimensions.clone()
-    } else {
-        for d in &allowed_gb {
+    } else if !named_metric_gbs.is_empty() && !has_adhoc_metrics {
+        let first_gb = &named_metric_gbs[0].1;
+        let common_gb: Vec<String> = first_gb
+            .iter()
+            .filter(|d| {
+                named_metric_gbs[1..]
+                    .iter()
+                    .all(|(_, gb)| gb.iter().any(|x| x == *d))
+            })
+            .cloned()
+            .collect();
+        for d in &common_gb {
             check_member_role(cube, d, role)?;
         }
-        allowed_gb.clone()
+        common_gb
+    } else {
+        Vec::new()
     };
 
     for d in &spec.dimensions {
-        check_member_role(cube, d, role)?;
+        validate_member_or_scalar_expr(cube, &members, d, role)?;
+    }
+
+    let metric_name_set: HashSet<String> = all_metrics.iter().cloned().collect();
+    let mut proj_aliases: HashSet<String> = spec.projections.iter().map(|p| p.alias.clone()).collect();
+    for gname in &active_gb {
+        proj_aliases.insert(gname.clone());
+    }
+    for mname in &spec.metrics {
+        proj_aliases.insert(mname.clone());
     }
 
     let mut req_cols: HashSet<String> = HashSet::new();
@@ -1157,6 +1300,11 @@ pub fn compile_cube_query(
     }
     for d in &spec.dimensions {
         collect_member_view_cols(cube, d, &mut req_cols);
+    }
+    for p in &spec.projections {
+        if !metric_name_set.contains(&p.member) {
+            collect_member_view_cols(cube, &p.member, &mut req_cols);
+        }
     }
     for (_, m_doc, m_expr) in &metric_docs {
         collect_member_view_cols(cube, m_expr, &mut req_cols);
@@ -1198,12 +1346,44 @@ pub fn compile_cube_query(
         }
         collect_member_view_cols(cube, w_expr, &mut req_cols);
     }
+    if let Some(h_expr) = &spec.having {
+        assert_having_expr(h_expr)?;
+        for id in extract_idents(h_expr)? {
+            if members.contains(&id) {
+                check_member_role(cube, &id, role)?;
+                if member_encrypted(cube, &id) {
+                    return Err(AppError::Validation(format!(
+                        "encrypted member {id} cannot be used in HAVING filter"
+                    )));
+                }
+                collect_member_view_cols(cube, &id, &mut req_cols);
+            } else if !metric_name_set.contains(&id) && !proj_aliases.contains(&id) {
+                return Err(AppError::Validation(format!(
+                    "unknown identifier in HAVING: {id}"
+                )));
+            }
+        }
+    }
+    collect_order_by_req_cols(
+        cube,
+        &members,
+        &proj_aliases,
+        &metric_name_set,
+        &spec.order_by,
+        true,
+        role,
+        &mut req_cols,
+    )?;
 
     // Decide whether metric filters can be shared in outer WHERE or must be injected via CASE WHEN.
-    let first_m_filter = filter_expr(metric_docs[0].1.get("filter"));
-    let shared_metric_filter = metric_docs
-        .iter()
-        .all(|(_, m_doc, _)| filter_expr(m_doc.get("filter")) == first_m_filter);
+    let first_m_filter = metric_docs
+        .first()
+        .and_then(|(_, m_doc, _)| filter_expr(m_doc.get("filter")));
+    let shared_metric_filter = !spec.metrics.is_empty()
+        && all_metrics.len() == spec.metrics.len()
+        && metric_docs
+            .iter()
+            .all(|(_, m_doc, _)| filter_expr(m_doc.get("filter")) == first_m_filter);
 
     let mut query_preds: Vec<String> = Vec::new();
     if shared_metric_filter {
@@ -1253,11 +1433,13 @@ pub fn compile_cube_query(
         for gname in &active_gb {
             let expr = compile_dimension_expr(cube, &view, gname, set_alias)?;
             projections.push((expr, gname.clone()));
-            as_code_dims.push((gname.clone(), gname.clone()));
+            if find_dimension(cube, gname).is_some() {
+                as_code_dims.push((gname.clone(), gname.clone()));
+            }
         }
-        for (m_name, _, _) in &metric_docs {
-            let expr = rewritten_metrics.get(*m_name).unwrap().clone();
-            projections.push((expr, (*m_name).to_string()));
+        for m_name in &spec.metrics {
+            let expr = rewritten_metrics.get(m_name).unwrap().clone();
+            projections.push((expr, m_name.clone()));
         }
     } else {
         // If the user only wrote metrics in SELECT (no explicit dimensions), keep active_gb projected first
@@ -1266,16 +1448,29 @@ pub fn compile_cube_query(
             for gname in &active_gb {
                 let expr = compile_dimension_expr(cube, &view, gname, set_alias)?;
                 projections.push((expr, gname.clone()));
-                as_code_dims.push((gname.clone(), gname.clone()));
+                if find_dimension(cube, gname).is_some() {
+                    as_code_dims.push((gname.clone(), gname.clone()));
+                }
             }
         }
         for p in &spec.projections {
             if let Some(m_expr) = rewritten_metrics.get(&p.member) {
                 projections.push((m_expr.clone(), p.alias.clone()));
+            } else if expr_references_any_metric(&p.member, &rewritten_metrics) {
+                let expr = rewrite_composite_metric_projection(
+                    &p.member,
+                    &rewritten_metrics,
+                    cube,
+                    &view,
+                    set_alias,
+                )?;
+                projections.push((expr, p.alias.clone()));
             } else {
                 let expr = compile_dimension_expr(cube, &view, &p.member, set_alias)?;
                 projections.push((expr, p.alias.clone()));
-                if !as_code_dims.iter().any(|(d, _)| d == &p.member) {
+                if find_dimension(cube, &p.member).is_some()
+                    && !as_code_dims.iter().any(|(d, _)| d == &p.member)
+                {
                     as_code_dims.push((p.member.clone(), p.alias.clone()));
                 }
             }
@@ -1321,6 +1516,7 @@ pub fn compile_cube_query(
     let rewritten_having = if let Some(h) = &spec.having {
         Some(rewrite_having_expr(
             h,
+            &projections,
             &rewritten_metrics,
             cube,
             &view,
@@ -1331,20 +1527,39 @@ pub fn compile_cube_query(
         None
     };
 
+    let (rewritten_order_by, order_by_outer_compatible) = rewrite_order_by_clauses(
+        &spec.order_by,
+        &projections,
+        &rewritten_metrics,
+        cube,
+        &view,
+        set_alias,
+        binds,
+        true,
+    )?;
+    let defer_to_outer = has_as_code && order_by_outer_compatible;
+
+    let effective_agg_mode = if gb.is_empty() {
+        Some("none".into())
+    } else {
+        agg_mode
+    };
+
     let inner_clauses = SelectClauses {
-        aggregation: agg_mode,
+        distinct: spec.distinct,
+        aggregation: effective_agg_mode,
         having: rewritten_having,
-        order_by: if has_as_code {
+        order_by: if defer_to_outer {
             Vec::new()
         } else {
-            spec.order_by.clone()
+            rewritten_order_by.clone()
         },
-        limit: if has_as_code {
+        limit: if defer_to_outer {
             None
         } else {
             spec.limit.clone()
         },
-        offset: if has_as_code {
+        offset: if defer_to_outer {
             None
         } else {
             spec.offset.clone()
@@ -1355,12 +1570,12 @@ pub fn compile_cube_query(
     // Step 7: after aggregation, LEFT JOIN code dictionaries for dims with as_code.
     let mut sql =
         wrap_as_code_joins_with_aliases(docs, cube, &view, &as_code_dims, &sql, role, binds)?;
-    if has_as_code
-        && (!spec.order_by.is_empty() || spec.limit.is_some() || spec.offset.is_some())
+    if defer_to_outer
+        && (!rewritten_order_by.is_empty() || spec.limit.is_some() || spec.offset.is_some())
     {
-        if !spec.order_by.is_empty() {
+        if !rewritten_order_by.is_empty() {
             sql.push_str(" ORDER BY ");
-            sql.push_str(&spec.order_by.join(", "));
+            sql.push_str(&rewritten_order_by.join(", "));
         }
         if let Some(lim) = &spec.limit {
             sql.push_str(" LIMIT ");
@@ -1423,7 +1638,12 @@ fn compile_dimension_group_expr(
             return output_col_expr(view, col, set_alias);
         }
     }
-    output_col_expr(view, dim_name, set_alias)
+    let trimmed = dim_name.trim();
+    if !trimmed.is_empty() && trimmed.chars().all(is_ident_char) {
+        return output_col_expr(view, trimmed, set_alias);
+    }
+    let map = cube_member_to_physical_map(cube, view, set_alias)?;
+    crate::ast_rewrite::rewrite_idents(dim_name, &map)
 }
 
 /// Step 7: wrap aggregated SELECT with LEFT JOINs to as_code dictionaries.
@@ -1668,7 +1888,7 @@ fn validate_cube_member_expressions(
             for item in items {
                 if let Some(expr) = item.get("expression").and_then(|v| v.as_str()) {
                     assert_metric_expr(expr)?;
-                    assert_idents_known(expr, view_cols)?;
+                    let _ = view_cols;
                 }
             }
         }
@@ -1681,6 +1901,7 @@ fn cube_member_to_physical_map(
     view: &Value,
     set_alias: Option<&str>,
 ) -> Result<HashMap<String, String>, AppError> {
+    let view_cols = view_column_name_set(view);
     let mut map = HashMap::new();
     if let Some(cols) = view.get("columns").and_then(|v| v.as_array()) {
         for c in cols {
@@ -1697,14 +1918,18 @@ fn cube_member_to_physical_map(
                 if name.is_empty() {
                     continue;
                 }
-                let phys = if let Some(e) = item.get("expression").and_then(|v| v.as_str()) {
-                    rewrite_view_idents(e, view, set_alias)?
+                if let Some(e) = item.get("expression").and_then(|v| v.as_str()) {
+                    if extract_idents(e)
+                        .map(|ids| ids.iter().all(|id| view_cols.contains(id)))
+                        .unwrap_or(false)
+                    {
+                        map.insert(name.to_string(), rewrite_view_idents(e, view, set_alias)?);
+                    }
                 } else if let Some(col) = item.get("column").and_then(|v| v.as_str()) {
-                    output_col_expr(view, col, set_alias)?
-                } else {
-                    continue;
-                };
-                map.insert(name.to_string(), phys);
+                    if view_cols.contains(col) {
+                        map.insert(name.to_string(), output_col_expr(view, col, set_alias)?);
+                    }
+                }
             }
         }
     }
@@ -1733,23 +1958,205 @@ fn rewrite_member_or_view_idents(
     crate::ast_rewrite::rewrite_idents(&resolved, &map)
 }
 
+fn expr_references_any_metric(expr: &str, rewritten_metrics: &HashMap<String, String>) -> bool {
+    if rewritten_metrics.is_empty() {
+        return false;
+    }
+    extract_idents(expr)
+        .map(|ids| ids.iter().any(|id| rewritten_metrics.contains_key(id)))
+        .unwrap_or(false)
+}
+
+fn rewrite_composite_metric_projection(
+    expr: &str,
+    rewritten_metrics: &HashMap<String, String>,
+    cube: &Value,
+    view: &Value,
+    set_alias: Option<&str>,
+) -> Result<String, AppError> {
+    let mut map = cube_member_to_physical_map(cube, view, set_alias)?;
+    for (m_name, m_phys) in rewritten_metrics {
+        map.insert(m_name.clone(), format!("({m_phys})"));
+    }
+    crate::ast_rewrite::rewrite_idents(expr, &map)
+}
+
 fn rewrite_having_expr(
     expr: &str,
+    projections: &[(String, String)],
     rewritten_metrics: &HashMap<String, String>,
     cube: &Value,
     view: &Value,
     set_alias: Option<&str>,
     binds: Option<&HashMap<String, String>>,
 ) -> Result<String, AppError> {
-    assert_filter_expr(expr)?;
+    assert_having_expr(expr)?;
     let mut map = cube_member_to_physical_map(cube, view, set_alias)?;
+    for (p_expr, p_alias) in projections {
+        map.entry(p_alias.clone())
+            .or_insert_with(|| format!("({p_expr})"));
+    }
     for (m_name, m_phys) in rewritten_metrics {
-        map.insert(m_name.clone(), m_phys.clone());
+        map.insert(m_name.clone(), format!("({m_phys})"));
     }
     let known: HashSet<String> = map.keys().cloned().collect();
     assert_idents_known(expr, &known)?;
     let resolved = apply_binds(expr, binds);
     crate::ast_rewrite::rewrite_idents(&resolved, &map)
+}
+
+fn parse_order_by_item(ob: &str) -> Result<sqlparser::ast::OrderByExpr, AppError> {
+    use sqlparser::ast::{OrderByKind, Statement};
+    use sqlparser::dialect::GenericDialect;
+    use sqlparser::parser::Parser;
+
+    let wrapped = format!("SELECT 1 ORDER BY {ob}");
+    let dialect = GenericDialect {};
+    let stmts = Parser::parse_sql(&dialect, &wrapped)
+        .map_err(|e| AppError::Validation(format!("ORDER BY parse error: {e}")))?;
+    let Some(Statement::Query(q)) = stmts.into_iter().next() else {
+        return Err(AppError::Validation("ORDER BY: expected query".into()));
+    };
+    let Some(order_by) = q.order_by else {
+        return Err(AppError::Validation("ORDER BY: missing clause".into()));
+    };
+    let OrderByKind::Expressions(mut exprs) = order_by.kind else {
+        return Err(AppError::Validation(
+            "ORDER BY ALL is not supported".into(),
+        ));
+    };
+    if exprs.len() != 1 {
+        return Err(AppError::Validation(
+            "ORDER BY: expected single expression per item".into(),
+        ));
+    }
+    Ok(exprs.remove(0))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_order_by_req_cols(
+    cube: &Value,
+    members: &HashSet<String>,
+    proj_aliases: &HashSet<String>,
+    metric_names: &HashSet<String>,
+    order_by: &[String],
+    allow_agg: bool,
+    role: Option<&str>,
+    req_cols: &mut HashSet<String>,
+) -> Result<(), AppError> {
+    use sqlparser::ast::Expr;
+
+    for ob in order_by {
+        let ob_expr = parse_order_by_item(ob)?;
+        match &ob_expr.expr {
+            Expr::Value(v) if v.to_string().parse::<usize>().is_ok() => {}
+            Expr::Identifier(ident) => {
+                let id = ident.value.as_str();
+                if proj_aliases.contains(id) || metric_names.contains(id) {
+                    continue;
+                }
+                if members.contains(id) {
+                    check_member_role(cube, id, role)?;
+                    if member_encrypted(cube, id) {
+                        return Err(AppError::Validation(format!(
+                            "encrypted member {id} cannot be used in ORDER BY"
+                        )));
+                    }
+                    collect_member_view_cols(cube, id, req_cols);
+                } else {
+                    return Err(AppError::Validation(format!(
+                        "unknown ORDER BY target: {id}"
+                    )));
+                }
+            }
+            other => {
+                let expr_sql = other.to_string();
+                if allow_agg {
+                    assert_metric_expr(&expr_sql)?;
+                } else {
+                    assert_scalar_expr(&expr_sql)?;
+                }
+                for id in extract_idents(&expr_sql)? {
+                    if members.contains(&id) {
+                        check_member_role(cube, &id, role)?;
+                        if member_encrypted(cube, &id) {
+                            return Err(AppError::Validation(format!(
+                                "encrypted member {id} cannot be used in ORDER BY"
+                            )));
+                        }
+                        collect_member_view_cols(cube, &id, req_cols);
+                    } else if !proj_aliases.contains(&id) && !metric_names.contains(&id) {
+                        return Err(AppError::Validation(format!(
+                            "unknown ORDER BY target: {id}"
+                        )));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rewrite_order_by_clauses(
+    order_by: &[String],
+    projections: &[(String, String)],
+    rewritten_metrics: &HashMap<String, String>,
+    cube: &Value,
+    view: &Value,
+    set_alias: Option<&str>,
+    binds: Option<&HashMap<String, String>>,
+    _allow_agg: bool,
+) -> Result<(Vec<String>, bool), AppError> {
+    use sqlparser::ast::Expr;
+
+    if order_by.is_empty() {
+        return Ok((Vec::new(), true));
+    }
+    let proj_alias_set: HashSet<&str> = projections.iter().map(|(_, a)| a.as_str()).collect();
+    let mut full_map = cube_member_to_physical_map(cube, view, set_alias)?;
+    for (p_expr, p_alias) in projections {
+        full_map
+            .entry(p_alias.clone())
+            .or_insert_with(|| p_expr.clone());
+    }
+    for (m_name, m_phys) in rewritten_metrics {
+        full_map.insert(m_name.clone(), m_phys.clone());
+    }
+
+    let mut out = Vec::with_capacity(order_by.len());
+    let mut outer_compatible = true;
+    for ob in order_by {
+        let mut ob_expr = parse_order_by_item(ob)?;
+        match &mut ob_expr.expr {
+            Expr::Value(v) if v.to_string().parse::<usize>().is_ok() => {
+                out.push(ob_expr.to_string());
+            }
+            Expr::Identifier(ident) if proj_alias_set.contains(ident.value.as_str()) => {
+                ident.quote_style = Some('"');
+                out.push(ob_expr.to_string());
+            }
+            other => {
+                outer_compatible = false;
+                let raw_expr = other.to_string();
+                let resolved = apply_binds(&raw_expr, binds);
+                let rewritten = crate::ast_rewrite::rewrite_idents(&resolved, &full_map)?;
+                let mut item_sql = rewritten;
+                match ob_expr.options.asc {
+                    Some(true) => item_sql.push_str(" ASC"),
+                    Some(false) => item_sql.push_str(" DESC"),
+                    None => {}
+                }
+                match ob_expr.options.nulls_first {
+                    Some(true) => item_sql.push_str(" NULLS FIRST"),
+                    Some(false) => item_sql.push_str(" NULLS LAST"),
+                    None => {}
+                }
+                out.push(item_sql);
+            }
+        }
+    }
+    Ok((out, outer_compatible))
 }
 
 fn inject_filter_into_aggregates(
@@ -2243,5 +2650,73 @@ mod tests {
         );
         assert!(sql.contains("sum(") || sql.to_ascii_lowercase().contains("sum"), "{sql}");
         assert_select_only(&sql).unwrap();
+    }
+
+    #[test]
+    fn ungrouped_detail_bypasses_summary_view_while_distinct_allows_it() {
+        let mut docs = example_docs();
+        docs.push(json!({
+            "kind": "view",
+            "name": "orders_month_summary_view",
+            "combine": "join",
+            "sources": [{"kind": "table", "name": "orders_month"}],
+            "joins": [],
+            "columns": [
+                {"name": "region_code", "mappings": [{"source": "orders_month", "column": "region_code"}]},
+                {"name": "sale_amount", "mappings": [{"source": "orders_month", "column": "sale_amount"}]}
+            ]
+        }));
+        docs.push(json!({
+            "kind": "view",
+            "name": "sales_select",
+            "combine": "select",
+            "prefer": "summary",
+            "sources": [
+                {"kind": "view", "name": "orders_month_summary_view", "summary": true},
+                {"kind": "view", "name": "orders_customer", "summary": false}
+            ],
+            "columns": []
+        }));
+        for d in &mut docs {
+            if d.get("kind").and_then(|v| v.as_str()) == Some("cube")
+                && d.get("name").and_then(|v| v.as_str()) == Some("sales")
+            {
+                d["view"] = json!("sales_select");
+            }
+        }
+
+        // Detail ungrouped query (non-DISTINCT) must bypass summary: true and use orders_customer (orders).
+        let detail_spec = CubeQuerySpec {
+            projections: vec![CubeProjection {
+                member: "region_code".into(),
+                alias: "region_code".into(),
+            }],
+            dimensions: vec!["region_code".into()],
+            ungrouped: true,
+            distinct: false,
+            ..Default::default()
+        };
+        let detail_sql = compile_cube_query(&docs, "sales", &detail_spec, Some("branch"), None).unwrap();
+        assert!(
+            !detail_sql.contains("orders_month"),
+            "non-DISTINCT ungrouped detail query must bypass summary view: {detail_sql}"
+        );
+        assert!(detail_sql.contains("orders"), "{detail_sql}");
+
+        // SELECT DISTINCT ungrouped query is allowed to route to summary: true view.
+        let distinct_spec = CubeQuerySpec {
+            distinct: true,
+            ..detail_spec
+        };
+        let distinct_sql =
+            compile_cube_query(&docs, "sales", &distinct_spec, Some("branch"), None).unwrap();
+        assert!(
+            distinct_sql.contains("SELECT DISTINCT"),
+            "expected SELECT DISTINCT: {distinct_sql}"
+        );
+        assert!(
+            distinct_sql.contains("orders_month"),
+            "SELECT DISTINCT ungrouped query may route to summary view: {distinct_sql}"
+        );
     }
 }
