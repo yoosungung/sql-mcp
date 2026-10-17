@@ -22,7 +22,11 @@
           "SQL_MCP_TARGET_THROMBOSIS_URL": "sqlite:./target_db/thrombosis_prediction/thrombosis_prediction.sqlite?mode=ro",
           "SQL_MCP_TARGET_CALIFORNIA_SCHOOLS_URL": "sqlite:./target_db/california_schools/california_schools.sqlite?mode=ro",
           "SQL_MCP_TARGET_FORMULA_1_URL": "sqlite:./target_db/formula_1/formula_1.sqlite?mode=ro",
-          "SQL_MCP_MODE": "author"
+          "SQL_MCP_MODE": "author",
+          "SQL_MCP_EMBEDDING_URL": "http://127.0.0.1:11434/v1/embeddings",
+          "SQL_MCP_EMBEDDING_API_KEY": "ollama",
+          "SQL_MCP_EMBEDDING_MODEL": "embeddinggemma-2:270m",
+          "SQL_MCP_EMBEDDING_DIM": "768"
         }
       }
     }

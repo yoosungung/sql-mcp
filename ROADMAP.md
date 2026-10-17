@@ -57,7 +57,7 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 | D20 | table/view/cube `target` | **결정:** 등록 JSON에 MCP `target` id 필수. leaf table·view·cube 동일 target 강제. `list_tables`/`describe_table`=cube 표면. 같은 target cube JOIN/UNION 허용(다른 target 거절) |
 | D21 | 타깃 SQL 방언(dialect) | **결정: Cube식 DialectProfile emit.** 컴파일은 엔진 중립(canonical ANSI `"…"` · `date_trunc`). emit: `date_trunc`→엔진별 식 · quote adapt · `wrap_row_limit`. **비채택:** 자유 SQL 트랜스파일 · `sqlparser` Display 방언 위임 · **실행 bind 스타일 rewrite**(ad-hoc OLAP만, 드라이버 prepared bind 경로 없음). 상세 [ARCHITECTURE.md](ARCHITECTURE.md) · [server/DESIGN.md](server/DESIGN.md) · [server/spec.md](server/spec.md) |
 | D22 | 물리 vs 시맨틱 식별자 | **결정: 부분 완화.** `$defs/name`(시맨틱) 유지 · `$defs/physical_ident`(물리 db/schema/table/컬럼·mapping·join on·as_code key/value) 분리. view 컬럼·cube 멤버는 시맨틱 `name`만. 물리명에 공백·기호가 있으면 view 별칭 + `mappings.column`에 물리 유지. `quote_ident`는 동일 허용 집합. |
-| D23 | 시맨틱 SELECT 집계 모드 | **결정: 혼용 금지.** 한 SELECT는 **(A) 명명 metric(+ dimension)** 또는 **(B) ad-hoc 집계(+ dimension)** 중 하나만. (B)는 fact·dimension 식별자만 쓰는 집계식(D16 AST + 집계 함수 필수; 서브쿼리·물리 컬럼 거부 — D19 유지). grain = 명시 `GROUP BY` / 프로젝션 dim / 전역. **JOIN·복수 cube에서는 ad-hoc 거절.** 명명 metric과 ad-hoc을 같은 SELECT에 두면 `validation` 거절. 식 내 fact/dim `role`은 직접 검사(명명 metric의 metric.role 위임과 다름). |
+| D23 | 시맨틱 SELECT 모드 | **결정: 한 SELECT는 모드 하나만(혼용 금지).** **(A) 명명 metric(+ dimension)** · **(B) ad-hoc 집계(+ dimension)** · **(C) dim/fact-only ungrouped**. (B)는 fact·dimension 식별자만 쓰는 집계식(D16 AST + 집계 함수 필수; 서브쿼리·물리 컬럼 거부 — D19 유지). grain = 명시 `GROUP BY` / 프로젝션 dim / 전역. (C)는 dimension·fact 프로젝션만 · **GROUP BY/HAVING 없음**(행 단위) · WHERE/ORDER BY/LIMIT 허용 · **단일 cube FROM**. **JOIN에서는 (B)(C) 거절**(명명 metric 필수). 명명 metric↔ad-hoc↔ungrouped 혼용은 `validation` 거절. (B)(C) 식의 fact/dim `role`은 직접 검사. |
 
 (제거: D5 세션형 Streamable HTTP, D10/D11 Frontend. stdio는 로컬용으로 복원)
 
@@ -139,11 +139,12 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 - [x] 인메모리 카탈로그 스냅샷 캐시 + 단일 Write 트랜잭션 내 증분 임베딩 갱신
 - [x] `SQL_MCP_TIMEOUT_MS` 타깃 쿼리 타임아웃 강제 · Postgres/MySQL `NUMERIC`/`DECIMAL`/`DATE`/`TIMESTAMP` 디코딩 · DSN 마스킹 상세 에러 · `SQL_MCP_MODE`
 
-### 후속 — ad-hoc 집계 모드 (D23)
+### 후속 — ad-hoc 집계 · dim/fact-only (D23)
 
 - [x] 시맨틱 SELECT 프로젝션에 ad-hoc 집계식 허용(fact|dim만 · D16 AST + 집계 필수 `assert_adhoc_agg_expr`)
 - [x] 명명 metric과 ad-hoc 집계 **동일 SELECT 혼용 거절**
 - [x] ad-hoc grain = 명시 `GROUP BY` · 없으면 프로젝션 dim · 둘 다 없으면 전역 집계(`GROUP BY` 없음). JOIN에서는 ad-hoc 거절(단일 cube FROM만)
+- [x] **(C) dim/fact-only ungrouped**: metric/집계 없이 dim·fact만 프로젝션 · GROUP BY/HAVING 거절 · 단일 cube · JOIN 거절
 - [x] 계약·파이프라인 문서(`ARCHITECTURE.md` · `server/spec.md`)와 TDD
 
 ## 구현 시 작업 규칙

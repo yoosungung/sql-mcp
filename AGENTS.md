@@ -14,10 +14,11 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
 | `ARCHITECTURE.md` | **계약사항(불변 규칙)** + 컴포넌트 *간* 인터페이스 형태(스키마·레이아웃·이벤트) | 루트 |
 | `README.md` | **사용자** 온보딩: Cursor/Claude 등에 설치 · 메타 구성 · DW 질의 (기여자 온보딩 아님) | 루트 |
 | `ROADMAP.md` | 수행 계획(마일스톤·순서·미결정 항목) | 루트 |
-| `<comp>/DESIGN.md` | 컴포넌트 *내부* 설계 + `## Commands` (빌드/실행/테스트) | `server/` (M1+), `semantic/`. Frontend/`api/`는 범위 취소 |
+| `<comp>/DESIGN.md` | 컴포넌트 *내부* 설계 + `## Commands` (빌드/실행/테스트) | `server/` (M1+), `semantic/`, `client/`. Frontend/`api/`는 범위 취소 |
 | `deploy/SETUP.md` | 배포 런북 | `deploy/` |
 | `deploy/k8s/base/` | Kustomize 베이스 | `deploy/k8s/base/` |
-| `target_db/README.md` | BIRD Mini-Dev SQLite 로컬 타깃 사용법 | `target_db/` |
+| `target_db/README.md` | BIRD Mini-Dev SQLite 로컬 타깃 + Q-SQL(`bird_qa/`) 사용법 | `target_db/` |
+| `client/DESIGN.md` · `client/README.md` | LangChain v1 `create_agent` + sql-mcp 예제 (BIRD 질문) | `client/` |
 | `server/spec.md` | 시맨틱 SQL 6단계 컴파일·타입별 `meta_*` 상세 | `server/` |
 | `skills/` | 코딩 에이전트용 Agent Skills 정본: `semantic-table-view` → `semantic-cube-metric-segment` → (`semantic-from-qa`) → `semantic-register`. MCP Resource(`https://sql-mcp.local/skills/…`). Cursor는 `.cursor/skills` → `../skills` | `skills/` |
 
@@ -40,4 +41,4 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
  
 ## 3. Status
  
-M0–M5 완료: 타입별 `meta_*`(인메모리 스냅샷 + 단일 트랜잭션 증분 인덱싱) · 시맨틱-only `execute_sql`(복수 metric · 동적 `GROUP BY`/`ROLLUP`/`CUBE`/`GROUPING SETS` · 일반 `WHERE`/`HAVING`/`ORDER BY`/`LIMIT` · `:bind` 안전 치환) · 요약뷰/join·union pruning · 전 계층 RBAC(`role` 검증 · `permission_filters` Fail-Closed · `sample_column` 보안 필터 · 큐브 스코프 `encryption` 마스킹) · transport=HTTP+stdio(로컬). table/view/cube `target` · DW 표면 `list_databases`·`database` 인자 · `list_tables`/`describe_table`=cube 표면(D20) · `search_columns(database)` 필터. 타깃 엔진: Postgres·MySQL(`sqlx`) · SQLite(`libsql`) · Oracle(`oracledb` thin). **D21:** `DialectProfile` emit(`date_trunc` rewrite · quote · `LIMIT`/`FETCH`; 실행 bind rewrite 비채택). **D22:** `physical_ident` vs 시맨틱 `name`. **D23:** 명명 metric ↔ ad-hoc 집계 **혼용 금지**(단일 cube ad-hoc `sum(fact)` 등 허용). 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 파이프라인 [server/spec.md](server/spec.md).
+M0–M5 완료: 타입별 `meta_*`(인메모리 스냅샷 + 단일 트랜잭션 증분 인덱싱) · 시맨틱-only `execute_sql`(복수 metric · 동적 `GROUP BY`/`ROLLUP`/`CUBE`/`GROUPING SETS` · 일반 `WHERE`/`HAVING`/`ORDER BY`/`LIMIT` · `:bind` 안전 치환) · 요약뷰/join·union pruning · 전 계층 RBAC(`role` 검증 · `permission_filters` Fail-Closed · `sample_column` 보안 필터 · 큐브 스코프 `encryption` 마스킹) · transport=HTTP+stdio(로컬). table/view/cube `target` · DW 표면 `list_databases`·`database` 인자 · `list_tables`/`describe_table`=cube 표면(D20) · `search_columns(database)` 필터. 타깃 엔진: Postgres·MySQL(`sqlx`) · SQLite(`libsql`) · Oracle(`oracledb` thin). **D21:** `DialectProfile` emit(`date_trunc` rewrite · quote · `LIMIT`/`FETCH`; 실행 bind rewrite 비채택). **D22:** `physical_ident` vs 시맨틱 `name`. **D23:** (A) 명명 metric · (B) ad-hoc 집계 · (C) dim/fact-only ungrouped — **모드 혼용 금지**(JOIN에서는 A만). 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 파이프라인 [server/spec.md](server/spec.md).

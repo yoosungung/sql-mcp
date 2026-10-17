@@ -200,11 +200,25 @@ fn compile_single_cube(
     let offset = extract_offset(query, binds)?;
 
     let adhoc = !classified.adhoc_metrics.is_empty();
+    let ungrouped = classified.named_metrics.is_empty() && !adhoc;
     let dims = classified.dims.clone();
     let projections = classified.projections.clone();
     let (docs_owned, metrics) =
         materialize_adhoc_metrics(docs, &cube_name, &classified, &dims, &explicit_group_by)?;
     let docs_ref: &[Value] = docs_owned.as_deref().unwrap_or(docs);
+
+    if ungrouped {
+        if having.is_some() {
+            return Err(AppError::Validation(
+                "HAVING is not allowed in dim/fact-only ungrouped SELECT (D23)".into(),
+            ));
+        }
+        if explicit_group_by.is_some() || aggregation.is_some() {
+            return Err(AppError::Validation(
+                "GROUP BY is not allowed in dim/fact-only ungrouped SELECT (D23)".into(),
+            ));
+        }
+    }
 
     let explicit_group_by = if adhoc {
         match explicit_group_by {
@@ -228,6 +242,7 @@ fn compile_single_cube(
         order_by,
         limit,
         offset,
+        ungrouped,
     };
 
     compile_cube_query(docs_ref, &cube_name, &spec, role, binds)
@@ -324,6 +339,7 @@ fn compile_cube_join(
             order_by: Vec::new(),
             limit: None,
             offset: None,
+            ungrouped: false,
         };
         let physical = compile_cube_query(docs, cube_name, &spec, role, binds)?;
         subqueries.insert(alias.clone(), physical);
@@ -578,15 +594,22 @@ struct ClassifiedProjection {
 }
 
 fn ensure_projection_mode(c: &ClassifiedProjection) -> Result<(), AppError> {
-    if !c.named_metrics.is_empty() && !c.adhoc_metrics.is_empty() {
+    let named = !c.named_metrics.is_empty();
+    let adhoc = !c.adhoc_metrics.is_empty();
+    let members = !c.dims.is_empty();
+    // (A) named metrics (+ optional dims) and (B) ad-hoc (+ optional dims) must not mix.
+    if named && adhoc {
         return Err(AppError::Validation(
             "cannot mix named metrics and ad-hoc aggregates in one SELECT (D23)".into(),
         ));
     }
-    if c.named_metrics.is_empty() && c.adhoc_metrics.is_empty() {
-        return Err(AppError::Validation(
-            "semantic SELECT must project at least one metric or ad-hoc aggregate".into(),
-        ));
+    // (C) dim/fact-only ungrouped when neither named nor ad-hoc.
+    if !named && !adhoc {
+        if !members {
+            return Err(AppError::Validation(
+                "semantic SELECT must project a named metric, ad-hoc aggregate, or dimension/fact (D23)".into(),
+            ));
+        }
     }
     Ok(())
 }
@@ -1767,6 +1790,87 @@ mod tests {
             "SELECT sales.revenue, sales_b.revenue_b \
              FROM sales JOIN sales_b ON sales.nonexistent = sales_b.region_code",
             None,
+        )
+        .unwrap_err();
+        assert!(matches!(err, AppError::Validation(_)), "{err:?}");
+    }
+
+    #[test]
+    fn compiles_dim_only_ungrouped() {
+        let docs = example_docs();
+        let sql = compile_semantic_sql(
+            &docs,
+            "SELECT region_code FROM sales WHERE region_code = 'KR'",
+            Some("finance"),
+        )
+        .unwrap();
+        let upper = sql.to_ascii_uppercase();
+        assert!(!upper.contains("GROUP BY"), "ungrouped must omit GROUP BY: {sql}");
+        assert!(!upper.contains("SUM("), "ungrouped must not aggregate: {sql}");
+        assert!(
+            sql.contains("region_code") || sql.contains("\"region_code\""),
+            "{sql}"
+        );
+        assert_select_only(&sql).unwrap();
+    }
+
+    #[test]
+    fn compiles_fact_and_dim_ungrouped() {
+        let docs = example_docs();
+        let sql = compile_semantic_sql(
+            &docs,
+            "SELECT region_code, sale_amount FROM sales LIMIT 5",
+            Some("finance"),
+        )
+        .unwrap();
+        let upper = sql.to_ascii_uppercase();
+        assert!(!upper.contains("GROUP BY"), "{sql}");
+        assert!(upper.contains("LIMIT"), "{sql}");
+        assert!(
+            sql.contains("sale_amount") || sql.contains("\"sale_amount\""),
+            "{sql}"
+        );
+        assert_select_only(&sql).unwrap();
+    }
+
+    #[test]
+    fn rejects_having_in_dim_fact_ungrouped() {
+        let docs = example_docs();
+        let err = compile_semantic_sql(
+            &docs,
+            "SELECT region_code FROM sales HAVING region_code = 'KR'",
+            Some("finance"),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, AppError::Validation(ref m) if m.to_ascii_lowercase().contains("having") || m.contains("ungrouped")),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_group_by_in_dim_fact_ungrouped() {
+        let docs = example_docs();
+        let err = compile_semantic_sql(
+            &docs,
+            "SELECT region_code FROM sales GROUP BY region_code",
+            Some("finance"),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, AppError::Validation(ref m) if m.to_ascii_lowercase().contains("group") || m.contains("ungrouped")),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_ungrouped_in_cube_join() {
+        let docs = docs_with_second_cube("dw");
+        let err = compile_semantic_sql(
+            &docs,
+            "SELECT sales.region_code, sales_b.region_code \
+             FROM sales JOIN sales_b ON sales.region_code = sales_b.region_code",
+            Some("finance"),
         )
         .unwrap_err();
         assert!(matches!(err, AppError::Validation(_)), "{err:?}");

@@ -6,7 +6,7 @@
 ## 0. 확정 전제 (계획과 동일)
 
 1. **카탈로그는 타입별 `meta_*` 테이블**에 저장한다. `document(kind,name,body)` 단일 blob 정본은 쓰지 않는다. MCP `metadata_*` **입출력은 JSON**(`document.schema.json`)이며, 저장 시 타입별 행으로 분해·조회 시 JSON으로 재조립한다.
-2. **타깃 질의는 시맨틱 SELECT만.** 자유 물리 SELECT 경로는 없다(D19). 공개 툴 `execute_sql`의 입력은 시맨틱 SQL이고, 6단계 컴파일 후에만 물리 SQL이 생성·실행된다. (문서·다이어그램의 `execute_semantic_sql`은 **이명** — 공개 툴명을 바꾸지 않는다.) **D23:** 한 SELECT는 명명 metric 모드 또는 ad-hoc 집계 모드만 — 혼용 거절. ad-hoc은 단일 cube FROM · `sum|count|avg|min|max`(…) 등 집계식(fact/dim만) · JOIN 거절.
+2. **타깃 질의는 시맨틱 SELECT만.** 자유 물리 SELECT 경로는 없다(D19). 공개 툴 `execute_sql`의 입력은 시맨틱 SQL이고, 6단계 컴파일 후에만 물리 SQL이 생성·실행된다. (문서·다이어그램의 `execute_semantic_sql`은 **이명** — 공개 툴명을 바꾸지 않는다.) **D23:** 한 SELECT는 (A) 명명 metric · (B) ad-hoc 집계 · (C) dim/fact-only ungrouped 중 하나만 — 혼용 거절. (B)는 단일 cube · `sum|count|avg|min|max`(…) 등 집계식(fact/dim만). (C)는 dim·fact 프로젝션만 · GROUP BY/HAVING 없음 · 단일 cube. JOIN에서는 (B)(C) 거절.
 3. **툴 표면 유지:** `execute_sql`, `sample_column`, `search_columns`, `metadata_*` 등 현행 이름. `sample_cube_data`는 `sample_column`의 이명이다.
 4. **타깃 접속:** Postgres·MySQL=`sqlx`, SQLite=`libsql`(로컬), Oracle=`oracledb`(thin). JDBC/ODBC/ADBC는 쓰지 않는다.
 5. **검색:** keyword는 **FTS5**(순위는 `bm25()` — 별도 BM25 엔진이 아님). **vector + hybrid(RRF) 유지.** 구조화 FTS(`meta_search_fts`)와 embedding side table을 쓰며, FTS를 이중으로 두지 않는다.

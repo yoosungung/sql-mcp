@@ -15,6 +15,14 @@
 
 `.sqlite`는 gitignore — 스크립트로만 받는다.
 
+같은 zip에서 **질문-SQL**도 추출한다:
+
+```text
+target_db/bird_qa/mini_dev_sqlite.json   # NL question + gold SQL (500건)
+```
+
+에이전트 예제: [client/README.md](../client/README.md).
+
 ## Meta JSON
 
 물리 SQLite를 MCP 없이 읽어 `document.schema.json` 골격 JSON을 만든다(코딩 에이전트 스킬과 동일 계약). gitignore — 로컬 생성물.

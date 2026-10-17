@@ -787,6 +787,8 @@ pub struct CubeQuerySpec {
     pub order_by: Vec<String>,
     pub limit: Option<String>,
     pub offset: Option<String>,
+    /// D23 (C): dim/fact-only row-level SELECT (no metrics, no GROUP BY/HAVING).
+    pub ungrouped: bool,
 }
 
 /// Compile cube metric (+ optional segments) into physical SELECT.
@@ -823,8 +825,216 @@ pub fn compile_metric_select_with_binds(
         order_by: Vec::new(),
         limit: None,
         offset: None,
+        ungrouped: false,
     };
     compile_cube_query(docs, cube_name, &spec, role, binds)
+}
+
+/// D23 (C): project dimensions/facts as row-level columns (no aggregation).
+fn compile_cube_query_ungrouped(
+    docs: &[Value],
+    cube_name: &str,
+    spec: &CubeQuerySpec,
+    role: Option<&str>,
+    binds: Option<&HashMap<String, String>>,
+) -> Result<String, AppError> {
+    if !spec.metrics.is_empty() {
+        return Err(AppError::Validation(
+            "ungrouped SELECT cannot include metrics (D23)".into(),
+        ));
+    }
+    if spec.dimensions.is_empty() && spec.projections.is_empty() {
+        return Err(AppError::Validation(
+            "ungrouped SELECT must project at least one dimension or fact (D23)".into(),
+        ));
+    }
+    if spec.having.is_some() {
+        return Err(AppError::Validation(
+            "HAVING is not allowed in dim/fact-only ungrouped SELECT (D23)".into(),
+        ));
+    }
+    if spec
+        .explicit_group_by
+        .as_ref()
+        .is_some_and(|gb| !gb.is_empty())
+        || spec.aggregation.is_some()
+    {
+        return Err(AppError::Validation(
+            "GROUP BY is not allowed in dim/fact-only ungrouped SELECT (D23)".into(),
+        ));
+    }
+
+    let cube = find_doc(docs, "cube", cube_name)?;
+    check_role_access(cube.get("role"), role)?;
+    let members = cube_member_names(cube);
+
+    let proj_members: Vec<(String, String)> = if spec.projections.is_empty() {
+        spec.dimensions
+            .iter()
+            .map(|d| (d.clone(), d.clone()))
+            .collect()
+    } else {
+        spec.projections
+            .iter()
+            .map(|p| (p.member.clone(), p.alias.clone()))
+            .collect()
+    };
+
+    for (member, _) in &proj_members {
+        if !members.contains(member) {
+            return Err(AppError::Validation(format!(
+                "unknown semantic member: {member}"
+            )));
+        }
+        check_member_role(cube, member, role)?;
+    }
+
+    let mut req_cols: HashSet<String> = HashSet::new();
+    for (member, _) in &proj_members {
+        collect_member_view_cols(cube, member, &mut req_cols);
+    }
+    for seg_name in &spec.segments {
+        let seg = find_doc(docs, "segment", seg_name)?;
+        if seg.get("cube").and_then(|v| v.as_str()) != Some(cube_name) {
+            return Err(AppError::Validation(format!(
+                "segment {seg_name} not on cube {cube_name}"
+            )));
+        }
+        check_role_access(seg.get("role"), role)?;
+        if let Some(expr) = filter_expr(seg.get("filter")) {
+            assert_filter_expr(expr)?;
+            assert_idents_known(expr, &members)?;
+            for id in extract_idents(expr)? {
+                if member_encrypted(cube, &id) {
+                    return Err(AppError::Validation(format!(
+                        "encrypted member {id} cannot be used in segment filter"
+                    )));
+                }
+            }
+            collect_member_view_cols(cube, expr, &mut req_cols);
+        }
+    }
+    for w_expr in &spec.where_exprs {
+        assert_filter_expr(w_expr)?;
+        assert_idents_known(w_expr, &members)?;
+        for id in extract_idents(w_expr)? {
+            check_member_role(cube, &id, role)?;
+            if member_encrypted(cube, &id) {
+                return Err(AppError::Validation(format!(
+                    "encrypted member {id} cannot be used in WHERE filter"
+                )));
+            }
+        }
+        collect_member_view_cols(cube, w_expr, &mut req_cols);
+    }
+
+    let mut query_preds: Vec<String> = Vec::new();
+    for seg_name in &spec.segments {
+        let seg = find_doc(docs, "segment", seg_name)?;
+        if let Some(expr) = filter_expr(seg.get("filter")) {
+            query_preds.push(expr.to_string());
+        }
+    }
+    for w_expr in &spec.where_exprs {
+        query_preds.push(w_expr.clone());
+    }
+
+    let view = resolve_view_for_cube(docs, cube, &req_cols, false)?;
+    let combine = view.get("combine").and_then(|v| v.as_str()).unwrap_or("");
+    let set_alias = matches!(combine, "union" | "minus").then_some("_sem_uv");
+    let mut from =
+        compile_view_from_opts(docs, &view, role, Some(&req_cols), &query_preds, binds)?;
+    if let Some(a) = set_alias {
+        from = format!("{from} AS {}", quote_ident(a)?);
+    }
+
+    let view_cols = view_column_name_set(&view);
+    validate_cube_member_expressions(cube, &view_cols)?;
+
+    let mut projections: Vec<(String, String)> = Vec::new();
+    let mut as_code_dims: Vec<(String, String)> = Vec::new();
+    for (member, alias) in &proj_members {
+        let expr = compile_dimension_expr(cube, &view, member, set_alias)?;
+        projections.push((expr, alias.clone()));
+        if find_dimension(cube, member).is_some() && !as_code_dims.iter().any(|(d, _)| d == member)
+        {
+            as_code_dims.push((member.clone(), alias.clone()));
+        }
+    }
+
+    let mut filters = Vec::new();
+    for seg_name in &spec.segments {
+        let seg = find_doc(docs, "segment", seg_name)?;
+        if let Some(expr) = filter_expr(seg.get("filter")) {
+            filters.push(rewrite_member_or_view_idents(
+                expr, cube, &view, set_alias, binds,
+            )?);
+        }
+    }
+    for w_expr in &spec.where_exprs {
+        filters.push(rewrite_member_or_view_idents(
+            w_expr, cube, &view, set_alias, binds,
+        )?);
+    }
+
+    let has_as_code = as_code_dims.iter().any(|(dim, _)| {
+        !member_encrypted(cube, dim)
+            && resolve_dim_as_code(docs, cube, &view, dim)
+                .ok()
+                .flatten()
+                .is_some()
+    });
+
+    let inner_clauses = SelectClauses {
+        aggregation: Some("none".into()),
+        having: None,
+        order_by: if has_as_code {
+            Vec::new()
+        } else {
+            spec.order_by.clone()
+        },
+        limit: if has_as_code {
+            None
+        } else {
+            spec.limit.clone()
+        },
+        offset: if has_as_code {
+            None
+        } else {
+            spec.offset.clone()
+        },
+    };
+
+    let sql = assemble_select_with_clauses(&projections, &from, &filters, &[], &inner_clauses)?;
+    let mut sql =
+        wrap_as_code_joins_with_aliases(docs, cube, &view, &as_code_dims, &sql, role, binds)?;
+    if has_as_code
+        && (!spec.order_by.is_empty() || spec.limit.is_some() || spec.offset.is_some())
+    {
+        if !spec.order_by.is_empty() {
+            sql.push_str(" ORDER BY ");
+            sql.push_str(&spec.order_by.join(", "));
+        }
+        if let Some(lim) = &spec.limit {
+            sql.push_str(" LIMIT ");
+            sql.push_str(lim.trim());
+        }
+        if let Some(off) = &spec.offset {
+            sql.push_str(" OFFSET ");
+            sql.push_str(off.trim());
+        }
+        let dialect = sqlparser::dialect::GenericDialect {};
+        let stmts = sqlparser::parser::Parser::parse_sql(&dialect, &sql)
+            .map_err(|e| AppError::Validation(format!("outer clauses parse: {e}")))?;
+        if stmts.len() != 1 {
+            return Err(AppError::Validation(
+                "outer clauses: expected single statement".into(),
+            ));
+        }
+        sql = stmts[0].to_string();
+    }
+    assert_select_only(&sql)?;
+    Ok(sql)
 }
 
 pub fn compile_cube_query(
@@ -834,6 +1044,9 @@ pub fn compile_cube_query(
     role: Option<&str>,
     binds: Option<&HashMap<String, String>>,
 ) -> Result<String, AppError> {
+    if spec.ungrouped {
+        return compile_cube_query_ungrouped(docs, cube_name, spec, role, binds);
+    }
     if spec.metrics.is_empty() {
         return Err(AppError::Validation(
             "semantic SELECT must project at least one metric".into(),
@@ -1202,11 +1415,11 @@ fn compile_dimension_group_expr(
     dim_name: &str,
     set_alias: Option<&str>,
 ) -> Result<String, AppError> {
-    if let Some(dim) = find_dimension(cube, dim_name) {
-        if let Some(expr) = dim.get("expression").and_then(|v| v.as_str()) {
+    if let Some(member) = find_cube_member(cube, dim_name) {
+        if let Some(expr) = member.get("expression").and_then(|v| v.as_str()) {
             return rewrite_view_idents(expr, view, set_alias);
         }
-        if let Some(col) = dim.get("column").and_then(|v| v.as_str()) {
+        if let Some(col) = member.get("column").and_then(|v| v.as_str()) {
             return output_col_expr(view, col, set_alias);
         }
     }
@@ -1362,6 +1575,16 @@ fn find_dimension<'a>(cube: &'a Value, name: &str) -> Option<&'a Value> {
                 .iter()
                 .find(|item| item.get("name").and_then(|v| v.as_str()) == Some(name))
         })
+}
+
+fn find_cube_member<'a>(cube: &'a Value, name: &str) -> Option<&'a Value> {
+    find_dimension(cube, name).or_else(|| {
+        cube.get("facts").and_then(|v| v.as_array()).and_then(|items| {
+            items
+                .iter()
+                .find(|item| item.get("name").and_then(|v| v.as_str()) == Some(name))
+        })
+    })
 }
 
 fn output_col_expr(

@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # BIRD Mini-Dev SQLite → target_db/<db_id>/<db_id>.sqlite
+# + 질문-SQL JSON → target_db/bird_qa/mini_dev_sqlite.json
 # 기본: 공식 Alibaba minidev.zip (HF LFS는 지역에 따라 403일 수 있음)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 CACHE="${ROOT}/.cache"
+QA_DIR="${ROOT}/bird_qa"
 ZIP_URL="${BIRD_MINIDEV_ZIP_URL:-https://bird-bench.oss-cn-beijing.aliyuncs.com/minidev.zip}"
 ZIP_PATH="${CACHE}/minidev.zip"
+QA_MEMBER="minidev/MINIDEV/mini_dev_sqlite.json"
+QA_DEST="${QA_DIR}/mini_dev_sqlite.json"
 
 ALL_DBS=(
   california_schools
@@ -72,5 +76,22 @@ else
   echo "all requested DBs already present"
 fi
 
+# 질문-SQL (NL ↔ gold SQL). client/ 예제·평가용.
+if [[ ! -s "$ZIP_PATH" ]]; then
+  echo "download: $ZIP_URL"
+  curl -fL --retry 3 --retry-delay 2 -A "sql-mcp-fetch/1.0" -o "${ZIP_PATH}.partial" "$ZIP_URL"
+  mv "${ZIP_PATH}.partial" "$ZIP_PATH"
+fi
+mkdir -p "$QA_DIR"
+if [[ -s "$QA_DEST" ]]; then
+  echo "skip (exists): bird_qa/mini_dev_sqlite.json"
+else
+  echo "extract Q-SQL: $QA_MEMBER"
+  unzip -p "$ZIP_PATH" "$QA_MEMBER" >"${QA_DEST}.partial"
+  mv "${QA_DEST}.partial" "$QA_DEST"
+  echo "ok: bird_qa/mini_dev_sqlite.json ($(du -h "$QA_DEST" | awk '{print $1}'))"
+fi
+
 echo "done → $ROOT"
 ls -lh "${ROOT}"/*/*.sqlite 2>/dev/null | awk '{print $5, $9}'
+ls -lh "$QA_DEST" 2>/dev/null | awk '{print $5, $9}'
