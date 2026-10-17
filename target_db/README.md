@@ -33,11 +33,11 @@ python3 ./target_db/generate_meta.py
 ```
 
 - **table** / **view** / **cube**: `target`=`{db_id}`(MCP `list_databases.name` = `TargetConfig.id`와 동일). table은 `schema`=`main`, 필터 비움. FK `to`가 비면 참조 테이블 PK로 채운다. (`as_code`는 table 컬럼이 아니라 cube dimension에만 둔다.)
-- **view**: FK + (컬럼명=타 테이블 PK) + (동일 FK 컬럼 패턴 전파)로 그래프를 만들고, 연결 요소마다 hub 기준 spanning-tree `inner` join 하나. 전부 연결되면 `{db_id}_all`, 아니면 `{db_id}_{hub}`. sources ≥ 2.
+- **view**: FK + (컬럼명=타 테이블 PK, **단 child 자신의 PK 컬럼 제외**) + (동일 FK 컬럼 패턴 전파, PK→PK 제외)로 그래프를 만들고, 연결 요소마다 hub 기준 spanning-tree `inner` join 하나. 전부 연결되면 `{db_id}_all`, 아니면 `{db_id}_{hub}`. sources ≥ 2. (PK끼리 `id=id`를 붙이면 hero–power 같은 M:N이 깨진다.)
 - **cube** / **metric**: view당 휴리스틱 초안(자연 이름은 cube/dim/fact/metric 우선; 충돌 시 table/view/view컬럼에 `_table`/`_view`/`_col`). dimension·fact·metric에 `description` 필수. 등록 전 검토 권장.
 - self-FK·동일 테이블 다중 FK는 source 이름 제약으로 스패닝에 한 간선만 쓴다.
 - BIRD처럼 물리 컬럼에 공백·기호가 있으면 table/`mappings.column`에는 **물리명 그대로**(D22 `physical_ident`). view 컬럼 `name`은 시맨틱 패턴으로 sanitize하고, cube dim/fact는 그 별칭을 쓴다.
-- **MCP `metadata_*` 등록은 이 스크립트가 하지 않는다.**
+- JSON 생성만 하면 MCP에는 안 들어간다. **등록은 `.cursor/mcp.json`의 sql-mcp**(stdio · `SQL_MCP_MODE=author` · 동일 `./data/semantic.db`)로 `metadata_*` / `semantic-register` 스킬을 쓰면 된다. 같은 시맨틱 DB를 HTTP `query` 디버그 세션과 **동시에** 열지 말 것(libSQL 파일 락). `metadata_*` 성공 시 해당 프로세스 캐시는 즉시 갱신된다. (선택) HTTP author가 필요할 때만 `python3 ./target_db/register_meta.py`.
 
 ## Run with sql-mcp
 

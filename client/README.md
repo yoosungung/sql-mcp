@@ -33,6 +33,17 @@ python agent_bird.py --db superhero --show-gold
 
 옵션: `--question-id`, `--index`, `--model ollama:gemma4:e2b`(기본) / `openai:gpt-4o-mini`, `--url http://127.0.0.1:8080/mcp`.
 
+### eval.json (개선용)
+
+질문·evidence·gold SQL/행 + DW agent 실행 결과를 한 JSON으로 모읍니다.
+
+```bash
+cd client && source .venv/bin/activate
+python run_eval.py --db superhero --limit 3 --skip-agent          # gold만
+python run_eval.py --url http://127.0.0.1:8090/mcp --concurrency 8  # 전체, 병렬 8
+# → client/eval/eval.json
+```
+
 Cursor/VS Code: `Debug BIRD: sql-mcp + agent`(compound) 또는 서버(`:8090`) 기동 후 `Debug client agent (BIRD HTTP)`.
 
 내부 설계·테스트: [DESIGN.md](DESIGN.md).

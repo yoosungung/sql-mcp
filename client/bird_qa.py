@@ -31,6 +31,19 @@ def default_qa_path() -> Path:
     return repo_root() / "target_db" / "bird_qa" / "mini_dev_sqlite.json"
 
 
+# config.bird.toml --small 타깃과 맞춤
+SMALL_DBS = frozenset(
+    {
+        "superhero",
+        "student_club",
+        "toxicology",
+        "thrombosis_prediction",
+        "california_schools",
+        "formula_1",
+    }
+)
+
+
 def load_questions(
     path: Path | None = None,
     *,

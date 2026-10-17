@@ -491,14 +491,19 @@ def collect_join_edges(
             add(child["name"], parent, list(zip(fk["columns"], to_cols)))
 
     # 2) 컬럼명 == 다른 테이블 단일 PK → 추론
+    #    단, child 자신의 PK 컬럼으로는 추론하지 않는다.
+    #    (예: superhero.id ↔ superpower.id 를 붙이면 M:N이 깨짐)
     pk_index: dict[str, list[str]] = {}
     for name, doc in tables.items():
         if len(doc["pk"]) == 1:
             pk_index.setdefault(doc["pk"][0], []).append(name)
 
     for child in tables.values():
+        child_pk = set(child.get("pk") or [])
         child_cols = {c["name"] for c in child["columns"]}
         for col in child_cols:
+            if col in child_pk:
+                continue
             for parent in pk_index.get(col, []):
                 if parent == child["name"]:
                     continue
@@ -506,13 +511,25 @@ def collect_join_edges(
 
     # 3) 이미 알려진 (col → parent.to) 패턴을 같은 col 가진 다른 테이블에 전파
     #    (예: set_translations.setCode→sets.code 이면 cards.setCode도 동일 조인)
+    #    PK→PK 패턴은 전파하지 않는다(위와 동일 이유).
     patterns: list[tuple[str, str, str]] = []  # (from_col, parent, to_col)
+    parent_pk: dict[str, set[str]] = {
+        name: set(doc.get("pk") or []) for name, doc in tables.items()
+    }
     for child, parent, on in list(edges):
-        if len(on) == 1:
-            patterns.append((on[0][0], parent, on[0][1]))
+        if len(on) != 1:
+            continue
+        from_col, to_col = on[0]
+        if from_col in set(tables[child].get("pk") or []) and to_col in parent_pk.get(
+            parent, set()
+        ):
+            continue
+        patterns.append((from_col, parent, to_col))
     for from_col, parent, to_col in patterns:
         for child in tables.values():
             if child["name"] == parent:
+                continue
+            if from_col in set(child.get("pk") or []):
                 continue
             if any(c["name"] == from_col for c in child["columns"]):
                 add(child["name"], parent, [(from_col, to_col)])

@@ -12,3 +12,4 @@ target_db/**/*.json
 target_db/bird_qa/
 target_db/.cache/
 client/.venv/
+client/eval/

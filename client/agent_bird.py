@@ -27,7 +27,7 @@ import httpx
 from langchain.agents import create_agent
 from langchain.mcp import MCPAdapter
 
-from bird_qa import default_qa_path, load_questions, pick_question
+from bird_qa import SMALL_DBS, default_qa_path, load_questions, pick_question
 
 def _clip(text: str, limit: int) -> str:
     if limit <= 0 or len(text) <= limit:
@@ -82,18 +82,6 @@ def log_agent_trace(
             print(f"  content: {_clip(text, log_max)}", file=file)
     print("--- end trace ---", file=file)
 
-# config.bird.toml 의 --small 타깃과 맞춤
-SMALL_DBS = frozenset(
-    {
-        "superhero",
-        "student_club",
-        "toxicology",
-        "thrombosis_prediction",
-        "california_schools",
-        "formula_1",
-    }
-)
-
 SYSTEM = """You are a data analyst using the sql-mcp MCP tools.
 Query the warehouse via semantic tools only:
 list_databases, list_tables, describe_table, search_columns, sample_column, execute_sql.
@@ -142,6 +130,36 @@ async def wait_for_mcp(mcp_url: str, *, timeout_s: float = 60.0) -> None:
     )
 
 
+async def invoke_bird_agent(
+    q,
+    *,
+    model: str,
+    url: str,
+    wait_timeout_s: float = 60.0,
+) -> tuple[str, list[Any]]:
+    """한 질문에 대해 agent를 돌리고 (final_text, messages)를 반환."""
+    await wait_for_mcp(url, timeout_s=wait_timeout_s)
+    async with MCPAdapter(url) as adapter:
+        tools = await adapter.list_tools()
+        print(
+            f"mcp tools ({len(tools)}): "
+            + ", ".join(getattr(t, "name", str(t)) for t in tools),
+            file=sys.stderr,
+        )
+        agent = create_agent(model, tools, system_prompt=SYSTEM)
+        result = await agent.ainvoke(
+            {"messages": [{"role": "user", "content": _user_prompt(q)}]}
+        )
+    messages = result.get("messages") or []
+    final = ""
+    if messages:
+        last = messages[-1]
+        final = _content_text(getattr(last, "content", last)) or str(last)
+    else:
+        final = json.dumps(result, default=str)
+    return final, messages
+
+
 async def run(args: argparse.Namespace) -> int:
     questions = load_questions(
         Path(args.qa) if args.qa else None,
@@ -174,28 +192,11 @@ async def run(args: argparse.Namespace) -> int:
         print(q.sql)
         print("---")
 
-    await wait_for_mcp(url)
-    async with MCPAdapter(url) as adapter:
-        tools = await adapter.list_tools()
-        print(
-            f"mcp tools ({len(tools)}): "
-            + ", ".join(getattr(t, "name", str(t)) for t in tools),
-            file=sys.stderr,
-        )
-        agent = create_agent(model, tools, system_prompt=SYSTEM)
-        result = await agent.ainvoke(
-            {"messages": [{"role": "user", "content": _user_prompt(q)}]}
-        )
-
-    messages = result.get("messages") or []
+    final, messages = await invoke_bird_agent(q, model=model, url=url)
     if not args.quiet_trace:
         log_agent_trace(messages, log_max=args.log_max)
-    if messages:
-        last = messages[-1]
-        print("--- final ---")
-        print(_content_text(getattr(last, "content", last)) or last)
-    else:
-        print(result)
+    print("--- final ---")
+    print(final)
     return 0
 
 

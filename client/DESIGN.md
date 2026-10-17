@@ -6,7 +6,7 @@ BIRD Mini-Dev **질문-SQL**을 넣고, LangChain v1 `create_agent()` + `MCPAdap
 
 - Q-SQL 로더: `bird_qa.py` ← `target_db/bird_qa/mini_dev_sqlite.json` (`fetch_bird.sh`가 zip에서 추출)
 - 에이전트: `agent_bird.py` — **HTTP만** (sql-mcp 기동은 client 밖)
-- 평가 하네스·정확도 벤치마크는 범위 밖 (후속)
+- 평가 스냅샷: `bird_eval.py` + `run_eval.py` → `client/eval/eval.json` (개선 루프용; EX 자동 채점은 후속)
 
 ## 흐름
 
@@ -18,9 +18,19 @@ fetch_bird.sh → bird_qa/mini_dev_sqlite.json
          create_agent(model, MCP tools)
                      ↓
          sql-mcp HTTP (이미 기동된 서버)
+                     ↓
+    run_eval.py → eval.json  (question/evidence/gold_sql/gold_rows + agent)
 ```
 
-BIRD gold `SQL`은 **물리 SELECT**이므로 `execute_sql`(시맨틱-only)에 그대로 넣지 않는다. 참고·비교용(`--show-gold`).
+BIRD gold `SQL`은 **물리 SELECT**이므로 `execute_sql`(시맨틱-only)에 그대로 넣지 않는다. 참고·비교용(`--show-gold`). gold 행은 `target_db/<db>/<db>.sqlite`에 직접 실행해 `gold_rows`로 저장한다.
+
+### eval.json 항목
+
+| 필드 | 설명 |
+|------|------|
+| `question` / `evidence` / `gold_sql` | BIRD Mini-Dev |
+| `gold_rows` / `gold_error` | 물리 SQLite 실행 결과 |
+| `agent.final` / `agent.tool_calls` | DW agent 최종 답 + MCP tool 궤적 |
 
 ## Commands
 
@@ -48,6 +58,11 @@ cd client
 python agent_bird.py --db superhero --show-gold
 # stderr에 agent trace(tool_call·ToolMessage). 끄기: --quiet-trace
 # OpenAI: --model openai:gpt-4o-mini + OPENAI_API_KEY
+
+# eval.json (개선 루프용 스냅샷; 기본 병렬 8)
+python run_eval.py --db superhero --limit 3 --skip-agent   # gold만
+python run_eval.py --url http://127.0.0.1:8090/mcp --concurrency 8
+# → client/eval/eval.json
 
 # Cursor/VS Code 디버그 (.vscode/launch.json)
 # - Debug sql-mcp (BIRD)              — :8090
