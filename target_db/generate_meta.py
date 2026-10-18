@@ -92,20 +92,21 @@ def physical_type(tables: dict[str, dict], source: str, column: str) -> str:
 
 
 def classify_view_column(
-    view_col: str, phys_type: str
+    view_col: str, phys_type: str, source_desc: str = ""
 ) -> tuple[str, dict] | None:
     """Return ('dimension'|'fact', member dict) or None if skipped."""
     if not is_ident(view_col):
         return None
     typ = phys_type or ""
     lower = view_col.lower()
+    from_clause = f" from {source_desc}" if source_desc else ""
     if DATE_HINT.search(lower) and not NUMERIC_TYPES.match(typ):
         dtype = "datetime" if "time" in lower else "date"
         return (
             "dimension",
             {
                 "name": view_col,
-                "description": f"Dimension {view_col}.",
+                "description": f"Dimension {view_col}{from_clause}.",
                 "type": dtype,
                 "column": view_col,
                 "encryption": False,
@@ -125,7 +126,7 @@ def classify_view_column(
             "fact",
             {
                 "name": view_col,
-                "description": f"Fact {view_col} ({ftype}).",
+                "description": f"Fact {view_col} ({ftype}){from_clause}.",
                 "type": ftype,
                 "column": view_col,
                 "encryption": False,
@@ -138,7 +139,7 @@ def classify_view_column(
         "dimension",
         {
             "name": view_col,
-            "description": f"Dimension {view_col}.",
+            "description": f"Dimension {view_col}{from_clause}.",
             "type": dim_type,
             "column": view_col,
             "encryption": False,
@@ -298,6 +299,21 @@ def apply_name_priority(
             taken.add(new)
 
 
+def _format_source_desc(tables: dict[str, dict], mappings: list[dict]) -> str:
+    if not mappings:
+        return ""
+    m0 = mappings[0]
+    t0 = tables.get(m0["source"], {}).get("table") or m0["source"]
+    desc = f"{t0}.{m0['column']}"
+    if len(mappings) > 1:
+        others = [
+            f"{tables.get(m['source'], {}).get('table') or m['source']}.{m['column']}"
+            for m in mappings[1:4]
+        ]
+        desc += f" (join key with {', '.join(others)})"
+    return desc
+
+
 def cube_and_metric_from_view(
     view: dict, tables: dict[str, dict], priority_taken: set[str], target: str
 ) -> tuple[dict, dict | None]:
@@ -306,9 +322,11 @@ def cube_and_metric_from_view(
     facts: list[dict] = []
     for col in view["columns"]:
         vname = col["name"]
-        mapping = col["mappings"][0]
+        mappings = col["mappings"]
+        mapping = mappings[0]
         ptype = physical_type(tables, mapping["source"], mapping["column"])
-        classified = classify_view_column(vname, ptype)
+        sdesc = _format_source_desc(tables, mappings)
+        classified = classify_view_column(vname, ptype, sdesc)
         if classified is None:
             continue
         kind, member = classified
@@ -366,7 +384,7 @@ def cube_and_metric_from_view(
     metric_name = alloc_name(
         f"{cube_name}_count", priority_taken | member_names, "metric"
     )
-    group_cols = [d["column"] for d in dimensions[:2] if d.get("column")]
+    group_cols = [d["column"] for d in dimensions if d.get("column")]
     if metric_name not in member_names and group_cols:
         amount_facts = [
             f for f in facts if f.get("type") == "amount" and f.get("column")
@@ -395,9 +413,11 @@ def extract_table(
 ) -> dict:
     columns = []
     pk = []
-    for _cid, name, typ, notnull, _dflt, pk_ord in con.execute(
+    col_order: dict[str, int] = {}
+    for cid, name, typ, notnull, _dflt, pk_ord in con.execute(
         f"PRAGMA table_info({quote_ident(table)})"
     ):
+        col_order[name] = cid
         columns.append(
             {
                 "name": name,
@@ -416,7 +436,16 @@ def extract_table(
 
     fk = []
     seen: set[tuple] = set()
-    for fid in sorted(by_id):
+    # SQLite PRAGMA foreign_key_list numbers fid in reverse declaration order;
+    # sort by column declaration order in table_info first, then -fid.
+    sorted_fids = sorted(
+        by_id,
+        key=lambda fid: (
+            col_order.get(sorted(by_id[fid], key=lambda x: x[0])[0][2], 9999),
+            -fid,
+        ),
+    )
+    for fid in sorted_fids:
         parts = sorted(by_id[fid], key=lambda x: x[0])
         ref_table = parts[0][1]
         from_cols = [p[2] for p in parts]
@@ -460,6 +489,20 @@ def extract_table(
     }
 
 
+def _edge_sort_key(
+    tables: dict[str, dict],
+    child: str,
+    parent: str,
+    on: list[tuple[str, str]],
+    idx: int,
+) -> tuple[int, int, int, int]:
+    parent_pks = {c.lower() for c in (tables.get(parent, {}).get("pk") or [])}
+    targets_pk = 0 if (parent_pks and all(rc.lower() in parent_pks for _, rc in on)) else 1
+    exact_match = 0 if all(lc.lower() == rc.lower() for lc, rc in on) else 1
+    name_len = sum(len(lc) + len(rc) for lc, rc in on) if exact_match == 0 else 0
+    return (targets_pk, exact_match, name_len, idx)
+
+
 def collect_join_edges(
     tables: dict[str, dict],
 ) -> list[tuple[str, str, list[tuple[str, str]]]]:
@@ -500,7 +543,7 @@ def collect_join_edges(
 
     for child in tables.values():
         child_pk = set(child.get("pk") or [])
-        child_cols = {c["name"] for c in child["columns"]}
+        child_cols = [c["name"] for c in child["columns"]]
         for col in child_cols:
             if col in child_pk:
                 continue
@@ -534,7 +577,14 @@ def collect_join_edges(
             if any(c["name"] == from_col for c in child["columns"]):
                 add(child["name"], parent, [(from_col, to_col)])
 
-    return edges
+    # Sort edges so that for any (child, parent) pair, the best edge (PK target, exact name match, shorter key) comes first.
+    indexed = list(enumerate(edges))
+    indexed.sort(
+        key=lambda item: _edge_sort_key(
+            tables, item[1][0], item[1][1], item[1][2], item[0]
+        )
+    )
+    return [e for _, e in indexed]
 
 
 def connected_components(
@@ -569,28 +619,30 @@ def spanning_joins(
     comp: list[str],
     edges: list[tuple[str, str, list[tuple[str, str]]]],
 ) -> tuple[str, list[tuple[str, str, list[tuple[str, str]]]]]:
-    """root + join steps (left, right, on[(left_col, right_col)])."""
+    """root + join steps (left, right, on[(left_col, right_col)]) including cycle-closing FK edges."""
     comp_set = set(comp)
-    # undirected adjacency with payload
     adj: dict[str, list[tuple[str, str, str, list[tuple[str, str]]]]] = {
         n: [] for n in comp
     }
-    # store as (neighbor, child, parent, on_child_parent)
+    pair_edges: list[tuple[str, str, list[tuple[str, str]]]] = []
     pair_used: set[tuple[str, str]] = set()
     for child, parent, on in edges:
         if child not in comp_set or parent not in comp_set:
             continue
         pair = tuple(sorted((child, parent)))
         if pair in pair_used:
-            continue  # 동일 테이블 쌍은 스패닝에 한 간선만
+            continue  # 동일 테이블 쌍은 최우선 간선 하나만
         pair_used.add(pair)
+        pair_edges.append((child, parent, on))
         adj[child].append((parent, child, parent, on))
         adj[parent].append((child, child, parent, on))
 
     # hub = max degree
     root = max(comp, key=lambda n: (len(adj[n]), n))
     visited = {root}
-    order: list[tuple[str, str, list[tuple[str, str]]]] = []
+    discovery_order = [root]
+    tree_steps: list[tuple[str, str, list[tuple[str, str]]]] = []
+    tree_pairs: set[tuple[str, str]] = set()
     queue = [root]
     while queue:
         u = queue.pop(0)
@@ -598,15 +650,28 @@ def spanning_joins(
             if neighbor in visited:
                 continue
             visited.add(neighbor)
+            discovery_order.append(neighbor)
             queue.append(neighbor)
+            tree_pairs.add(tuple(sorted((u, neighbor))))
             if u == child and neighbor == parent:
-                order.append((u, neighbor, list(on)))
+                tree_steps.append((u, neighbor, list(on)))
             elif u == parent and neighbor == child:
-                order.append((u, neighbor, [(p, c) for c, p in on]))
+                tree_steps.append((u, neighbor, [(p, c) for c, p in on]))
             else:
-                # should not happen
-                order.append((u, neighbor, list(on)))
-    return root, order
+                tree_steps.append((u, neighbor, list(on)))
+
+    rank = {n: i for i, n in enumerate(discovery_order)}
+    extra_steps: list[tuple[str, str, list[tuple[str, str]]]] = []
+    for child, parent, on in pair_edges:
+        pair = tuple(sorted((child, parent)))
+        if pair in tree_pairs:
+            continue
+        if rank.get(child, 0) <= rank.get(parent, 0):
+            extra_steps.append((child, parent, list(on)))
+        else:
+            extra_steps.append((parent, child, [(p, c) for c, p in on]))
+
+    return root, tree_steps + extra_steps
 
 
 def build_component_view(
@@ -615,9 +680,14 @@ def build_component_view(
     join_steps: list[tuple[str, str, list[tuple[str, str]]]],
     view_name: str,
 ) -> dict:
-    sources = [{"kind": "table", "name": root}]
-    for _left, right, _on in join_steps:
-        sources.append({"kind": "table", "name": right})
+    source_order = [root]
+    seen_sources = {root}
+    for left, right, _on in join_steps:
+        for s in (left, right):
+            if s not in seen_sources:
+                seen_sources.add(s)
+                source_order.append(s)
+    sources = [{"kind": "table", "name": s} for s in source_order]
 
     joins = []
     for left, right, on in join_steps:
@@ -632,12 +702,51 @@ def build_component_view(
             }
         )
 
+    # Build join key equivalence classes over (table, col) pairs linked by join_steps
+    uf_parent: dict[tuple[str, str], tuple[str, str]] = {}
+
+    def find(x: tuple[str, str]) -> tuple[str, str]:
+        while uf_parent.get(x, x) != x:
+            uf_parent[x] = uf_parent.get(uf_parent[x], uf_parent[x])
+            x = uf_parent[x]
+        return x
+
+    def union(a: tuple[str, str], b: tuple[str, str]) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            uf_parent[rb] = ra
+
+    for left, right, on in join_steps:
+        for lc, rc in on:
+            uf_parent.setdefault((left, lc), (left, lc))
+            uf_parent.setdefault((right, rc), (right, rc))
+            union((left, lc), (right, rc))
+
+    equiv_groups: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    for node in uf_parent:
+        equiv_groups.setdefault(find(node), []).append(node)
+
+    source_rank = {s: i for i, s in enumerate(source_order)}
+
+    def _member_sort_key(tc: tuple[str, str]) -> tuple[int, int]:
+        t, c = tc
+        is_pk = 0 if c in (tables.get(t, {}).get("pk") or []) else 1
+        return (is_pk, source_rank.get(t, 9999))
+
+    for rep, members in equiv_groups.items():
+        members.sort(key=_member_sort_key)
+
     # (table, physical_col) → view column name
     loc: dict[tuple[str, str], str] = {}
     columns: list[dict] = []
     used: set[str] = set()
 
-    def ensure_view_col(table: str, physical: str, preferred: str) -> str:
+    def ensure_view_col(
+        table: str,
+        physical: str,
+        preferred: str,
+        extra_mappings: list[tuple[str, str]] | None = None,
+    ) -> str:
         key = (table, physical)
         if key in loc:
             return loc[key]
@@ -655,42 +764,65 @@ def build_component_view(
                 name = sanitize_ident(name)
         used.add(name)
         loc[key] = name
+        mappings = [{"source": table, "column": physical}]
+        for et, ec in extra_mappings or []:
+            m = {"source": et, "column": ec}
+            if m not in mappings:
+                mappings.append(m)
         columns.append(
             {
                 "name": name,
-                "mappings": [{"source": table, "column": physical}],
+                "mappings": mappings,
             }
         )
         return name
 
-    def add_mapping(view_col: str, table: str, physical: str) -> None:
-        loc[(table, physical)] = view_col
-        for col in columns:
-            if col["name"] == view_col:
-                mapping = {"source": table, "column": physical}
-                if mapping not in col["mappings"]:
-                    col["mappings"].append(mapping)
-                return
-
-    # root columns — view `name` is semantic; mapping.column keeps physical
-    for col in tables[root]["columns"]:
-        phys = col["name"]
-        ensure_view_col(root, phys, phys if is_ident(phys) else sanitize_ident(phys))
-
-    absorbed_right: set[tuple[str, str]] = set()
-    for left, right, on in join_steps:
-        for lc, rc in on:
-            pref = lc if is_ident(lc) else sanitize_ident(lc)
-            vname = ensure_view_col(left, lc, pref)
-            add_mapping(vname, right, rc)
-            absorbed_right.add((right, rc))
-        for col in tables[right]["columns"]:
-            if (right, col["name"]) in absorbed_right:
+    # For each join equivalence class, group members by case-insensitive physical column name.
+    # Generic non-root `id` columns merge into the specific FK column name when one exists in the class.
+    for _rep, members in equiv_groups.items():
+        has_non_id = any(c.lower() != "id" or t == root for t, c in members)
+        by_cname: dict[str, list[tuple[str, str]]] = {}
+        for t, c in members:
+            if c.lower() == "id" and t != root and has_non_id:
                 continue
+            by_cname.setdefault(c.lower(), []).append((t, c))
+
+        for _cname_lower, same_name_members in by_cname.items():
+            same_name_members.sort(key=_member_sort_key)
+            primary_t, primary_c = same_name_members[0]
+            other_members = same_name_members[1:] + [
+                tc for tc in members if tc not in same_name_members
+            ]
+            pref = primary_c if is_ident(primary_c) else sanitize_ident(primary_c)
+            vname = ensure_view_col(primary_t, primary_c, pref, other_members)
+            for t, c in same_name_members[1:]:
+                loc[(t, c)] = vname
+
+        for t, c in members:
+            if (t, c) not in loc:
+                # Generic non-root id absorbed into the first view col of this class
+                first_tc = next(tc for tc in members if tc in loc)
+                loc[(t, c)] = loc[first_tc]
+
+    # Now register all remaining columns in source_order
+    for src in source_order:
+        role_prefix = tables[src].get("_role_prefix")
+        non_loc_cols = [
+            col["name"]
+            for col in tables[src]["columns"]
+            if (src, col["name"]) not in loc
+        ]
+        for col in tables[src]["columns"]:
             phys = col["name"]
-            ensure_view_col(
-                right, phys, phys if is_ident(phys) else sanitize_ident(phys)
-            )
+            if (src, phys) in loc:
+                continue
+            if role_prefix and len(non_loc_cols) == 1:
+                pref = sanitize_ident(role_prefix)
+            elif role_prefix:
+                pref = sanitize_ident(f"{role_prefix}_{phys}")
+            else:
+                pref = phys if is_ident(phys) else sanitize_ident(phys)
+            ensure_view_col(src, phys, pref)
 
     return {
         "kind": "view",
@@ -701,6 +833,44 @@ def build_component_view(
         "joins": joins,
         "columns": columns,
     }
+
+
+def expand_role_playing_lookups(tables: dict[str, dict]) -> None:
+    """When a child table has 2..3 single-column FKs referencing the same column of a small lookup table
+    (e.g. superhero eye_colour_id, hair_colour_id, skin_colour_id -> colour.id), create role-playing
+    table documents for the secondary FKs so all lookup values are exposed and independently prunable.
+    """
+    for child in list(tables.values()):
+        by_target: dict[tuple[str, str], list[dict]] = {}
+        for fk in child.get("fk", []):
+            cols = fk.get("columns") or []
+            ref_t = resolve_table_name(tables, fk["references"]["table"])
+            ref_cols = fk["references"].get("columns") or []
+            if len(cols) == 1 and ref_t and len(ref_cols) == 1:
+                by_target.setdefault((ref_t, ref_cols[0]), []).append(fk)
+
+        for (parent_name, _to_col), fks in by_target.items():
+            if not (2 <= len(fks) <= 3):
+                continue
+            parent_doc = tables.get(parent_name)
+            if not parent_doc:
+                continue
+            if len(parent_doc.get("columns") or []) > 4 or parent_doc.get("fk"):
+                continue
+            # Keep fks[0] on original parent_name; clone lookup table for fks[1:]
+            for fk in fks[1:]:
+                from_col = fk["columns"][0]
+                role_prefix = re.sub(r"(_id|Id)$", "", from_col)
+                if not role_prefix or role_prefix.lower() == parent_name.lower():
+                    role_prefix = from_col
+                clone_name = alloc_name(
+                    sanitize_ident(f"{role_prefix}_table"), set(tables), "lookup"
+                )
+                clone_doc = json.loads(json.dumps(parent_doc))
+                clone_doc["name"] = clone_name
+                clone_doc["_role_prefix"] = role_prefix
+                tables[clone_name] = clone_doc
+                fk["references"]["table"] = clone_name
 
 
 def views_from_tables(tables: dict[str, dict], db_id: str) -> list[dict]:
@@ -784,6 +954,7 @@ def main() -> None:
                     fk["references"]["table"] = resolved
             tables[table] = doc
 
+        expand_role_playing_lookups(tables)
         views = views_from_tables(tables, db_id)
         priority_taken: set[str] = set()
         cubes: list[dict] = []
@@ -799,6 +970,7 @@ def main() -> None:
         apply_name_priority(tables, views, cubes, metrics)
 
         for doc in tables.values():
+            doc.pop("_role_prefix", None)
             write_json(meta_dir / f"{doc['name']}.json", doc)
             table_n += 1
         for doc in views:

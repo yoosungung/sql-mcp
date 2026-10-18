@@ -21,11 +21,17 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `expr_guard` | D16 식 AST 제한 · D18 컴파일 시 식별자 검사 |
 | `mask` | D17 `encryption` 응답 마스킹(null) |
 | `dialect` | **D21** `DialectProfile`: `quote_ident` · `rewrite_date_trunc` · `adapt_compiled_sql` · `wrap_row_limit` · `emit_physical_sql` |
-| `compile` | table/metric → 물리 SQL: 요약뷰·join/union pruning·필터 푸시다운·encryption NULL |
+| `compile/` | table/metric/cube → 물리 SQL. 공개 API는 `crate::compile::*` 유지 |
+| `compile/mod` | 공개 타입·엔트리(`compile_cube_query` 등)·RBAC/바인드 헬퍼 |
+| `compile/view_prune` | Step 3–4: 요약뷰 라우팅·join Steiner prune·union prune·인라인 보안 뷰 |
+| `compile/rewrite` | Step 5–7: 멤버→물리 맵·서브쿼리 전개·HAVING/ORDER BY·filter inject·as_code JOIN |
 | `ast_rewrite` | sqlparser VisitorMut로 식 식별자 → 물리 식 치환 |
 | `ast_select` | SELECT/WHERE/GROUP BY AST 조립·파서 정규화 |
 | `date_range` | 날짜 구간 추출(리터럴·`:bind`·OR/DNF)·union disjoint 판정 |
-| `pipeline` | 시맨틱 SQL AST → `compile_*` → 물리 SELECT (`execute_sql` 유일한 실행 경로) |
+| `pipeline/` | 시맨틱 SQL AST → `compile_*` → 물리 SELECT. 공개 API는 `crate::pipeline::*` 유지 |
+| `pipeline/mod` | 엔트리·단일 큐브·집합 연산(UNION/INTERSECT/EXCEPT) 오케스트레이션 |
+| `pipeline/join` | 다중 큐브 JOIN · ON 검증/리라이트 |
+| `pipeline/clauses` | SELECT 프로젝션 분류·adhoc 집계·WHERE 세그먼트·GROUP BY/HAVING/ORDER BY/LIMIT |
 | `semantic/typed` | JSON ↔ 타입별 `meta_*` 분해/재조립 |
 | `semantic` | 스키마·연결 검증 · libSQL CRUD · 검색 인덱스 재구축 |
 | `search` | BM25(FTS5) · 벡터 · hybrid(RRF) |

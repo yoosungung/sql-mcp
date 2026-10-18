@@ -156,17 +156,33 @@ def main() -> int:
     created = updated = 0
     deferred_after_view: list[dict] = []
 
-    # Pass 1: tables
+    # Pass 1: tables (create with fk=[] first if any referenced table is not yet in keys, then update with full fk)
+    deferred_table_fks: list[dict] = []
     for doc in docs:
         if doc["kind"] != "table":
             continue
         try:
-            op = upsert(url, doc, keys)
+            ref_tables = [
+                fk.get("references", {}).get("table")
+                for fk in (doc.get("fk") or [])
+            ]
+            if any(rt and ("table", rt) not in keys for rt in ref_tables):
+                stub = dict(doc, fk=[])
+                op = upsert(url, stub, keys)
+                deferred_table_fks.append(doc)
+            else:
+                op = upsert(url, doc, keys)
             created += op == "create"
             updated += op == "update"
             print(f"{op} table/{doc['name']}")
         except Exception as e:
             print(f"FAIL table/{doc['name']}: {e}", file=sys.stderr)
+            return 1
+    for doc in deferred_table_fks:
+        try:
+            upsert(url, doc, keys)
+        except Exception as e:
+            print(f"FAIL table/{doc['name']} (fk update): {e}", file=sys.stderr)
             return 1
 
     # Pass 2: views (detach dependent cubes first)

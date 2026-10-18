@@ -15,7 +15,12 @@
 ## 식·역할 공통
 
 - 필터·metric·segment·dimension/fact `expression`은 코딩 에이전트가 작성한 **신뢰된 SQL 조각**. 새 DSL 없음.
-- metric `expression`: 스칼라·집계식만. segment·filter: 단일 boolean만. 서브쿼리·다중 문장·쓰기·쓰기 CTE 거부.
+- **허용 함수 및 구문:**
+  - 기본 집계(`SUM`, `COUNT`, `AVG`, `MIN`, `MAX`) 및 산술·비교·논리·`CASE WHEN`·`CAST`·`COALESCE`/`NULLIF`
+  - 날짜·문자열·비율 편의 스칼라 함수: `date_trunc('year'|'month'|'day'|'hour', x)`, `YEAR(x)`, `MONTH(x)`, `DAY(x)`, `STRFTIME(fmt, x)`, `SUBSTR`/`SUBSTRING`, `LENGTH`, `REPLACE`, `INSTR`, `IFNULL`, `IIF(cond, t, f)`, `DIVIDE(num, den)`(0 나눗셈 안전 실수 나눗셈)
+  - **윈도우 함수 (`OVER (PARTITION BY … ORDER BY …)`):** `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `NTILE`, `PERCENT_RANK`, `CUME_DIST`, `LAG`, `LEAD`, `FIRST_VALUE`, `LAST_VALUE`, `NTH_VALUE` 및 `SUM`/`COUNT`/`AVG`/`MIN`/`MAX` `OVER (...)`
+  - **등록된 메타데이터 내 서브쿼리:** `metric.expression`, `metric.filter.expression`, `segment.filter.expression`에는 읽기 전용 `SELECT` 서브쿼리(`(SELECT …)`, `IN (SELECT …)`, `EXISTS (SELECT …)`)를 허용한다. 서브쿼리 내부는 시맨틱 큐브 SQL(컴파일러가 재귀 컴파일) 또는 물리 SQL로 작성할 수 있으며, 외부 스코프의 식별자 치환은 서브쿼리 내부 스코프를 침범하지 않는다. (단, DW 에이전트가 `execute_sql`에 직접 넘기는 ad-hoc `SELECT`/`WHERE`의 서브쿼리는 보안상 거부됨.)
+  - 다중 문장·쓰기·쓰기 CTE 거부.
 - cube/metric/segment 식의 식별자: 저장 시에는 연결 그래프 위주; **컴파일 직전**에 dimension·fact·(해당 시) view/물리 컬럼으로 해석. 실패 시 `validation`.
 - cube·metric·segment의 식에서 쓰는 이름은 그 cube의 **dimension / fact 이름**(metric `expression`의 피연산은 view 컬럼 기준 연산으로 작성하되, 질의·segment filter는 멤버 이름).
 - `role` 생략 또는 `"all"` 또는 role 이름 배열.
@@ -29,15 +34,15 @@
 
 **dimension**
 
-- `description` **필수** (검색·동의어)
+- `description` **필수** (검색·동의어·테이블 출처). 다중 테이블 조인 뷰(One-Big-View) 위의 큐브에서는 동명/유사 컬럼(`status` vs `event_status`, `name` vs `circuits_name`) 구분을 위해 원천 물리 출처(`from {table}.{column}`, 다중 매핑 조인 키면 `join key with ...`)를 `description`에 반드시 포함한다.
 - `type`: `code` | `date` | `time` | `datetime` | `string`
 - `column`(view 컬럼) **또는** `expression`(view 컬럼명을 쓰는 스칼라) — 둘 중 하나만
 - `encryption`, `role`
-- 선택 `as_code`: `{ table, key_column, value_column, where? }` 코드사전(집계 후 dim=key 조인 → `{dim}__value`)
+- 선택 `as_code`: `{ table, key_column, value_column, where? }` 코드사전(집계 후 바깥에서 `LEFT JOIN`하여 `{dim}__value` 컬럼을 **추가 프로젝션**함; 주의: `{dim}` 조회 시 반환 컬럼 수가 늘어나며 WHERE에서 `{dim}__value` 직접 필터링은 불가하므로, 값 자체로 WHERE 필터링하거나 반환 컬럼 수를 유지해야 하는 룩업은 `view.joins`의 룩업/역할 테이블 조인으로 노출하는 것이 유리함)
 
 **fact**
 
-- `description` **필수**
+- `description` **필수** (원천 물리 출처 `from {table}.{column}` 및 단위/의미 명시; 예: `income.amount` vs `budget.amount`)
 - `type`: `amount` | `fx` | `quantity` (취급 방식 — dim `type`과 같은 축)
 - `column` XOR `expression`
 - `encryption`, `role`
@@ -51,23 +56,23 @@
 | 필드 | 규칙 |
 |------|------|
 | `description` | 검색용 서술. 비울 수 없음 |
-| `expression` | 연결된 cube의 view 컬럼 연산. 예: `sum(sale_amount)` |
+| `expression` | 연결된 cube의 view 컬럼(또는 fact/dim) 연산·집계·윈도우·서브쿼리 식. 예: `sum(sale_amount)` |
 | `aggregation` | `group` \| `rollup` \| `cube` \| `grouping_sets` |
-| `group_by` | `aggregation=group`일 때 필수에 가깝게: GROUP BY용 **view 컬럼** 이름 배열 |
+| `group_by` | `aggregation=group`일 때 필수: 이 metric과 함께 `GROUP BY`/프로젝션할 수 있는 **허용 view 컬럼(allowlist)** 배열이자 미지정 시 기본 그룹핑 축. 컴파일러가 `metric.group_by`에 없는 차원으로 그룹핑하는 질의를 거절하므로(`dimension X not in metric group_by`), 범용 metric은 해당 그레인에서 유효한 큐브의 모든 컬럼 기반 dimension view 컬럼을 포함해야 한다(임의로 1~2개만 넣지 말 것). |
 | `filter` | `{ expression }` 또는 `null` |
 | `name` | 같은 cube의 dimension·fact 이름과 **겹치면 안 됨** |
 
 ## segment
 
-필수: `kind`, `name`, `description`, `cube`, `filter`. `filter`는 비울 수 없음. 식은 cube 멤버 이름. 예: `status_code = 'PAID'`.
+필수: `kind`, `name`, `description`, `cube`, `filter`. `filter`는 비울 수 없음. 식은 cube 멤버 이름(단순 boolean 비교 및 `IN (SELECT …)`/`EXISTS (SELECT …)` 등 서브쿼리 허용). 예: `status_code = 'PAID'`.
 
 ## Quick checks
 
 - [ ] `cube.view` 존재; `column` ∈ view columns
-- [ ] cube·dim·fact·metric·segment `description` 모두 non-empty
+- [ ] cube·dim·fact·metric·segment `description` 모두 non-empty이며 원천 `table.column` 출처를 포함함
 - [ ] `column`과 `expression` 동시 사용 없음
 - [ ] metric `name` ∉ 같은 cube dimension/fact names
-- [ ] `aggregation=group` ⇒ `group_by` ⊆ view columns
+- [ ] `aggregation=group` ⇒ `group_by` ⊆ view columns (그레인 호환 차원 전체 포함 확인)
 - [ ] segment `filter.expression` non-empty
-- [ ] 식에 서브쿼리·다중 문장·쓰기 CTE 없음
+- [ ] 식에 다중 문장·쓰기·쓰기 CTE 없음
 - [ ] `as_code.table`·key/value 컬럼이 등록 table에 존재(dimension만)

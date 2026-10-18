@@ -11,7 +11,14 @@ def test_system_prompt_bans_physical_sql_habits() -> None:
     assert "divide" in s
     assert "strftime" in s or "year(" in s
     assert "date_trunc" in s
-    assert "alias" in s
+    assert "alias" in s or "t1" in s
+
+
+def test_system_prompt_requires_sql_not_olap_dsl() -> None:
+    s = SYSTEM.lower()
+    assert "sql select" in s or "select text" in s
+    assert "mdx" in s and "dax" in s
+    assert "cube" in s and ("dimension" in s or "metric" in s)
 
 
 def test_system_prompt_covers_d23_and_join() -> None:

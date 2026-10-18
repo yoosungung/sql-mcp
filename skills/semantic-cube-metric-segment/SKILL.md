@@ -39,7 +39,15 @@ Progress:
 - [examples/metrics/revenue.json](examples/metrics/revenue.json)
 - [examples/segments/paid.json](examples/segments/paid.json)
 
-파생 예: `order_year` = `date_trunc('year', order_date)`, `krw_amount` = `sale_amount * fx_rate`.
+파생·고급 식 예:
+- dimension/fact `expression`: `date_trunc('year', order_date)`, `YEAR(order_date)`, `SUBSTR(order_date, 1, 4)`, `sale_amount * fx_rate`, `DIVIDE(a, b)`, `IIF(cond, t, f)`
+- metric `expression` (집계·윈도우·서브쿼리 허용):
+  - 기본 집계/비율: `SUM(sale_amount)`, `DIVIDE(SUM(IIF(status_code = 'PAID', 1, 0)) * 100, COUNT(*))`
+  - 윈도우 함수: `RANK() OVER (PARTITION BY region_code ORDER BY SUM(sale_amount) DESC)`, `SUM(sale_amount) / SUM(SUM(sale_amount)) OVER ()`
+  - 시맨틱/물리 서브쿼리: `SUM(sale_amount) / (SELECT SUM(sale_amount) FROM sales)`
+- segment `filter.expression` (단순 비교 및 서브쿼리 허용):
+  - 단순 조건: `status_code = 'PAID'`
+  - 서브쿼리 코호트: `region_code IN (SELECT region_code FROM sales GROUP BY region_code HAVING SUM(sale_amount) > 1000)`
 
 ### 5. Hand off
 

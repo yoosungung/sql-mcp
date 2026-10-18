@@ -117,9 +117,9 @@ CREATE VIRTUAL TABLE column_index_fts USING fts5(
 ### Step 2: 래핑(Metric, Segment, 일반 WHERE, HAVING/ORDER BY/LIMIT) 전개 및 가산성 분석
 
 - 동작:
-  - WHERE 전개: 세그먼트 식별자는 `meta_segments.filter_expression`으로 치환하고, 일반 dimension/fact 조건식은 AST 제한(`assert_filter_expr`) 및 식별자 검증(`assert_idents_known`) 후 보존한다.
-  - Metric 및 집계 전개(D23): 명명 metric, ad-hoc 집계(`sum/count/avg/min/max`), metric 간 파생 연산을 동일 SELECT에서 함께 지원한다. 단일 metric(또는 모든 활성 metric의 필터가 동일)이면 `filter_expression`을 WHERE AND로 두고, 복수 metric에서 개별 필터(또는 무필터 ad-hoc 혼합)가 다르면 `CASE WHEN (filter) THEN expr END`로 집계 내부에 주입한다.
-  - Group By 결정: 명시된 `GROUP BY`(차원 식별자·프로젝션 별칭·위치 `1..N`·차원 스칼라 식) → 없으면 프로젝션된 dimension(및 차원 스칼라 식) → 둘 다 없으면 명명 metric 전용 질의는 `metric.group_by` 기본값, ad-hoc 포함 질의는 전역 집계를 사용한다. 각 명명 metric(`aggregation=group`)은 활성 차원이 자신의 `metric.group_by`에 속하는지 개별 검증하며, `aggregation`이 `rollup`/`cube`/`grouping_sets`이면 해당 그룹핑 절을 생성한다. 프로젝션에 metric 없이 차원만 두고 `GROUP BY`/`HAVING`/집계 `ORDER BY`를 쓴 질의도 Grouped 모드로 컴파일한다.
+  - WHERE 전개: 호출자 ad-hoc WHERE 절의 직접 서브쿼리는 거절(`assert_no_subquery_in_ast`)한 뒤, 세그먼트 식별자는 `meta_segments.filter_expression`(읽기 전용 서브쿼리 허용, `assert_segment_filter_expr`)으로 치환하고, 일반 dimension/fact 조건식은 AST 제한 및 식별자 검증(`assert_idents_known`) 후 보존한다.
+  - Metric 및 집계·윈도우 전개(D23): 명명 metric(등록된 `metric.expression`에는 읽기 전용 서브쿼리 및 윈도우 함수 허용, `assert_metadata_metric_expr`), ad-hoc 집계(`sum/count/avg/min/max`), 윈도우 함수(`ROW_NUMBER`/`RANK`/`DENSE_RANK`/`NTILE`/`LAG`/`LEAD`/`FIRST_VALUE`/`LAST_VALUE`/`NTH_VALUE` 및 `SUM`/`COUNT`/`AVG`/`MIN`/`MAX` `OVER (...)`), metric 간 파생 연산을 동일 SELECT에서 함께 지원한다. 단일 metric(또는 모든 활성 metric의 필터가 동일)이면 `filter_expression`을 WHERE AND로 두고, 복수 metric에서 개별 필터(또는 무필터 ad-hoc 혼합)가 다르면 `CASE WHEN (filter) THEN expr END`로 집계 내부에 주입한다.
+  - Group By 결정: 명시된 `GROUP BY`(차원 식별자·프로젝션 별칭·위치 `1..N`·차원 스칼라 식; 윈도우 함수는 `GROUP BY`에서 거절) → 없으면 프로젝션된 dimension(및 비-윈도우 차원 스칼라 식) → 둘 다 없으면 명명 metric 전용 질의는 `metric.group_by` 기본값, ad-hoc 포함 질의는 전역 집계를 사용한다. 각 명명 metric(`aggregation=group`)은 활성 차원이 자신의 `metric.group_by`에 속하는지 개별 검증하며, `aggregation`이 `rollup`/`cube`/`grouping_sets`이면 해당 그룹핑 절을 생성한다. 프로젝션에 metric 없이 차원만 두고 `GROUP BY`/`HAVING`/집계 `ORDER BY`를 쓴 질의도 Grouped 모드로 컴파일한다.
   - 가산성: `COUNT(DISTINCT)` / `AVG` / `MEDIAN` 등이면 `is_semi_additive` — 요약 뷰 그레뉼러리티 불일치 방지.
 - 출력: Dimension·Fact 기준 큐브 SQL 계획 + 필터 목록 + `DISTINCT`/`HAVING`/`ORDER BY`/`LIMIT`/`OFFSET`
 
@@ -134,13 +134,13 @@ CREATE VIRTUAL TABLE column_index_fts USING fts5(
 
 ### Step 4: 테이블 가지치기 (Join 그래프 최소 경로 & Union Pruning)
 
-- Join: 기준 테이블(`sources[0]`)과 필요 컬럼의 \(T_{req}\) + `meta_view_joins` 그래프로 연결 최소 집합(Steiner 근사)을 구하되, `INNER JOIN` 필터 의미와 `LEFT/RIGHT JOIN` 방향성이 뒤집히지 않도록 보존한다.
+- Join: 필요 컬럼의 \(T_{req}\)(단일 매핑 컬럼 우선 수집 후 다중 매핑 컬럼은 미포함 시에만 추가) + `meta_view_joins` 그래프로 최단 경로 연결 최소 집합(Steiner 근사)을 구한다. 모든 조인이 `inner`이고 \(T_{req}\)가 비어 있지 않으면 불필요한 루트(`sources[0]`)를 강제 포함하지 않으며, 외조인(`left`/`right`/`full`)이 있으면 방향성이 뒤집히지 않도록 루트 기준 순서와 방향을 보존한다. 순환 조인 그래프에서는 스패닝 트리 간선만 방출한다.
 - Union: WHERE(metric/segment/사용자 WHERE 및 `:bind` 값 반영)와 각 table `scope_filter`가 disjoint이면 해당 UNION 브랜치 제외.
 - 출력: 최적화된 물리 테이블 집합·결합 관계
 
 ### Step 5: 물리 Table / Column 치환 및 바인드(`:name`) 안전 치환
 
-- AST의 Dimension/Fact/Metric을 `{schema}.{table}.{column}` 또는 물리 스칼라 `expression`으로 치환(VisitorMut — 누락 식별자 0).
+- 등록된 `metric.expression` 및 `segment.filter.expression` 내부의 시맨틱 서브쿼리를 재귀 컴파일(`expand_semantic_subqueries`)하고, 외부 스코프 AST의 Dimension/Fact/Metric(윈도우 `OVER (PARTITION BY … ORDER BY …)` 내부 포함)을 `{schema}.{table}.{column}` 또는 물리 스칼라 `expression`으로 치환(VisitorMut — 서브쿼리 내부 스코프 보호, 누락 식별자 0). 다중 매핑(`mappings` 복수) 뷰 컬럼은 Step 4에서 선택된 물리 테이블 집합에 속한 매핑을 우선 선택한다.
 - `params`가 제공된 경우 `:name` 플레이스홀더를 작은따옴표 이스케이프된 안전 리터럴로 치환한다.
 - 출력: 물리 식별자 AST
 
@@ -162,7 +162,8 @@ CREATE VIRTUAL TABLE column_index_fts USING fts5(
 
 - Step 1–7은 엔진 중립 **canonical** 물리 SQL(식별자 `"…"` · `date_trunc`).
 - `pipeline` 말미: `DialectProfile::emit_physical_sql` = `rewrite_date_trunc` → `adapt_compiled_sql`(MySQL backticks).
-  - `date_trunc('year'|'month'|'day'|'hour', expr)` → MySQL `DATE_FORMAT`/`DATE` · Oracle `TRUNC` · SQLite `datetime(…, 'start of …')` · Postgres 유지. 미지원 단위 → `validation`.
+  - `date_trunc('year'|'month'|'day'|'hour', expr)` → MySQL `DATE_FORMAT`/`DATE` · Oracle `TRUNC` · SQLite `datetime(…, 'start of …')`(단, SQLite에서 `'YYYY'`/`YYYY`/`'YYYY-MM'`/`'YYYYMM'`/`'YYYY-MM-DD'` 리터럴과 직접 비교·`BETWEEN`·`IN`될 때는 리터럴 포맷에 맞춰 `SUBSTR`/`strftime`/`date`로 자동 적응) · Postgres 유지. 미지원 단위 → `validation`.
+  - 편의 스칼라 함수(`DIVIDE(a, b)`, `YEAR(d)`, `MONTH(d)`, `DAY(d)`, `SUBSTR`/`SUBSTRING`, `LENGTH`, `REPLACE`, `INSTR`, `IFNULL`, `IIF`, `STRFTIME`)를 허용하며, SQLite 타깃에서는 정수 나눗셈 절삭을 막기 위해 `/` 좌변을 `CAST(… AS REAL)`로 승격한다.
 - 타깃 `execute_select`는 `wrap_row_limit` 및 `SQL_MCP_TIMEOUT_MS` 타임아웃을 적용하며, 실행 직전 미해석 `:param`이 남아 있으면 `validation`으로 거절한다. `sample_sql`은 인라인 보안 필터 + 프로필 quote + `rewrite_date_trunc`를 적용한다.
 
 ## 4. 개발 시 주의사항 (Checklist)

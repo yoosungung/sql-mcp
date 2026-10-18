@@ -58,8 +58,8 @@ Progress:
 ## Do not
 
 - table/view를 이 스킬에서 새로 만들지 않는다(제안만).
-- 참고 SQL·벤치 gold를 metric/segment/`expression`에 그대로 넣지 않는다.
-- window · 상관 서브쿼리 · 다중 문장 · 쓰기 SQL을 시맨틱 식에 넣지 않는다.
+- 참고 SQL·벤치 gold 전체 문장을 metric/segment/`expression`에 그대로 넣지 않는다.
+- 다중 문장 · 쓰기 SQL을 시맨틱 식에 넣지 않는다.
 - 실행 결과 비교·EX/Soft-F1 등 **eval 하네스**를 여기서 돌리거나 설계하지 않는다.
 - 특정 벤치 경로·스키마·DB 목록을 전제로 두지 않는다.
 - 사용자 요청 전 `metadata_*` 등록 금지.

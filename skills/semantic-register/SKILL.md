@@ -33,6 +33,9 @@ Progress:
 
 `table → view → cube → metric|segment`. 한 번에 문서 하나.
 
+- **table 간 FK 순서:** `metadata_create`는 매 호출마다 `fk.references.table`이 이미 등록되어 있는지 검사한다. 피참조(부모) `table`을 먼저 생성하거나, 순서가 섞여 있거나 상호 참조가 있으면 먼저 `"fk": []`로 `metadata_create`한 뒤 모든 테이블 생성 후 원래 `"fk"`로 `metadata_update`한다.
+- **기존 view 교체(`metadata_update`) 시:** 이미 `cube`(및 하위 `metric`/`segment`)가 해당 `view`를 참조 중이면 DB 외래키/연결 제약에 걸릴 수 있으므로, 의존하는 `segment → metric → cube`를 잠시 `metadata_delete`한 뒤 `view`를 `metadata_update`하고 `cube → metric → segment`를 다시 생성한다.
+
 | 연산 | 툴 |
 |------|-----|
 | 생성 | `metadata_create` |

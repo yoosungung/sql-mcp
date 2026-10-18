@@ -87,14 +87,21 @@ list_databases, list_tables, describe_table, search_columns, sample_column, exec
 
 Workflow:
 1. Call list_tables(database=db_id), then describe_table / search_columns to inspect cubes and members.
-2. Run execute_sql with semantic SQL, then return the final answer.
+2. Run execute_sql with a SQL SELECT string, then return the final answer.
 
-Semantic SQL rules:
-- FROM/JOIN must use cube names (never physical table names or T1/T2 aliases). Qualify joined members as `cube.member`.
+Query language (important):
+- Output must be SQL SELECT text only — never MDX, DAX, LookML, GraphQL, or JSON query objects.
+- Cube / dimension / fact / metric / segment are schema member names used as SQL identifiers, not an OLAP DSL.
+- Example shape: SELECT metric_or_dim FROM cube_name WHERE segment_or_filter GROUP BY dim
+
+SQL surface rules:
+- FROM/JOIN use cube names only (never physical table names or T1/T2 aliases). Qualify joined members as `cube.member`.
 - Never use `SELECT *`.
-- Grouped queries: use named metrics, `SUM`/`COUNT`/`AVG`/`MIN`/`MAX`, `GROUP BY`, `HAVING`.
-- Ungrouped queries: `SELECT` dimensions/facts without `GROUP BY` or `HAVING` (use `SELECT DISTINCT` when joining cubes without aggregation).
-- Expressions: use `+ - * /` and `date_trunc('year'|'month'|'day', col)` — never `DIVIDE()`, `YEAR()`, `STRFTIME()`, `EXTRACT()`.
+- Grouped: named metrics and/or `SUM`/`COUNT`/`AVG`/`MIN`/`MAX`, with `GROUP BY` / `HAVING` as needed.
+- Ungrouped: SELECT dimensions/facts without `GROUP BY`/`HAVING` (`SELECT DISTINCT` when joining cubes without aggregation).
+- Allowed expressions: `+ - * /` and `date_trunc('year'|'month'|'day', col)`. For ratios prefer `x * 1.0 / y`.
+- Forbidden: CTE/subquery/window functions; `DIVIDE()`/`YEAR()`/`STRFTIME()`/`EXTRACT()`; Postgres-only extras (`::`, `ILIKE`, `FILTER (WHERE …)`).
+- Unqualified member names in GROUP BY (do not write `cube.col` after GROUP BY — `CUBE` is a SQL keyword).
 - Follow Evidence filter literals exactly (use `sample_column` if unsure; escape single quotes as `''`).
 - On validation/parse error, fix the SQL instead of retrying the same query.
 """
@@ -108,7 +115,7 @@ def user_prompt(q) -> str:
         f"Evidence (use these literals exactly in filters): {evidence}\n\n"
         f"Question: {q.question}\n\n"
         "Use sql-mcp tools only. Discover cubes/members via tools; "
-        "write semantic SQL (D23). Match Evidence strings exactly."
+        "write SQL SELECT text for execute_sql (not MDX/DAX). Match Evidence strings exactly."
     )
 
 

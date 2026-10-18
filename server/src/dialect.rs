@@ -8,8 +8,8 @@
 use std::ops::ControlFlow;
 
 use sqlparser::ast::{
-    Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, Ident, VisitMut, VisitorMut,
-    Value as AstValue,
+    BinaryOperator, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, Ident,
+    VisitMut, VisitorMut, Value as AstValue,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
@@ -72,10 +72,10 @@ impl DialectProfile {
         Ok(self.adapt_compiled_sql(&rewritten))
     }
 
-    /// Rewrite canonical `date_trunc('unit', expr)` to the target dialect.
-    /// Postgres: identity. Unsupported units → `validation`.
+    /// Rewrite canonical `date_trunc('unit', expr)` and dialect helpers to the target dialect.
+    /// Postgres: identity unless `DIVIDE(` helper is used. Unsupported units → `validation`.
     pub fn rewrite_date_trunc(self, sql: &str) -> Result<String, AppError> {
-        if self == Self::Postgres {
+        if self == Self::Postgres && !sql.to_ascii_lowercase().contains("divide(") {
             return Ok(sql.to_string());
         }
         let dialect = GenericDialect {};
@@ -127,29 +127,275 @@ struct DateTruncRewriter {
 impl VisitorMut for DateTruncRewriter {
     type Break = ();
 
+    fn pre_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
+        if self.err.is_some() {
+            return ControlFlow::Break(());
+        }
+        if self.profile != DialectProfile::Sqlite {
+            return ControlFlow::Continue(());
+        }
+        match expr {
+            Expr::BinaryOp { left, op, right }
+                if matches!(
+                    op,
+                    BinaryOperator::Eq
+                        | BinaryOperator::NotEq
+                        | BinaryOperator::Lt
+                        | BinaryOperator::LtEq
+                        | BinaryOperator::Gt
+                        | BinaryOperator::GtEq
+                ) =>
+            {
+                if let Expr::Function(func) = left.as_ref() {
+                    if is_date_trunc(func) {
+                        match rewrite_sqlite_date_trunc_for_literal(func, right) {
+                            Ok(Some(new_left)) => **left = new_left,
+                            Ok(None) => {}
+                            Err(e) => {
+                                self.err = Some(e);
+                                return ControlFlow::Break(());
+                            }
+                        }
+                    }
+                }
+                if let Expr::Function(func) = right.as_ref() {
+                    if is_date_trunc(func) {
+                        match rewrite_sqlite_date_trunc_for_literal(func, left) {
+                            Ok(Some(new_right)) => **right = new_right,
+                            Ok(None) => {}
+                            Err(e) => {
+                                self.err = Some(e);
+                                return ControlFlow::Break(());
+                            }
+                        }
+                    }
+                }
+            }
+            Expr::Between {
+                expr: target, low, ..
+            } => {
+                if let Expr::Function(func) = target.as_ref() {
+                    if is_date_trunc(func) {
+                        match rewrite_sqlite_date_trunc_for_literal(func, low) {
+                            Ok(Some(new_target)) => **target = new_target,
+                            Ok(None) => {}
+                            Err(e) => {
+                                self.err = Some(e);
+                                return ControlFlow::Break(());
+                            }
+                        }
+                    }
+                }
+            }
+            Expr::InList {
+                expr: target, list, ..
+            } => {
+                if let (Expr::Function(func), Some(first)) = (target.as_ref(), list.first()) {
+                    if is_date_trunc(func) {
+                        match rewrite_sqlite_date_trunc_for_literal(func, first) {
+                            Ok(Some(new_target)) => **target = new_target,
+                            Ok(None) => {}
+                            Err(e) => {
+                                self.err = Some(e);
+                                return ControlFlow::Break(());
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        ControlFlow::Continue(())
+    }
+
     fn post_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
         if self.err.is_some() {
             return ControlFlow::Break(());
         }
-        let Expr::Function(func) = expr else {
-            return ControlFlow::Continue(());
-        };
-        if !is_date_trunc(func) {
-            return ControlFlow::Continue(());
-        }
-        match rewrite_date_trunc_fn(self.profile, func) {
-            Ok(new_expr) => *expr = new_expr,
-            Err(e) => {
-                self.err = Some(e);
-                return ControlFlow::Break(());
+        match expr {
+            Expr::Function(func) => {
+                let fname = func.name.to_string().to_ascii_lowercase();
+                if fname == "date_trunc" {
+                    match rewrite_date_trunc_fn(self.profile, func) {
+                        Ok(new_expr) => *expr = new_expr,
+                        Err(e) => {
+                            self.err = Some(e);
+                            return ControlFlow::Break(());
+                        }
+                    }
+                } else if fname == "divide" {
+                    match rewrite_divide_fn(self.profile, func) {
+                        Ok(new_expr) => *expr = new_expr,
+                        Err(e) => {
+                            self.err = Some(e);
+                            return ControlFlow::Break(());
+                        }
+                    }
+                } else if self.profile == DialectProfile::Sqlite
+                    && matches!(fname.as_str(), "year" | "month" | "day")
+                {
+                    match rewrite_sqlite_ymd_fn(&fname, func) {
+                        Ok(new_expr) => *expr = new_expr,
+                        Err(e) => {
+                            self.err = Some(e);
+                            return ControlFlow::Break(());
+                        }
+                    }
+                }
             }
+            Expr::BinaryOp {
+                left,
+                op: BinaryOperator::Divide,
+                ..
+            } if self.profile == DialectProfile::Sqlite => {
+                if !is_already_real_expr(left) {
+                    let left_sql = left.to_string();
+                    **left = parse_expr_fragment(&format!("CAST({left_sql} AS REAL)"));
+                }
+            }
+            _ => {}
         }
         ControlFlow::Continue(())
     }
 }
 
+fn is_already_real_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Cast { data_type, .. } => {
+            let dt = data_type.to_string().to_ascii_uppercase();
+            dt.contains("REAL") || dt.contains("FLOAT") || dt.contains("DOUBLE")
+        }
+        Expr::Value(v) => match &v.value {
+            AstValue::Number(n, _) => n.contains('.'),
+            _ => false,
+        },
+        Expr::Nested(inner) => is_already_real_expr(inner),
+        _ => false,
+    }
+}
+
 fn is_date_trunc(func: &Function) -> bool {
     func.name.to_string().eq_ignore_ascii_case("date_trunc")
+}
+
+fn rewrite_divide_fn(profile: DialectProfile, func: &Function) -> Result<Expr, AppError> {
+    let FunctionArguments::List(list) = &func.args else {
+        return Err(AppError::Validation(
+            "DIVIDE requires (numerator, denominator) arguments".into(),
+        ));
+    };
+    if list.args.len() != 2 {
+        return Err(AppError::Validation(
+            "DIVIDE requires exactly two arguments".into(),
+        ));
+    }
+    let num = unnamed_arg_expr(&list.args[0])?.to_string();
+    let den = unnamed_arg_expr(&list.args[1])?.to_string();
+    let replacement = match profile {
+        DialectProfile::Sqlite => format!("CAST({num} AS REAL) / NULLIF({den}, 0)"),
+        _ => format!("({num} * 1.0) / NULLIF({den}, 0)"),
+    };
+    Ok(parse_expr_fragment(&replacement))
+}
+
+fn rewrite_sqlite_ymd_fn(fname: &str, func: &Function) -> Result<Expr, AppError> {
+    let FunctionArguments::List(list) = &func.args else {
+        return Err(AppError::Validation(format!(
+            "{fname} requires 1 argument"
+        )));
+    };
+    if list.args.len() != 1 {
+        return Err(AppError::Validation(format!(
+            "{fname} requires exactly 1 argument"
+        )));
+    }
+    let arg_sql = unnamed_arg_expr(&list.args[0])?.to_string();
+    let replacement = match fname {
+        "year" => format!("CAST(SUBSTR(CAST({arg_sql} AS TEXT), 1, 4) AS INTEGER)"),
+        "month" => format!(
+            "CAST(COALESCE(strftime('%m', {arg_sql}), SUBSTR(REPLACE(CAST({arg_sql} AS TEXT), '-', ''), 5, 2)) AS INTEGER)"
+        ),
+        "day" => format!(
+            "CAST(COALESCE(strftime('%d', {arg_sql}), SUBSTR(REPLACE(CAST({arg_sql} AS TEXT), '-', ''), 7, 2)) AS INTEGER)"
+        ),
+        _ => unreachable!(),
+    };
+    Ok(parse_expr_fragment(&replacement))
+}
+
+fn rewrite_sqlite_date_trunc_for_literal(
+    func: &Function,
+    lit_expr: &Expr,
+) -> Result<Option<Expr>, AppError> {
+    let (unit, arg) = date_trunc_args(func)?;
+    let arg_sql = arg.to_string();
+    if let Some(s) = string_literal(lit_expr) {
+        let trimmed = s.trim();
+        let replacement = match unit.as_str() {
+            "year" => {
+                if trimmed.len() == 4 && trimmed.chars().all(|c| c.is_ascii_digit()) {
+                    Some(format!("SUBSTR(CAST({arg_sql} AS TEXT), 1, 4)"))
+                } else if trimmed.len() == 10
+                    && trimmed.as_bytes()[4] == b'-'
+                    && trimmed.as_bytes()[7] == b'-'
+                {
+                    Some(format!("date({arg_sql}, 'start of year')"))
+                } else {
+                    None
+                }
+            }
+            "month" => {
+                if trimmed.len() == 7 && trimmed.as_bytes()[4] == b'-' {
+                    Some(format!(
+                        "COALESCE(strftime('%Y-%m', {arg_sql}), SUBSTR(CAST({arg_sql} AS TEXT), 1, 4) || '-' || SUBSTR(CAST({arg_sql} AS TEXT), 5, 2))"
+                    ))
+                } else if trimmed.len() == 6 && trimmed.chars().all(|c| c.is_ascii_digit()) {
+                    Some(format!(
+                        "SUBSTR(REPLACE(CAST({arg_sql} AS TEXT), '-', ''), 1, 6)"
+                    ))
+                } else if trimmed.len() == 10
+                    && trimmed.as_bytes()[4] == b'-'
+                    && trimmed.as_bytes()[7] == b'-'
+                {
+                    Some(format!("date({arg_sql}, 'start of month')"))
+                } else {
+                    None
+                }
+            }
+            "day" => {
+                if trimmed.len() == 10
+                    && trimmed.as_bytes()[4] == b'-'
+                    && trimmed.as_bytes()[7] == b'-'
+                {
+                    Some(format!("date({arg_sql}, 'start of day')"))
+                } else if trimmed.len() == 8 && trimmed.chars().all(|c| c.is_ascii_digit()) {
+                    Some(format!(
+                        "SUBSTR(REPLACE(CAST({arg_sql} AS TEXT), '-', ''), 1, 8)"
+                    ))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        return Ok(replacement.map(|r| parse_expr_fragment(&r)));
+    }
+    if let Some(n) = int_literal(lit_expr) {
+        let replacement = match unit.as_str() {
+            "year" if n.len() == 4 => Some(format!(
+                "CAST(SUBSTR(CAST({arg_sql} AS TEXT), 1, 4) AS INTEGER)"
+            )),
+            "month" if n.len() == 6 => Some(format!(
+                "CAST(SUBSTR(REPLACE(CAST({arg_sql} AS TEXT), '-', ''), 1, 6) AS INTEGER)"
+            )),
+            "day" if n.len() == 8 => Some(format!(
+                "CAST(SUBSTR(REPLACE(CAST({arg_sql} AS TEXT), '-', ''), 1, 8) AS INTEGER)"
+            )),
+            _ => None,
+        };
+        return Ok(replacement.map(|r| parse_expr_fragment(&r)));
+    }
+    Ok(None)
 }
 
 fn rewrite_date_trunc_fn(profile: DialectProfile, func: &Function) -> Result<Expr, AppError> {
@@ -205,7 +451,7 @@ fn date_trunc_args(func: &Function) -> Result<(String, Expr), AppError> {
         return Err(AppError::Validation(
             "date_trunc requires exactly two arguments".into(),
         ));
-    }
+    };
     let unit_expr = unnamed_arg_expr(&list.args[0])?;
     let value_expr = unnamed_arg_expr(&list.args[1])?;
     let unit = string_literal(&unit_expr).ok_or_else(|| {
@@ -218,7 +464,7 @@ fn unnamed_arg_expr(arg: &FunctionArg) -> Result<Expr, AppError> {
     match arg {
         FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) => Ok(e.clone()),
         _ => Err(AppError::Validation(
-            "date_trunc arguments must be unnamed exprs".into(),
+            "function arguments must be unnamed exprs".into(),
         )),
     }
 }
@@ -230,6 +476,17 @@ fn string_literal(expr: &Expr) -> Option<String> {
             _ => None,
         },
         Expr::Nested(inner) => string_literal(inner),
+        _ => None,
+    }
+}
+
+fn int_literal(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Value(v) => match &v.value {
+            AstValue::Number(n, _) if n.chars().all(|c| c.is_ascii_digit()) => Some(n.clone()),
+            _ => None,
+        },
+        Expr::Nested(inner) => int_literal(inner),
         _ => None,
     }
 }
@@ -438,5 +695,87 @@ mod tests {
         assert!(out.to_ascii_lowercase().contains("date_format"), "{out}");
         assert!(!out.to_ascii_lowercase().contains("date_trunc"), "{out}");
         crate::select_guard::assert_select_only(&out).unwrap();
+    }
+
+    #[test]
+    fn sqlite_date_trunc_comparisons_adapt_to_literal_format() {
+        let y_str = DialectProfile::Sqlite
+            .emit_physical_sql(r#"SELECT "a" FROM "t" WHERE date_trunc('year', "d") = '1980'"#)
+            .unwrap();
+        assert!(
+            y_str.contains(r#"SUBSTR(CAST("d" AS TEXT), 1, 4) = '1980'"#),
+            "expected 4-char year string comparison, got: {y_str}"
+        );
+
+        let y_int = DialectProfile::Sqlite
+            .emit_physical_sql(r#"SELECT "a" FROM "t" WHERE date_trunc('year', "d") = 1980"#)
+            .unwrap();
+        assert!(
+            y_int.contains(r#"CAST(SUBSTR(CAST("d" AS TEXT), 1, 4) AS INTEGER) = 1980"#),
+            "expected integer year comparison, got: {y_int}"
+        );
+
+        let y_between = DialectProfile::Sqlite
+            .emit_physical_sql(
+                r#"SELECT "a" FROM "t" WHERE date_trunc('year', "d") BETWEEN 1980 AND 1985"#,
+            )
+            .unwrap();
+        assert!(
+            y_between.contains(
+                r#"CAST(SUBSTR(CAST("d" AS TEXT), 1, 4) AS INTEGER) BETWEEN 1980 AND 1985"#
+            ),
+            "expected integer year BETWEEN, got: {y_between}"
+        );
+
+        let m_ym = DialectProfile::Sqlite
+            .emit_physical_sql(r#"SELECT "a" FROM "t" WHERE date_trunc('month', "d") = '2012-08'"#)
+            .unwrap();
+        assert!(
+            m_ym.contains("strftime('%Y-%m'") && m_ym.contains("= '2012-08'"),
+            "expected YYYY-MM comparison, got: {m_ym}"
+        );
+
+        let m_yyyymm = DialectProfile::Sqlite
+            .emit_physical_sql(r#"SELECT "a" FROM "t" WHERE date_trunc('month', "d") = '201208'"#)
+            .unwrap();
+        assert!(
+            m_yyyymm.contains(r#"SUBSTR(REPLACE(CAST("d" AS TEXT), '-', ''), 1, 6) = '201208'"#),
+            "expected YYYYMM comparison, got: {m_yyyymm}"
+        );
+
+        let d_iso = DialectProfile::Sqlite
+            .emit_physical_sql(
+                r#"SELECT "a" FROM "t" WHERE date_trunc('day', "d") = '2012-08-25'"#,
+            )
+            .unwrap();
+        assert!(
+            d_iso.contains(r#"date("d", 'start of day') = '2012-08-25'"#),
+            "expected date() comparison without 00:00:00, got: {d_iso}"
+        );
+    }
+
+    #[test]
+    fn sqlite_promotes_division_to_real_and_rewrites_helpers() {
+        let div_sql = DialectProfile::Sqlite
+            .emit_physical_sql(r#"SELECT COUNT("a") * 100 / COUNT("b") AS "pct" FROM "t""#)
+            .unwrap();
+        assert!(
+            div_sql.contains("AS REAL) / COUNT(\"b\")"),
+            "expected REAL cast on SQLite division numerator, got: {div_sql}"
+        );
+
+        let helper_sql = DialectProfile::Sqlite
+            .emit_physical_sql(
+                r#"SELECT DIVIDE(SUM("a"), COUNT("b")) AS "r", YEAR("d") AS "y" FROM "t""#,
+            )
+            .unwrap();
+        assert!(
+            helper_sql.contains("NULLIF(COUNT(\"b\"), 0)"),
+            "expected NULLIF in DIVIDE rewrite, got: {helper_sql}"
+        );
+        assert!(
+            helper_sql.contains(r#"CAST(SUBSTR(CAST("d" AS TEXT), 1, 4) AS INTEGER)"#),
+            "expected YEAR(d) rewrite for SQLite, got: {helper_sql}"
+        );
     }
 }
