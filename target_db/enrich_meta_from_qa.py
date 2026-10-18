@@ -19,8 +19,9 @@ ROOT = Path(__file__).resolve().parent
 QA_PATH = ROOT / "bird_qa" / "mini_dev_sqlite.json"
 
 
-def load_cube(db_id: str) -> dict:
-    path = ROOT / db_id / "meta" / f"{db_id}.json"
+def load_cube(db_id: str, cube_name: str | None = None) -> dict:
+    name = cube_name or db_id
+    path = ROOT / db_id / "meta" / f"{name}.json"
     if not path.is_file():
         raise FileNotFoundError(f"missing cube {path}")
     cube = json.loads(path.read_text(encoding="utf-8"))
@@ -548,6 +549,7 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
                 "name": "left_foot_players",
                 "description": "Players who prefer left foot (preferred_foot = 'left').",
                 "filter": "preferred_foot = 'left'",
+                "cube": "player",
             },
             {
                 "name": "season_2015_2016",
@@ -558,6 +560,7 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
                 "name": "tall_players",
                 "description": "Players taller than 180 cm (height > 180).",
                 "filter": "height > 180",
+                "cube": "player",
             },
         ],
         "metrics": [
@@ -568,16 +571,19 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
                     "DIVIDE(SUM(IIF(preferred_foot = 'left', 1, 0)) * 100, "
                     "COUNT(player_api_id))"
                 ),
+                "cube": "player",
             },
             {
                 "name": "avg_long_shots",
                 "description": "Average long shots (AVG(long_shots)).",
                 "expression": "AVG(long_shots)",
+                "cube": "player",
             },
             {
                 "name": "avg_heading_accuracy",
                 "description": "Average heading accuracy (AVG(heading_accuracy)).",
                 "expression": "AVG(heading_accuracy)",
+                "cube": "player",
             },
             {
                 "name": "avg_home_team_goal",
@@ -593,6 +599,7 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
                 "name": "avg_overall_rating",
                 "description": "Average overall rating (AVG(overall_rating)).",
                 "expression": "AVG(overall_rating)",
+                "cube": "player",
             },
         ],
     },
@@ -710,25 +717,35 @@ def build_docs(db_id: str, cube: dict | None = None) -> list[dict]:
     spec = DOMAIN_SPECS.get(db_id)
     if not spec:
         return []
-    cube = cube or load_cube(db_id)
-    reserved = member_names(cube)
+    default_cube = cube or load_cube(db_id)
+    cubes: dict[str, dict] = {default_cube["name"]: default_cube}
+    reserved = member_names(default_cube)
     # also reserve existing meta metric/segment names
     meta_dir = ROOT / db_id / "meta"
     for path in meta_dir.glob("*.json"):
         doc = json.loads(path.read_text(encoding="utf-8"))
         if doc.get("kind") in ("metric", "segment", "table", "view", "cube"):
             reserved.add(doc["name"])
+            if doc.get("kind") == "cube":
+                cubes.setdefault(doc["name"], doc)
+
+    def resolve_cube(item: dict) -> dict:
+        cname = item.get("cube") or default_cube["name"]
+        if cname not in cubes:
+            cubes[cname] = load_cube(db_id, cname)
+            reserved.update(member_names(cubes[cname]))
+        return cubes[cname]
 
     docs: list[dict] = []
     for seg in spec.get("segments") or []:
         name = seg["name"]
         if name in reserved:
-            raise ValueError(f"{db_id}: segment name conflicts: {name}")
+            continue  # already present (re-run after generate_meta+enrich)
         docs.append(
             make_segment(
                 name=name,
                 description=seg["description"],
-                cube=cube,
+                cube=resolve_cube(seg),
                 filter_expr=seg["filter"],
             )
         )
@@ -736,12 +753,12 @@ def build_docs(db_id: str, cube: dict | None = None) -> list[dict]:
     for met in spec.get("metrics") or []:
         name = met["name"]
         if name in reserved:
-            raise ValueError(f"{db_id}: metric name conflicts: {name}")
+            continue
         docs.append(
             make_metric(
                 name=name,
                 description=met["description"],
-                cube=cube,
+                cube=resolve_cube(met),
                 expression=met["expression"],
                 filter_expr=met.get("filter"),
             )

@@ -89,11 +89,12 @@ pub(crate) fn compile_set_view(
     let op = if is_minus { "EXCEPT" } else { "UNION ALL" };
     let mut branches = Vec::new();
     for src in sources {
-        let tname = source_name(src)?;
-        if !source_maps_any_cols(view, tname, &proj_cols) {
+        let alias = source_alias(src)?;
+        let catalog = source_catalog(src)?;
+        if !source_maps_any_cols(view, alias, &proj_cols) {
             continue; // prune: no mapping for required columns
         }
-        let table = find_doc(docs, "table", tname)?;
+        let table = find_doc(docs, "table", catalog)?;
         if scope_is_dead(table) {
             continue; // prune: sentinel unsatisfiable scope
         }
@@ -105,10 +106,10 @@ pub(crate) fn compile_set_view(
         }
         let mut select_parts = Vec::new();
         for col in &proj_cols {
-            let phys = view_physical_expr_for_source(view, col, tname)?;
+            let phys = view_physical_expr_for_source(view, col, alias)?;
             select_parts.push(format!("{phys} AS {}", quote_ident(col)?));
         }
-        let from = inline_table_ref(docs, tname, role, binds)?;
+        let from = inline_table_ref(docs, catalog, alias, role, binds)?;
         branches.push(format!("SELECT {} FROM {}", select_parts.join(", "), from));
     }
     if branches.is_empty() {
@@ -233,7 +234,7 @@ pub fn resolve_view_for_cube_opts(
         rest.into_iter().chain(summary_first).collect()
     };
     for src in order {
-        let sname = source_name(src)?;
+        let catalog = source_catalog(src)?;
         let skind = src
             .get("kind")
             .and_then(|v| v.as_str())
@@ -242,7 +243,7 @@ pub fn resolve_view_for_cube_opts(
         if is_summary && !allow_summary {
             continue;
         }
-        let candidate = find_doc(docs, skind, sname)?;
+        let candidate = find_doc(docs, skind, catalog)?;
         if skind == "view" && view_covers_cols(candidate, req_cols) {
             if is_semi_additive && is_summary {
                 // Semi-additive: only accept a summary candidate if its grain matches req_cols exactly.
@@ -256,7 +257,7 @@ pub fn resolve_view_for_cube_opts(
         if skind == "table" {
             let tcols = table_column_names(candidate);
             if req_cols.is_subset(&tcols) {
-                return Ok(json_singleton_table_view(sname, candidate)?);
+                return Ok(json_singleton_table_view(catalog, candidate)?);
             }
         }
     }
@@ -295,7 +296,7 @@ pub(crate) fn included_tables_for_join_view(
 
     let all_names: HashSet<String> = sources
         .iter()
-        .filter_map(|s| source_name(s).ok().map(str::to_string))
+        .filter_map(|s| source_alias(s).ok().map(str::to_string))
         .collect();
     let mut t_req = if let Some(cols) = used_view_cols {
         tables_for_view_cols(view, cols)
@@ -311,7 +312,7 @@ pub(crate) fn included_tables_for_join_view(
     // Anchor the primary/fact table (sources[0]) only when outer joins require root directionality
     // or when no specific columns resolved to a source table.
     if has_outer_join || t_req.is_empty() {
-        if let Some(base) = sources.first().and_then(|s| source_name(s).ok()) {
+        if let Some(base) = sources.first().and_then(|s| source_alias(s).ok()) {
             t_req.insert(base.to_string());
         }
     }
@@ -342,7 +343,7 @@ pub(crate) fn compile_join_view(
 
     let mut ordered: Vec<String> = sources
         .iter()
-        .filter_map(|s| source_name(s).ok().map(str::to_string))
+        .filter_map(|s| source_alias(s).ok().map(str::to_string))
         .filter(|n| included.contains(n))
         .collect();
     if ordered.is_empty() {
@@ -350,7 +351,11 @@ pub(crate) fn compile_join_view(
     }
 
     let first = ordered.remove(0);
-    let mut sql = format!("{} ", inline_table_ref(docs, &first, role, binds)?);
+    let first_catalog = catalog_for_alias(view, &first)?;
+    let mut sql = format!(
+        "{} ",
+        inline_table_ref(docs, &first_catalog, &first, role, binds)?
+    );
     let mut placed: HashSet<String> = HashSet::from([first.clone()]);
 
     // Attach joins whose both ends are included and at least one side already placed.
@@ -380,7 +385,7 @@ pub(crate) fn compile_join_view(
             }
             // Attach the missing side.
             let new_side = if left_in { right } else { left };
-            match format_join_fragment(docs, &j, new_side, role, binds) {
+            match format_join_fragment(docs, view, &j, new_side, role, binds) {
                 Ok(frag) => {
                     sql.push_str(&frag);
                     placed.insert(new_side.to_string());
@@ -397,9 +402,10 @@ pub(crate) fn compile_join_view(
         }
         if !progress {
             if let Some(missing) = included.iter().find(|n| !placed.contains(*n)) {
+                let cat = catalog_for_alias(view, missing)?;
                 sql.push_str(&format!(
                     " CROSS JOIN {} ",
-                    inline_table_ref(docs, missing, role, binds)?
+                    inline_table_ref(docs, &cat, missing, role, binds)?
                 ));
                 placed.insert(missing.clone());
             } else {
@@ -412,6 +418,7 @@ pub(crate) fn compile_join_view(
 
 pub(crate) fn format_join_fragment(
     docs: &[Value],
+    view: &Value,
     j: &Value,
     new_side: &str,
     role: Option<&str>,
@@ -458,9 +465,10 @@ pub(crate) fn format_join_fragment(
             quote_ident(rc)?
         ));
     }
+    let catalog = catalog_for_alias(view, new_side)?;
     Ok(format!(
         " {join_kw} {} ON {}",
-        inline_table_ref(docs, new_side, role, binds)?,
+        inline_table_ref(docs, &catalog, new_side, role, binds)?,
         ons.join(" AND ")
     ))
 }
@@ -607,13 +615,15 @@ pub(crate) fn shortest_path(
 }
 
 /// `(SELECT * FROM phys WHERE filters) AS "alias"` — filters unqualified (Step 6).
+/// `catalog` = registered table document name; `alias` = SQL / join-graph alias.
 pub(crate) fn inline_table_ref(
     docs: &[Value],
+    catalog: &str,
     alias: &str,
     role: Option<&str>,
     binds: Option<&HashMap<String, String>>,
 ) -> Result<String, AppError> {
-    let table = find_doc(docs, "table", alias)?;
+    let table = find_doc(docs, "table", catalog)?;
     check_role_access(table.get("role"), role)?;
     let phys = physical_from(table)?;
     let filters = collect_table_filters(table, role, binds)?;
@@ -628,13 +638,46 @@ pub(crate) fn inline_table_ref(
     }
 }
 
-pub(crate) fn source_name(src: &Value) -> Result<&str, AppError> {
+/// View-local alias (`alias` or legacy `name`, else `table`).
+pub(crate) fn source_alias(src: &Value) -> Result<&str, AppError> {
     if let Some(s) = src.as_str() {
         return Ok(s);
     }
+    if let Some(a) = src.get("alias").and_then(|v| v.as_str()) {
+        return Ok(a);
+    }
+    if let Some(t) = src.get("table").and_then(|v| v.as_str()) {
+        return Ok(t);
+    }
     src.get("name")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::Validation("source name missing".into()))
+        .ok_or_else(|| AppError::Validation("source alias/table missing".into()))
+}
+
+/// Catalog table/view document name (`table`, else legacy `name`).
+pub(crate) fn source_catalog(src: &Value) -> Result<&str, AppError> {
+    if let Some(s) = src.as_str() {
+        return Ok(s);
+    }
+    if let Some(t) = src.get("table").and_then(|v| v.as_str()) {
+        return Ok(t);
+    }
+    src.get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::Validation("source table missing".into()))
+}
+
+pub(crate) fn catalog_for_alias(view: &Value, alias: &str) -> Result<String, AppError> {
+    let sources = view
+        .get("sources")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| AppError::Validation("view.sources required".into()))?;
+    for src in sources {
+        if source_alias(src)? == alias {
+            return Ok(source_catalog(src)?.to_string());
+        }
+    }
+    Ok(alias.to_string())
 }
 
 pub(crate) fn pin_view_mappings_to_included(

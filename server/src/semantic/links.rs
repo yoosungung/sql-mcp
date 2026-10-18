@@ -72,21 +72,28 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
             .get("sources")
             .and_then(|v| v.as_array())
             .ok_or_else(|| AppError::Validation(format!("view {name}: sources missing")))?;
-        let mut source_names: HashSet<String> = HashSet::new();
+        let mut source_aliases: HashSet<String> = HashSet::new();
         for src in sources {
-            let src_name = source_name(src).ok_or_else(|| {
-                AppError::Validation(format!("view {name}: source name missing"))
+            let alias = source_alias(src).ok_or_else(|| {
+                AppError::Validation(format!("view {name}: source alias/table missing"))
+            })?;
+            let catalog = source_catalog(src).ok_or_else(|| {
+                AppError::Validation(format!("view {name}: source table missing"))
             })?;
             let ok = match combine {
-                "select" => views.contains_key(src_name),
-                _ => tables.contains_key(src_name),
+                "select" => views.contains_key(catalog),
+                _ => tables.contains_key(catalog),
             };
             if !ok {
                 return Err(AppError::Validation(format!(
-                    "view {name}: unknown source {src_name} for combine={combine}"
+                    "view {name}: unknown source catalog {catalog} for combine={combine}"
                 )));
             }
-            source_names.insert(src_name.to_string());
+            if !source_aliases.insert(alias.to_string()) {
+                return Err(AppError::Validation(format!(
+                    "view {name}: duplicate source alias {alias}"
+                )));
+            }
         }
         let leaf_targets =
             leaf_table_targets(view, &tables, &views, &mut HashSet::new())?;
@@ -109,7 +116,7 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
                                     "view {name}: mapping.source missing"
                                 ))
                             })?;
-                        if !source_names.contains(src) {
+                        if !source_aliases.contains(src) {
                             return Err(AppError::Validation(format!(
                                 "view {name}: mapping source {src} not in sources"
                             )));
@@ -326,18 +333,18 @@ fn leaf_table_targets<'a>(
         .unwrap_or_default();
     let mut out = HashSet::new();
     for src in &sources {
-        let src_name = source_name(src).unwrap_or("");
+        let catalog = source_catalog(src).unwrap_or("");
         if combine == "select" {
-            let child = views.get(src_name).ok_or_else(|| {
-                AppError::Validation(format!("view {name}: unknown source view {src_name}"))
+            let child = views.get(catalog).ok_or_else(|| {
+                AppError::Validation(format!("view {name}: unknown source view {catalog}"))
             })?;
             out.extend(leaf_table_targets(child, tables, views, visiting)?);
         } else {
-            let table = tables.get(src_name).ok_or_else(|| {
-                AppError::Validation(format!("view {name}: unknown source table {src_name}"))
+            let table = tables.get(catalog).ok_or_else(|| {
+                AppError::Validation(format!("view {name}: unknown source table {catalog}"))
             })?;
             let t = doc_target(table).ok_or_else(|| {
-                AppError::Validation(format!("table {src_name}: target missing"))
+                AppError::Validation(format!("table {catalog}: target missing"))
             })?;
             out.insert(t);
         }
@@ -346,9 +353,25 @@ fn leaf_table_targets<'a>(
     Ok(out)
 }
 
-fn source_name(src: &Value) -> Option<&str> {
+fn source_alias(src: &Value) -> Option<&str> {
     if let Some(s) = src.as_str() {
         return Some(s);
+    }
+    if let Some(a) = src.get("alias").and_then(|v| v.as_str()) {
+        return Some(a);
+    }
+    if let Some(t) = src.get("table").and_then(|v| v.as_str()) {
+        return Some(t);
+    }
+    src.get("name").and_then(|v| v.as_str())
+}
+
+fn source_catalog(src: &Value) -> Option<&str> {
+    if let Some(s) = src.as_str() {
+        return Some(s);
+    }
+    if let Some(t) = src.get("table").and_then(|v| v.as_str()) {
+        return Some(t);
     }
     src.get("name").and_then(|v| v.as_str())
 }

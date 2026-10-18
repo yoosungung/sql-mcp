@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS meta_view_sources (
   view_name TEXT NOT NULL REFERENCES meta_views(name) ON DELETE CASCADE,
   kind TEXT NOT NULL CHECK (kind IN ('table', 'view')),
   source_name TEXT NOT NULL,
+  catalog_name TEXT,
   summary INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 

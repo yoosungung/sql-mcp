@@ -67,7 +67,7 @@ sqlite → generate_meta.py → meta/{table,view,cube,*_count}.json
 2. **One-Big-View는 기본값에서 제외**  
    `{db}_all`은 디버그/탐색용으로만 두거나, 생성기 기본을 **허브(팩트)별 뷰**로 전환. (옵션 A/B는 §4.1)
 3. **자연명은 질문 어휘·도메인 우선**  
-   “먼저 등록된 테이블” 규칙보다 **의미적으로 자주 쓰이는 엔티티**에 자연명. 충돌 시 description에 `from table.column` + 동의어.
+   “먼저 등록된 테이블” 규칙보다 **의미적으로 자주 쓰이는 엔티티**에 자연명. `description`은 메타 사용(검색·동의어)만; 생성 출처(`from table.column`)는 넣지 않음.
 4. **도메인 KPI는 enrich가 정본**  
    비율·코호트는 ad-hoc `/`보다 **named metric/segment**. 에이전트는 metric 이름을 SELECT.
 5. **생성기 자동화 + DB별 오버라이드**  

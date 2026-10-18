@@ -171,9 +171,9 @@
             json!({
                 "kind": "view", "name": "club_view", "target": "dw", "combine": "join",
                 "sources": [
-                    {"kind": "table", "name": "member"},
-                    {"kind": "table", "name": "event"},
-                    {"kind": "table", "name": "budget"}
+                    {"kind": "table", "table": "member"},
+                    {"kind": "table", "table": "event"},
+                    {"kind": "table", "table": "budget"}
                 ],
                 "joins": [
                     {"left": "member", "right": "event", "type": "inner", "on": [{"left_column": "member_id", "right_column": "event_id"}]},
@@ -220,7 +220,7 @@
             "kind": "view",
             "name": "orders_only",
             "combine": "join",
-            "sources": [{"kind": "table", "name": "orders"}],
+            "sources": [{"kind": "table", "table": "orders"}],
             "joins": [],
             "columns": [
                 {"name": "region_code", "mappings": [{"source": "orders", "column": "region_code"}]},
@@ -237,8 +237,8 @@
             "combine": "select",
             "prefer": "summary",
             "sources": [
-                {"kind": "view", "name": "orders_only", "summary": true},
-                {"kind": "view", "name": "orders_customer", "summary": false}
+                {"kind": "view", "table": "orders_only", "summary": true},
+                {"kind": "view", "table": "orders_customer", "summary": false}
             ],
             "columns": []
         }));
@@ -294,8 +294,8 @@
             "name": "orders_union",
             "combine": "union",
             "sources": [
-                {"kind": "table", "name": "orders"},
-                {"kind": "table", "name": "orders_month"}
+                {"kind": "table", "table": "orders"},
+                {"kind": "table", "table": "orders_month"}
             ],
             "columns": [
                 {"name": "region_code", "mappings": [
@@ -379,8 +379,8 @@
             "name": "orders_union",
             "combine": "union",
             "sources": [
-                {"kind": "table", "name": "orders"},
-                {"kind": "table", "name": "orders_month"}
+                {"kind": "table", "table": "orders"},
+                {"kind": "table", "table": "orders_month"}
             ],
             "columns": [
                 {"name": "region_code", "mappings": [
@@ -448,8 +448,8 @@
             "name": "orders_union",
             "combine": "union",
             "sources": [
-                {"kind": "table", "name": "orders"},
-                {"kind": "table", "name": "orders_month"}
+                {"kind": "table", "table": "orders"},
+                {"kind": "table", "table": "orders_month"}
             ],
             "columns": [
                 {"name": "region_code", "mappings": [
@@ -502,7 +502,7 @@
             "kind": "view",
             "name": "orders_month_summary_view",
             "combine": "join",
-            "sources": [{"kind": "table", "name": "orders_month"}],
+            "sources": [{"kind": "table", "table": "orders_month"}],
             "joins": [],
             "columns": [
                 {"name": "region_code", "mappings": [{"source": "orders_month", "column": "region_code"}]},
@@ -515,8 +515,8 @@
             "combine": "select",
             "prefer": "summary",
             "sources": [
-                {"kind": "view", "name": "orders_month_summary_view", "summary": true},
-                {"kind": "view", "name": "orders_customer", "summary": false}
+                {"kind": "view", "table": "orders_month_summary_view", "summary": true},
+                {"kind": "view", "table": "orders_customer", "summary": false}
             ],
             "columns": []
         }));
@@ -561,4 +561,74 @@
             distinct_sql.contains("orders_month"),
             "SELECT DISTINCT ungrouped query may route to summary view: {distinct_sql}"
         );
+    }
+
+    #[test]
+    fn role_playing_alias_joins_same_catalog_table_twice() {
+        let docs = vec![
+            json!({
+                "kind": "table", "name": "Team", "target": "dw", "db": "dw", "schema": "main", "table": "Team",
+                "columns": [
+                    {"name": "team_api_id", "type": "INT", "nullable": false},
+                    {"name": "team_long_name", "type": "TEXT", "nullable": true}
+                ],
+                "pk": ["team_api_id"], "fk": [], "permission_filters": [], "scope_filter": null, "default_filter": null
+            }),
+            json!({
+                "kind": "table", "name": "Match", "target": "dw", "db": "dw", "schema": "main", "table": "Match",
+                "columns": [
+                    {"name": "id", "type": "INT", "nullable": false},
+                    {"name": "home_team_api_id", "type": "INT", "nullable": true},
+                    {"name": "away_team_api_id", "type": "INT", "nullable": true},
+                    {"name": "home_team_goal", "type": "INT", "nullable": true}
+                ],
+                "pk": ["id"], "fk": [], "permission_filters": [], "scope_filter": null, "default_filter": null
+            }),
+            json!({
+                "kind": "view", "name": "match_view", "target": "dw", "combine": "join",
+                "sources": [
+                    {"kind": "table", "table": "Match"},
+                    {"kind": "table", "table": "Team"},
+                    {"kind": "table", "table": "Team", "alias": "away_team"}
+                ],
+                "joins": [
+                    {"left": "Match", "right": "Team", "type": "inner",
+                     "on": [{"left_column": "home_team_api_id", "right_column": "team_api_id"}]},
+                    {"left": "Match", "right": "away_team", "type": "inner",
+                     "on": [{"left_column": "away_team_api_id", "right_column": "team_api_id"}]}
+                ],
+                "columns": [
+                    {"name": "home_team_goal", "mappings": [{"source": "Match", "column": "home_team_goal"}]},
+                    {"name": "team_long_name", "mappings": [{"source": "Team", "column": "team_long_name"}]},
+                    {"name": "away_team_long_name", "mappings": [{"source": "away_team", "column": "team_long_name"}]}
+                ]
+            }),
+            json!({
+                "kind": "cube", "name": "match", "target": "dw", "view": "match_view", "description": "",
+                "dimensions": [
+                    {"name": "team_long_name", "description": "", "type": "string", "column": "team_long_name", "encryption": false},
+                    {"name": "away_team_long_name", "description": "", "type": "string", "column": "away_team_long_name", "encryption": false}
+                ],
+                "facts": [
+                    {"name": "home_team_goal", "description": "", "type": "amount", "column": "home_team_goal", "encryption": false}
+                ]
+            }),
+        ];
+        let spec = CubeQuerySpec {
+            projections: vec![
+                CubeProjection { member: "team_long_name".into(), alias: "team_long_name".into() },
+                CubeProjection { member: "away_team_long_name".into(), alias: "away_team_long_name".into() },
+                CubeProjection { member: "home_team_goal".into(), alias: "home_team_goal".into() },
+            ],
+            dimensions: vec!["team_long_name".into(), "away_team_long_name".into()],
+            ungrouped: false,
+            distinct: false,
+            ..Default::default()
+        };
+        let sql = compile_cube_query(&docs, "match", &spec, None, None).unwrap();
+        assert!(sql.contains("\"Team\""), "home Team alias missing: {sql}");
+        assert!(sql.contains("\"away_team\""), "away_team alias missing: {sql}");
+        let team_as = sql.matches("AS \"Team\"").count() + sql.matches("AS \"away_team\"").count();
+        assert!(team_as >= 2, "expected Team phys joined twice under two aliases: {sql}");
+        assert_select_only(&sql).unwrap();
     }

@@ -92,21 +92,23 @@ def physical_type(tables: dict[str, dict], source: str, column: str) -> str:
 
 
 def classify_view_column(
-    view_col: str, phys_type: str, source_desc: str = ""
+    view_col: str, phys_type: str
 ) -> tuple[str, dict] | None:
-    """Return ('dimension'|'fact', member dict) or None if skipped."""
+    """Return ('dimension'|'fact', member dict) or None if skipped.
+
+    description은 메타 사용용이라 자동 생성하지 않는다(빈 문자열).
+    """
     if not is_ident(view_col):
         return None
     typ = phys_type or ""
     lower = view_col.lower()
-    from_clause = f" from {source_desc}" if source_desc else ""
     if DATE_HINT.search(lower) and not NUMERIC_TYPES.match(typ):
         dtype = "datetime" if "time" in lower else "date"
         return (
             "dimension",
             {
                 "name": view_col,
-                "description": f"Dimension {view_col}{from_clause}.",
+                "description": "",
                 "type": dtype,
                 "column": view_col,
                 "encryption": False,
@@ -126,7 +128,7 @@ def classify_view_column(
             "fact",
             {
                 "name": view_col,
-                "description": f"Fact {view_col} ({ftype}){from_clause}.",
+                "description": "",
                 "type": ftype,
                 "column": view_col,
                 "encryption": False,
@@ -139,7 +141,7 @@ def classify_view_column(
         "dimension",
         {
             "name": view_col,
-            "description": f"Dimension {view_col}{from_clause}.",
+            "description": "",
             "type": dim_type,
             "column": view_col,
             "encryption": False,
@@ -149,17 +151,25 @@ def classify_view_column(
 
 
 def alloc_name(base: str, taken: set[str], *suffixes: str) -> str:
-    """Pick base if free+ident, else base_suffix, else base_suffixN."""
-    if is_ident(base) and base not in taken:
+    """Pick base if free+ident, else base_suffix, else base_suffixN.
+
+    Conflicts are case-insensitive (`player` blocks `Player`) for macOS/Windows FS.
+    """
+    taken_lower = {t.lower() for t in taken}
+
+    def free(cand: str) -> bool:
+        return is_ident(cand) and cand.lower() not in taken_lower
+
+    if free(base):
         return base
     for suf in suffixes:
         cand = f"{base}_{suf}" if suf else base
-        if is_ident(cand) and cand not in taken:
+        if free(cand):
             return cand
         n = 2
         while True:
             cand_n = f"{cand}_{n}"
-            if is_ident(cand_n) and cand_n not in taken:
+            if free(cand_n):
                 return cand_n
             n += 1
     # unreachable if suffixes non-empty
@@ -195,7 +205,11 @@ def rename_table(
                 fk["references"]["table"] = new
     for v in views:
         for src in v.get("sources", []):
-            if src.get("name") == old:
+            if src.get("table") == old:
+                src["table"] = new
+            if src.get("alias") == old:
+                src["alias"] = new
+            if src.get("name") == old:  # legacy
                 src["name"] = new
         for j in v.get("joins", []):
             if j.get("left") == old:
@@ -255,28 +269,42 @@ def apply_name_priority(
     cubes: list[dict],
     metrics: list[dict],
 ) -> None:
-    """cube/dim/fact/metric/segment keep natural names; table/view/view-col yield."""
+    """cube/dim/fact/metric/segment keep natural names; table/view/view-col yield.
+
+    Name conflicts are case-insensitive so `player` cube does not overwrite `Player.json`
+    on case-insensitive filesystems.
+    """
     reserved = priority_names(cubes, metrics)
     taken = set(reserved)
+    taken_lower = {n.lower() for n in taken}
+
+    def _take(name: str) -> None:
+        taken.add(name)
+        taken_lower.add(name.lower())
 
     # tables yield
     for old in list(tables):
-        if old not in reserved:
-            taken.add(old)
+        if old.lower() not in taken_lower:
+            _take(old)
             continue
         new = alloc_name(old, taken, "table")
+        # alloc_name only checks `taken` exact; ensure case-insensitive uniqueness
+        while new.lower() in taken_lower:
+            new = alloc_name(new, taken, "table")
         rename_table(tables, views, old, new)
-        taken.add(new)
+        _take(new)
 
     # views yield
     for v in list(views):
         old = v["name"]
-        if old not in reserved:
-            taken.add(old)
+        if old.lower() not in taken_lower:
+            _take(old)
             continue
         new = alloc_name(old, taken, "view")
+        while new.lower() in taken_lower:
+            new = alloc_name(new, taken, "view")
         rename_view(views, cubes, old, new)
-        taken.add(new)
+        _take(new)
 
     # view columns yield unless they are the bound column for a priority member
     # with the same natural name on a cube over this view
@@ -299,19 +327,16 @@ def apply_name_priority(
             taken.add(new)
 
 
-def _format_source_desc(tables: dict[str, dict], mappings: list[dict]) -> str:
-    if not mappings:
-        return ""
-    m0 = mappings[0]
-    t0 = tables.get(m0["source"], {}).get("table") or m0["source"]
-    desc = f"{t0}.{m0['column']}"
-    if len(mappings) > 1:
-        others = [
-            f"{tables.get(m['source'], {}).get('table') or m['source']}.{m['column']}"
-            for m in mappings[1:4]
-        ]
-        desc += f" (join key with {', '.join(others)})"
-    return desc
+def _view_alias_to_catalog(view: dict) -> dict[str, str]:
+    """mapping.source / join alias → catalog table name."""
+    out: dict[str, str] = {}
+    for s in view.get("sources") or []:
+        catalog = s.get("table") or s.get("name")
+        if not catalog:
+            continue
+        alias = s.get("alias") or catalog
+        out[alias] = catalog
+    return out
 
 
 def cube_and_metric_from_view(
@@ -320,13 +345,14 @@ def cube_and_metric_from_view(
     """Choose natural cube/metric/member names; do not yield to table/view names."""
     dimensions: list[dict] = []
     facts: list[dict] = []
+    alias_to_catalog = _view_alias_to_catalog(view)
     for col in view["columns"]:
         vname = col["name"]
         mappings = col["mappings"]
         mapping = mappings[0]
-        ptype = physical_type(tables, mapping["source"], mapping["column"])
-        sdesc = _format_source_desc(tables, mappings)
-        classified = classify_view_column(vname, ptype, sdesc)
+        catalog = alias_to_catalog.get(mapping["source"], mapping["source"])
+        ptype = physical_type(tables, catalog, mapping["column"])
+        classified = classify_view_column(vname, ptype)
         if classified is None:
             continue
         kind, member = classified
@@ -340,7 +366,7 @@ def cube_and_metric_from_view(
         dimensions.append(
             {
                 "name": f0["name"],
-                "description": f"Dimension {f0['name']}.",
+                "description": "",
                 "type": "string",
                 "column": f0["column"],
                 "encryption": False,
@@ -353,7 +379,7 @@ def cube_and_metric_from_view(
         dimensions.append(
             {
                 "name": "row_key",
-                "description": "Synthetic row key.",
+                "description": "",
                 "type": "string",
                 "expression": "1",
                 "encryption": False,
@@ -374,7 +400,7 @@ def cube_and_metric_from_view(
         "name": cube_name,
         "target": target,
         "view": view["name"],
-        "description": f"Auto cube over view {view['name']}.",
+        "description": "",
         "dimensions": dimensions,
         "facts": facts,
     }
@@ -396,7 +422,7 @@ def cube_and_metric_from_view(
         metric = {
             "kind": "metric",
             "name": metric_name,
-            "description": f"Auto metric {metric_name} over {cube_name}.",
+            "description": "",
             "cube": cube_name,
             "expression": expr,
             "aggregation": "group",
@@ -503,37 +529,150 @@ def _edge_sort_key(
     return (targets_pk, exact_match, name_len, idx)
 
 
+def _table_id_base(col: str) -> str | None:
+    """`customer_id` / `PostId` → `customer` / `Post`. 그 외는 None."""
+    if len(col) > 3 and col.lower().endswith("_id"):
+        return col[:-3]
+    if len(col) > 2 and col.endswith("Id"):
+        return col[:-2]
+    return None
+
+
+def _resolve_table_id_parent(
+    tables: dict[str, dict], base: str, child_name: str
+) -> tuple[str, str] | None:
+    """`{base}` 또는 단순 복수 `{base}s` 테이블에서 `id`/`Id` 컬럼을 찾는다."""
+    by_lower = {n.lower(): n for n in tables}
+    candidates = [base]
+    if not base.lower().endswith("s"):
+        candidates.append(base + "s")
+    for cand in candidates:
+        parent = by_lower.get(cand.lower())
+        if not parent or parent == child_name:
+            continue
+        parent_cols = {c["name"].lower(): c["name"] for c in tables[parent]["columns"]}
+        if "id" in parent_cols:
+            return parent, parent_cols["id"]
+    return None
+
+
+def infer_table_id_fks(tables: dict[str, dict]) -> None:
+    """선언 FK가 없어도 `{table}_id`/`{Table}Id` → `{table}.id` FK를 table.fk에 추가."""
+    for child in tables.values():
+        child_pk = set(child.get("pk") or [])
+        existing_cols = {
+            tuple(fk.get("columns") or []) for fk in (child.get("fk") or [])
+        }
+        for col in [c["name"] for c in child["columns"]]:
+            if col in child_pk or (col,) in existing_cols:
+                continue
+            base = _table_id_base(col)
+            if not base:
+                continue
+            resolved = _resolve_table_id_parent(tables, base, child["name"])
+            if not resolved:
+                continue
+            parent, to_col = resolved
+            if any(
+                fk.get("columns") == [col]
+                and (fk.get("references") or {}).get("table", "").lower()
+                == parent.lower()
+                for fk in child["fk"]
+            ):
+                continue
+            child.setdefault("fk", []).append(
+                {
+                    "columns": [col],
+                    "references": {"table": parent, "columns": [to_col]},
+                }
+            )
+            existing_cols.add((col,))
+
+
 def collect_join_edges(
     tables: dict[str, dict],
+    role_nodes: dict[str, dict] | None = None,
 ) -> list[tuple[str, str, list[tuple[str, str]]]]:
-    """(child, parent, on[(child_col, parent_col), ...]) — self 제외, 중복 제거."""
+    """(child, parent, on[(child_col, parent_col), ...]) — self 제외, 중복 제거.
+
+    `role_nodes` 키는 view alias(가상 조인 정점). FK에 `_view_alias`가 있으면 그쪽을 parent로 쓴다.
+    동일 부모에 대한 FK가 4개 초과(라인업 슬롯 등)면 조인 간선에서 제외한다.
+    """
+    role_nodes = role_nodes or {}
     edges: list[tuple[str, str, list[tuple[str, str]]]] = []
     seen: set[tuple] = set()
+
+    def resolve_vertex(name: str) -> str | None:
+        if name in role_nodes:
+            return name
+        return resolve_table_name(tables, name)
+
+    def phys_of(vertex: str) -> str:
+        if vertex in role_nodes:
+            return role_nodes[vertex].get("table") or role_nodes[vertex].get("catalog") or vertex
+        return (tables.get(vertex) or {}).get("table") or vertex
 
     def add(child: str, parent: str, on: list[tuple[str, str]]) -> None:
         if child == parent or not on:
             return
-        if resolve_table_name(tables, parent) is None:
+        parent_r = resolve_vertex(parent)
+        if parent_r is None:
             return
-        parent = resolve_table_name(tables, parent)  # type: ignore[assignment]
+        parent = parent_r
+        # Same physical table under different aliases must not join each other.
+        if phys_of(child) == phys_of(parent) and child != parent:
+            return
         key = (child, parent, tuple(on))
         if key in seen:
             return
         seen.add(key)
         edges.append((child, parent, on))
 
+    # Skip high-cardinality role FKs (e.g. Match home/away_player_1..11 → Player)
+    skip_fk_ids: set[int] = set()
+    for child in tables.values():
+        by_target: dict[tuple[str, str], list[dict]] = {}
+        for fk in child.get("fk", []):
+            cols = fk.get("columns") or []
+            ref_t = resolve_table_name(tables, fk["references"]["table"])
+            ref_cols = fk["references"].get("columns") or []
+            if len(cols) == 1 and ref_t and len(ref_cols) == 1:
+                by_target.setdefault((ref_t, ref_cols[0]), []).append(fk)
+        for fks in by_target.values():
+            if len(fks) > 3:
+                for fk in fks:
+                    skip_fk_ids.add(id(fk))
+
     # 1) declared FK
     for child in tables.values():
         for fk in child["fk"]:
+            if id(fk) in skip_fk_ids:
+                continue
             parent = resolve_table_name(tables, fk["references"]["table"])
             if parent is None:
                 continue
             to_cols = fk["references"]["columns"]
             if any(c is None for c in to_cols):
                 continue
-            add(child["name"], parent, list(zip(fk["columns"], to_cols)))
+            vertex = fk.get("_view_alias") or parent
+            add(child["name"], vertex, list(zip(fk["columns"], to_cols)))
 
-    # 2) 컬럼명 == 다른 테이블 단일 PK → 추론
+    # 2) `{table}_id` / `{Table}Id` → `{table}.id` (부모에 id 컬럼이 있을 때)
+    for child in tables.values():
+        child_pk = set(child.get("pk") or [])
+        for col in [c["name"] for c in child["columns"]]:
+            if col in child_pk:
+                continue
+            base = _table_id_base(col)
+            if not base:
+                continue
+            resolved = _resolve_table_id_parent(tables, base, child["name"])
+            if not resolved:
+                continue
+            parent, to_col = resolved
+            add(child["name"], parent, [(col, to_col)])
+
+    # 3) 컬럼명 == 다른 테이블 단일 PK → 추론
     #    단, child 자신의 PK 컬럼으로는 추론하지 않는다.
     #    (예: superhero.id ↔ superpower.id 를 붙이면 M:N이 깨짐)
     pk_index: dict[str, list[str]] = {}
@@ -552,7 +691,7 @@ def collect_join_edges(
                     continue
                 add(child["name"], parent, [(col, col)])
 
-    # 3) 이미 알려진 (col → parent.to) 패턴을 같은 col 가진 다른 테이블에 전파
+    # 4) 이미 알려진 (col → parent.to) 패턴을 같은 col 가진 다른 테이블에 전파
     #    (예: set_translations.setCode→sets.code 이면 cards.setCode도 동일 조인)
     #    PK→PK 패턴은 전파하지 않는다(위와 동일 이유).
     patterns: list[tuple[str, str, str]] = []  # (from_col, parent, to_col)
@@ -679,7 +818,9 @@ def build_component_view(
     root: str,
     join_steps: list[tuple[str, str, list[tuple[str, str]]]],
     view_name: str,
+    role_nodes: dict[str, dict] | None = None,
 ) -> dict:
+    role_nodes = role_nodes or {}
     source_order = [root]
     seen_sources = {root}
     for left, right, _on in join_steps:
@@ -687,7 +828,17 @@ def build_component_view(
             if s not in seen_sources:
                 seen_sources.add(s)
                 source_order.append(s)
-    sources = [{"kind": "table", "name": s} for s in source_order]
+
+    def source_entry(s: str) -> dict:
+        if s in role_nodes:
+            return {
+                "kind": "table",
+                "table": role_nodes[s]["catalog"],
+                "alias": s,
+            }
+        return {"kind": "table", "table": s}
+
+    sources = [source_entry(s) for s in source_order]
 
     joins = []
     for left, right, on in join_steps:
@@ -835,11 +986,24 @@ def build_component_view(
     }
 
 
-def expand_role_playing_lookups(tables: dict[str, dict]) -> None:
-    """When a child table has 2..3 single-column FKs referencing the same column of a small lookup table
-    (e.g. superhero eye_colour_id, hair_colour_id, skin_colour_id -> colour.id), create role-playing
-    table documents for the secondary FKs so all lookup values are exposed and independently prunable.
+def _role_playing_prefix(from_col: str, parent_name: str) -> str:
+    """home_team_api_id → home_team; hair_colour_id → hair_colour."""
+    role_prefix = re.sub(r"(_api_id|_id|Id)$", "", from_col)
+    if not role_prefix or role_prefix.lower() == parent_name.lower():
+        return from_col
+    return role_prefix
+
+
+def expand_role_playing_lookups(tables: dict[str, dict]) -> dict[str, dict]:
+    """When a child has 2..3 single-column FKs to the same lookup column
+    (e.g. eye/hair/skin_colour_id → colour.id, home/away_team_api_id → Team.team_api_id),
+    keep FK.references.table on the real parent and annotate secondary FKs with `_view_alias`.
+
+    Returns virtual role nodes (alias → catalog/columns/_role_prefix) used only in the join graph;
+    they are not written as table JSON.
     """
+    role_nodes: dict[str, dict] = {}
+    occupied = set(tables)
     for child in list(tables.values()):
         by_target: dict[tuple[str, str], list[dict]] = {}
         for fk in child.get("fk", []):
@@ -855,37 +1019,59 @@ def expand_role_playing_lookups(tables: dict[str, dict]) -> None:
             parent_doc = tables.get(parent_name)
             if not parent_doc:
                 continue
-            if len(parent_doc.get("columns") or []) > 4 or parent_doc.get("fk"):
+            if parent_doc.get("fk"):
                 continue
-            # Keep fks[0] on original parent_name; clone lookup table for fks[1:]
+            n_cols = len(parent_doc.get("columns") or [])
+            # 2 roles: allow larger dim tables (Team). 3 roles: keep small-lookup only.
+            if len(fks) >= 3 and n_cols > 4:
+                continue
+            # Keep fks[0] on original parent_name; alias the rest in the view.
             for fk in fks[1:]:
                 from_col = fk["columns"][0]
-                role_prefix = re.sub(r"(_id|Id)$", "", from_col)
-                if not role_prefix or role_prefix.lower() == parent_name.lower():
-                    role_prefix = from_col
-                clone_name = alloc_name(
-                    sanitize_ident(f"{role_prefix}_table"), set(tables), "lookup"
-                )
-                clone_doc = json.loads(json.dumps(parent_doc))
-                clone_doc["name"] = clone_name
-                clone_doc["_role_prefix"] = role_prefix
-                tables[clone_name] = clone_doc
-                fk["references"]["table"] = clone_name
+                role_prefix = _role_playing_prefix(from_col, parent_name)
+                alias = alloc_name(sanitize_ident(role_prefix), occupied, "role")
+                occupied.add(alias)
+                fk["_view_alias"] = alias
+                role_nodes[alias] = {
+                    "name": alias,
+                    "catalog": parent_name,
+                    "table": parent_doc.get("table") or parent_name,
+                    "target": parent_doc["target"],
+                    "columns": parent_doc["columns"],
+                    "pk": parent_doc.get("pk") or [],
+                    "fk": [],
+                    "_role_prefix": role_prefix,
+                }
+    return role_nodes
 
 
-def views_from_tables(tables: dict[str, dict], db_id: str) -> list[dict]:
-    edges = collect_join_edges(tables)
-    comps = connected_components(list(tables), edges)
+def views_from_tables(
+    tables: dict[str, dict],
+    db_id: str,
+    role_nodes: dict[str, dict] | None = None,
+) -> list[dict]:
+    role_nodes = role_nodes or {}
+    edges = collect_join_edges(tables, role_nodes)
+    graph_names = list(tables) + list(role_nodes)
+    comps = connected_components(graph_names, edges)
     table_names = set(tables)
     views: list[dict] = []
     used_names: set[str] = set()
+    graph = {**tables, **role_nodes}
 
     multi = [c for c in comps if len(c) >= 2]
     for comp in multi:
         root, steps = spanning_joins(comp, edges)
         if not steps:
             continue
-        if len(multi) == 1 and len(comp) == len(tables):
+        real_comp = [n for n in comp if n not in role_nodes]
+        real_lower = {n.lower() for n in real_comp}
+        if len(multi) == 1 and len(real_comp) == len(tables):
+            view_name = f"{db_id}_all"
+        elif real_lower <= {"player", "player_attributes"} or root.lower() == "player":
+            view_name = "player"
+        elif "match" in real_lower or root.lower() == "match":
+            # Primary match star stays `{db}_all` even when Player is a separate component.
             view_name = f"{db_id}_all"
         else:
             view_name = f"{db_id}_{root}"
@@ -897,7 +1083,9 @@ def views_from_tables(tables: dict[str, dict], db_id: str) -> list[dict]:
             view_name = f"{base}_{n}"
             n += 1
         used_names.add(view_name)
-        views.append(build_component_view(tables, root, steps, view_name))
+        views.append(
+            build_component_view(graph, root, steps, view_name, role_nodes)
+        )
     return views
 
 
@@ -954,8 +1142,9 @@ def main() -> None:
                     fk["references"]["table"] = resolved
             tables[table] = doc
 
-        expand_role_playing_lookups(tables)
-        views = views_from_tables(tables, db_id)
+        infer_table_id_fks(tables)
+        role_nodes = expand_role_playing_lookups(tables)
+        views = views_from_tables(tables, db_id, role_nodes)
         priority_taken: set[str] = set()
         cubes: list[dict] = []
         metrics: list[dict] = []
@@ -971,6 +1160,8 @@ def main() -> None:
 
         for doc in tables.values():
             doc.pop("_role_prefix", None)
+            for fk in doc.get("fk") or []:
+                fk.pop("_view_alias", None)
             write_json(meta_dir / f"{doc['name']}.json", doc)
             table_n += 1
         for doc in views:

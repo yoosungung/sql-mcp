@@ -314,10 +314,17 @@
     "viewSource": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "name"],
+      "required": ["kind", "table"],
       "properties": {
         "kind": { "enum": ["table", "view"] },
-        "name": { "$ref": "#/$defs/name" },
+        "table": {
+          "$ref": "#/$defs/name",
+          "description": "카탈로그 table/view 문서 name (kind에 따라)."
+        },
+        "alias": {
+          "$ref": "#/$defs/name",
+          "description": "뷰 내 별칭(joins·mappings·SQL AS). 생략 시 table과 동일."
+        },
         "summary": {
           "type": "boolean",
           "description": "select 전용. true 이면 요약 view."
@@ -385,7 +392,7 @@
           "$ref": "#/$defs/name",
           "description": "연결된 view name."
         },
-        "description": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "description": "메타 사용(검색·동의어·업무 의미). 생성 출처 문구 금지. 없으면 빈 문자열." },
         "dimensions": {
           "type": "array",
           "items": { "$ref": "#/$defs/dimension" }
@@ -408,8 +415,7 @@
         },
         "description": {
           "type": "string",
-          "minLength": 1,
-          "description": "검색·동의어용 서술. search_columns 투영에 포함."
+          "description": "메타 사용(검색·동의어·업무 의미). 생성 출처(from table.column 등) 금지. 없으면 빈 문자열. search_columns 투영."
         },
         "type": {
           "enum": ["code", "date", "time", "datetime", "string"],
@@ -444,8 +450,7 @@
         "name": { "$ref": "#/$defs/name" },
         "description": {
           "type": "string",
-          "minLength": 1,
-          "description": "검색·동의어용 서술. search_columns 투영에 포함."
+          "description": "메타 사용(검색·동의어·업무 의미). 생성 출처(from table.column 등) 금지. 없으면 빈 문자열. search_columns 투영."
         },
         "type": {
           "enum": ["amount", "fx", "quantity"],
@@ -488,7 +493,7 @@
       "properties": {
         "kind": { "const": "metric" },
         "name": { "$ref": "#/$defs/name" },
-        "description": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "description": "메타 사용(검색·동의어·업무 의미). 생성 출처 문구 금지. 없으면 빈 문자열." },
         "cube": { "$ref": "#/$defs/name" },
         "expression": {
           "type": "string",
@@ -538,7 +543,7 @@
       "properties": {
         "kind": { "const": "segment" },
         "name": { "$ref": "#/$defs/name" },
-        "description": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "description": "메타 사용(검색·동의어·업무 의미). 생성 출처 문구 금지. 없으면 빈 문자열." },
         "cube": { "$ref": "#/$defs/name" },
         "filter": {
           "$ref": "#/$defs/filter",

@@ -136,7 +136,8 @@ fn resolve_sample_target_inner(
         .get("column")
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("mapping.column".into()))?;
-    let table_doc = find_doc(docs, "table", source)?;
+    let catalog = crate::compile::catalog_for_alias(view, source)?;
+    let table_doc = find_doc(docs, "table", &catalog)?;
     if enforce_rbac {
         check_role_access(table_doc.get("role"), role)?;
     }
@@ -199,7 +200,8 @@ fn resolve_expression_sample(
         )));
     }
     let source = &sources[0];
-    let table_doc = find_doc(docs, "table", source)?;
+    let catalog = crate::compile::catalog_for_alias(view, source)?;
+    let table_doc = find_doc(docs, "table", &catalog)?;
     if enforce_rbac {
         check_role_access(table_doc.get("role"), role)?;
     }

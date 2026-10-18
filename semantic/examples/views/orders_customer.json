@@ -6,11 +6,11 @@
   "sources": [
     {
       "kind": "table",
-      "name": "orders"
+      "table": "orders"
     },
     {
       "kind": "table",
-      "name": "customer"
+      "table": "customer"
     }
   ],
   "joins": [

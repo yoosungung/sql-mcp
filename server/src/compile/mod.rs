@@ -10,6 +10,7 @@ pub use rewrite::{resolve_dim_as_code, wrap_as_code_joins};
 pub use view_prune::{
     compile_view_from, compile_view_from_opts, resolve_view_for_cube, resolve_view_for_cube_opts,
 };
+pub(crate) use view_prune::catalog_for_alias;
 
 use rewrite::{
     collect_member_view_cols, collect_order_by_req_cols, cube_member_to_physical_map, expr_references_any_metric, find_cube_member, find_dimension,

@@ -53,7 +53,7 @@
       "references": {
         "table": "customer",
         "columns": [
-          "customer_id"
+          "id"
         ]
       }
     }

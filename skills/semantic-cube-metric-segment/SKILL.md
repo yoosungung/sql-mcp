@@ -21,9 +21,9 @@ description: >-
 ```
 Progress:
 - [ ] 1. view 컬럼 목록 확보 (초안 파일 또는 metadata_get)
-- [ ] 2. cube: description + dimensions/facts(각 description 필수, column XOR expression)
-- [ ] 3. metric: description · expression · aggregation · group_by · filter
-- [ ] 4. segment: description + 비어 있지 않은 boolean filter (선택)
+- [ ] 2. cube: name/description(사용용; 없으면 "") + dimensions/facts(column XOR expression)
+- [ ] 3. metric: name/description(사용용) · expression · aggregation · group_by · filter
+- [ ] 4. segment: name/description(사용용) + 비어 있지 않은 boolean filter (선택)
 - [ ] 5. 이름 충돌 검사; 등록은 요청 시에만 semantic-register
 ```
 

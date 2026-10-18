@@ -288,20 +288,28 @@ async fn insert_view(conn: &Connection, body: &Value) -> Result<(), AppError> {
 
     if let Some(sources) = body.get("sources").and_then(|v| v.as_array()) {
         for s in sources {
-            let (skind, sname, summary) = if let Some(n) = s.as_str() {
-                ("table", n, false)
+            let (skind, catalog, alias, summary) = if let Some(n) = s.as_str() {
+                ("table", n, n, false)
             } else {
+                let catalog = s
+                    .get("table")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| s.get("name").and_then(|v| v.as_str()))
+                    .ok_or_else(|| AppError::Validation("source.table".into()))?;
+                let alias = s
+                    .get("alias")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(catalog);
                 (
                     s.get("kind").and_then(|v| v.as_str()).unwrap_or("table"),
-                    s.get("name")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| AppError::Validation("source.name".into()))?,
+                    catalog,
+                    alias,
                     s.get("summary").and_then(|v| v.as_bool()).unwrap_or(false),
                 )
             };
             conn.execute(
-                "INSERT INTO meta_view_sources (view_name, kind, source_name, summary) VALUES (?1,?2,?3,?4)",
-                params![name, skind, sname, summary as i32],
+                "INSERT INTO meta_view_sources (view_name, kind, source_name, catalog_name, summary) VALUES (?1,?2,?3,?4,?5)",
+                params![name, skind, alias, catalog, summary as i32],
             )
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
@@ -366,7 +374,7 @@ async fn load_view(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut sources = Vec::new();
     let mut srows = conn
         .query(
-            "SELECT kind, source_name, summary FROM meta_view_sources WHERE view_name = ?1",
+            "SELECT kind, source_name, summary, catalog_name FROM meta_view_sources WHERE view_name = ?1",
             params![name],
         )
         .await
@@ -377,9 +385,17 @@ async fn load_view(conn: &Connection, name: &str) -> Result<Value, AppError> {
         .map_err(|e| AppError::Internal(e.into()))?
     {
         let kind: String = r.get(0).map_err(|e| AppError::Internal(e.into()))?;
-        let source_name: String = r.get(1).map_err(|e| AppError::Internal(e.into()))?;
+        let alias: String = r.get(1).map_err(|e| AppError::Internal(e.into()))?;
         let summary: i32 = r.get(2).map_err(|e| AppError::Internal(e.into()))?;
-        let mut s = json!({ "kind": kind, "name": source_name });
+        let catalog: String = r
+            .get::<String>(3)
+            .ok()
+            .filter(|c| !c.is_empty())
+            .unwrap_or_else(|| alias.clone());
+        let mut s = json!({ "kind": kind, "table": catalog });
+        if alias != catalog {
+            s["alias"] = json!(alias);
+        }
         if summary != 0 {
             s["summary"] = json!(true);
         }

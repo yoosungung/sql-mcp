@@ -8,7 +8,9 @@
 
 참조 방향: `table → view → cube → metric|segment`.
 
-## 이름 우선권
+## 이름·설명 (메타 사용 표면)
+
+`name`·`description`은 **메타 사용**(DW 에이전트 검색·동의어·업무 의미)용이다. 메타 **생성** 메모(`from table.column`, `Auto cube over view…`, `Dimension X from Y` 등)를 넣지 않는다. 사용 서술이 없으면 `description`은 빈 문자열(`""`)이 낫다.
 
 자연스러운 `name`은 **cube · dimension · fact · metric · segment** 우선(검색 대상: 이름·설명, dim/fact는 type 추가). 중복 시 table · view · view 컬럼이 접미사를 받아 양보한다(물리 경로·물리 컬럼명은 유지). dim/fact가 가리키는 view 컬럼과 멤버명이 같으면 OK.
 
@@ -34,7 +36,7 @@
 
 **dimension**
 
-- `description` **필수** (검색·동의어·테이블 출처). 다중 테이블 조인 뷰(One-Big-View) 위의 큐브에서는 동명/유사 컬럼(`status` vs `event_status`, `name` vs `circuits_name`) 구분을 위해 원천 물리 출처(`from {table}.{column}`, 다중 매핑 조인 키면 `join key with ...`)를 `description`에 반드시 포함한다.
+- `description` 필드 필수, **내용**은 메타 사용용(검색·동의어·업무 의미). 없으면 `""`. 생성 출처(`from {table}.{column}` 등) 금지. 동명 컬럼 구분은 `name` 접두·view 매핑으로 하고 description에 물리 출처를 쓰지 않는다.
 - `type`: `code` | `date` | `time` | `datetime` | `string`
 - `column`(view 컬럼) **또는** `expression`(view 컬럼명을 쓰는 스칼라) — 둘 중 하나만
 - `encryption`, `role`
@@ -42,7 +44,7 @@
 
 **fact**
 
-- `description` **필수** (원천 물리 출처 `from {table}.{column}` 및 단위/의미 명시; 예: `income.amount` vs `budget.amount`)
+- `description` 필드 필수, **내용**은 메타 사용용(단위·업무 의미). 없으면 `""`. 생성 출처 금지.
 - `type`: `amount` | `fx` | `quantity` (취급 방식 — dim `type`과 같은 축)
 - `column` XOR `expression`
 - `encryption`, `role`
@@ -55,7 +57,7 @@
 
 | 필드 | 규칙 |
 |------|------|
-| `description` | 검색용 서술. 비울 수 없음 |
+| `description` | 메타 사용(검색·업무 의미). 없으면 `""` |
 | `expression` | 연결된 cube의 view 컬럼(또는 fact/dim) 연산·집계·윈도우·서브쿼리 식. 예: `sum(sale_amount)` |
 | `aggregation` | `group` \| `rollup` \| `cube` \| `grouping_sets` |
 | `group_by` | `aggregation=group`일 때 필수: 이 metric과 함께 `GROUP BY`/프로젝션할 수 있는 **허용 view 컬럼(allowlist)** 배열이자 미지정 시 기본 그룹핑 축. 컴파일러가 `metric.group_by`에 없는 차원으로 그룹핑하는 질의를 거절하므로(`dimension X not in metric group_by`), 범용 metric은 해당 그레인에서 유효한 큐브의 모든 컬럼 기반 dimension view 컬럼을 포함해야 한다(임의로 1~2개만 넣지 말 것). |
@@ -69,7 +71,7 @@
 ## Quick checks
 
 - [ ] `cube.view` 존재; `column` ∈ view columns
-- [ ] cube·dim·fact·metric·segment `description` 모두 non-empty이며 원천 `table.column` 출처를 포함함
+- [ ] cube·dim·fact·metric·segment `description`은 메타 사용 서술만(생성 출처 문구 없음). 없으면 `""`
 - [ ] `column`과 `expression` 동시 사용 없음
 - [ ] metric `name` ∉ 같은 cube dimension/fact names
 - [ ] `aggregation=group` ⇒ `group_by` ⊆ view columns (그레인 호환 차원 전체 포함 확인)

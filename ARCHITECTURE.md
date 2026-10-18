@@ -140,7 +140,7 @@ semantic/examples/
 | 문서 | 필수 필드 |
 | --- | --- |
 | table | `kind`, `name`, `target`, `db`, `schema`, `table`, `columns`, `pk`, `fk`, `permission_filters`, `scope_filter`, `default_filter` |
-| view | `kind`, `name`, `target`, `combine`, `sources`, `columns`. join은 `joins`, select는 `prefer` |
+| view | `kind`, `name`, `target`, `combine`, `sources`, `columns`. join은 `joins`, select는 `prefer`. `sources[]` = `{ kind, table, alias? }` (`table`=카탈로그 문서명, `alias` 생략 시=`table`; role-play는 동일 `table`+다른 `alias`) |
 | cube | `kind`, `name`, `target`, `view`, `description`, `dimensions`, `facts` (+ 선택 `role`) |
 | metric | `kind`, `name`, `description`, `cube`, `expression`, `aggregation`, `filter` |
 | segment | `kind`, `name`, `description`, `cube`, `filter` |
@@ -149,9 +149,9 @@ table, cube `role`의 기본값은 `all`이다. `columns`는 `name`, `type`, `nu
 
 view `combine`은 `join`, `union`, `minus`, `select` 중 하나다. `combine`이 없으면 view가 아니다. `join`, `union`, `minus`의 source는 테이블이고, `select`의 source는 view다. union과 minus는 첫 source가 기준이고 각 view 컬럼이 모든 source를 가리킨다. join의 `type`은 `inner`, `left`, `right`, `full`이다.
 
-dimension `type`은 `code`, `date`, `time`, `datetime`, `string` 중 하나다(취급 방식). fact `type`은 `amount`, `fx`, `quantity` 중 하나다(금액·환율·일반 수량). 둘 다 **필수 `description`**(검색 투영)과 `encryption`(D17 마스킹)을 가진다. dimension만 선택 `as_code`(D9 코드사전)를 가진다. `role`의 기본값은 `all`이다. 값은 view 컬럼 `column`이거나, view 컬럼 이름을 쓰는 스칼라 `expression`이다. 둘 중 하나만 둔다.
+dimension `type`은 `code`, `date`, `time`, `datetime`, `string` 중 하나다(취급 방식). fact `type`은 `amount`, `fx`, `quantity` 중 하나다(금액·환율·일반 수량). 둘 다 **`description` 필드**(검색 투영)와 `encryption`(D17 마스킹)을 가진다. `description`은 **메타 사용**용(검색·동의어·업무 의미)이며, 생성 출처(`from table.column`, `Auto cube…` 등)를 넣지 않는다. 사용 서술이 없으면 빈 문자열이다. dimension만 선택 `as_code`(D9 코드사전)를 가진다. `role`의 기본값은 `all`이다. 값은 view 컬럼 `column`이거나, view 컬럼 이름을 쓰는 스칼라 `expression`이다. 둘 중 하나만 둔다.
 
-metric `expression`은 연결된 cube의 dimension/fact 연산이다. `aggregation`은 `group`, `rollup`, `cube`, `grouping_sets` 중 하나이고, 질의의 그룹 기준을 그 방식으로 묶는다. `group`이면 `group_by`에 GROUP BY로 쓰는 view 컬럼을 둔다. cube·dimension·fact·metric·segment의 `description`은 모두 필수다(`search_columns` D12). metric과 segment `role`의 기본값은 `all`이다. segment `filter`는 비울 수 없다.
+metric `expression`은 연결된 cube의 dimension/fact 연산이다. `aggregation`은 `group`, `rollup`, `cube`, `grouping_sets` 중 하나이고, 질의의 그룹 기준을 그 방식으로 묶는다. `group`이면 `group_by`에 GROUP BY로 쓰는 view 컬럼을 둔다. cube·dimension·fact·metric·segment의 `name`·`description`은 **메타 사용** 표면이다(`search_columns` D12); `description`은 비울 수 있다. metric과 segment `role`의 기본값은 `all`이다. segment `filter`는 비울 수 없다.
 
 예시는 `semantic/examples/`에 있다. libSQL 카탈로그 DDL은 `semantic/libsql/catalog.sql`이다.
 

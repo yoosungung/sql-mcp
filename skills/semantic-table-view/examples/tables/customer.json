@@ -7,7 +7,7 @@
   "table": "customer",
   "columns": [
     {
-      "name": "customer_id",
+      "name": "id",
       "type": "bigint",
       "nullable": false
     },
@@ -23,7 +23,7 @@
     }
   ],
   "pk": [
-    "customer_id"
+    "id"
   ],
   "fk": [],
   "permission_filters": [],

@@ -6,11 +6,11 @@
   "sources": [
     {
       "kind": "table",
-      "name": "orders"
+      "table": "orders"
     },
     {
       "kind": "table",
-      "name": "customer"
+      "table": "customer"
     }
   ],
   "joins": [
@@ -21,7 +21,7 @@
       "on": [
         {
           "left_column": "customer_id",
-          "right_column": "customer_id"
+          "right_column": "id"
         }
       ]
     }
@@ -45,6 +45,19 @@
         },
         {
           "source": "customer",
+          "column": "id"
+        }
+      ]
+    },
+    {
+      "name": "id",
+      "mappings": [
+        {
+          "source": "customer",
+          "column": "id"
+        },
+        {
+          "source": "orders",
           "column": "customer_id"
         }
       ]

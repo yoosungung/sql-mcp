@@ -66,6 +66,7 @@ impl SemanticStore {
         migrate_add_cube_role(&conn).await?;
         migrate_add_column_index_target(&conn).await?;
         migrate_add_member_descriptions(&conn).await?;
+        migrate_add_view_source_catalog(&conn).await?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             embedder: None,
@@ -356,6 +357,27 @@ async fn migrate_add_column_index_target(conn: &Connection) -> Result<(), AppErr
     }
     conn.execute(
         "ALTER TABLE column_index ADD COLUMN target TEXT NOT NULL DEFAULT 'dw'",
+        (),
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(())
+}
+
+/// Older catalogs lack `catalog_name` on `meta_view_sources` (alias vs catalog table).
+async fn migrate_add_view_source_catalog(conn: &Connection) -> Result<(), AppError> {
+    if table_has_column(conn, "meta_view_sources", "catalog_name").await? {
+        return Ok(());
+    }
+    conn.execute(
+        "ALTER TABLE meta_view_sources ADD COLUMN catalog_name TEXT",
+        (),
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+    // Legacy rows: source_name was the catalog key (no separate alias).
+    conn.execute(
+        "UPDATE meta_view_sources SET catalog_name = source_name WHERE catalog_name IS NULL",
         (),
     )
     .await
