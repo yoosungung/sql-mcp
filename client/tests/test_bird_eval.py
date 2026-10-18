@@ -121,7 +121,60 @@ def test_tool_calls_from_messages_pairs_result() -> None:
     assert len(tcs) == 1
     assert tcs[0]["name"] == "execute_sql"
     assert tcs[0]["args"] == {"sql": "SELECT 1"}
-    assert tcs[0]["result"] == '{"rows":[[1]]}'
+    body = unwrap_tool_result(tcs[0]["result"])
+    assert body is not None
+    assert body["rows"] == [[1]]
+
+
+def test_tool_calls_from_messages_execute_sql_not_char_clipped() -> None:
+    """execute_sql 결과는 log_max 문자 절단 없이 rows를 보존 (채점용)."""
+    rows = [[i, f"name-{i}"] for i in range(80)]
+    payload = json.dumps({"columns": ["id", "n"], "rows": rows, "row_count": len(rows)})
+    assert len(payload) > 400  # would be clipped by a small log_max
+    ai = SimpleNamespace(
+        type="ai",
+        name=None,
+        content="",
+        tool_calls=[{"id": "c1", "name": "execute_sql", "args": {"sql": "SELECT id, n"}}],
+    )
+    tool = SimpleNamespace(
+        type="tool",
+        name="execute_sql",
+        content=[{"type": "text", "text": payload}],
+        tool_call_id="c1",
+        tool_calls=None,
+    )
+    tcs = tool_calls_from_messages([ai, tool], log_max=100)
+    body = unwrap_tool_result(tcs[0]["result"])
+    assert body is not None
+    assert "rows" in body
+    assert len(body["rows"]) == 80
+    assert body["rows"][-1] == [79, "name-79"]
+    # scoring path must see these rows
+    assert last_successful_rows({"tool_calls": tcs}) == rows
+
+
+def test_tool_calls_from_messages_execute_sql_row_limit() -> None:
+    rows = [[i] for i in range(600)]
+    payload = json.dumps({"columns": ["n"], "rows": rows, "row_count": 600})
+    ai = SimpleNamespace(
+        type="ai",
+        name=None,
+        content="",
+        tool_calls=[{"id": "c1", "name": "execute_sql", "args": {"sql": "SELECT n"}}],
+    )
+    tool = SimpleNamespace(
+        type="tool",
+        name="execute_sql",
+        content=payload,
+        tool_call_id="c1",
+        tool_calls=None,
+    )
+    tcs = tool_calls_from_messages([ai, tool], log_max=50, row_limit=500)
+    body = unwrap_tool_result(tcs[0]["result"])
+    assert body is not None
+    assert len(body["rows"]) == 500
+    assert body.get("truncated") is True
 
 
 def test_serialize_messages_clips() -> None:
@@ -211,6 +264,51 @@ def test_classify_failure_wrong_rows_is_agent() -> None:
     )
     assert bucket == "dw_agent"
     assert "불일치" in reason
+
+
+def test_classify_failure_gold_join_without_agent_join_is_not_auto_semantic() -> None:
+    """단일 큐브(OBV) 질의는 gold JOIN만으로 semantic_layer로 묶지 않는다."""
+    bucket, reason = classify_failure(
+        pred_rows=[[0]],
+        gold_rows=[[7]],
+        errors=[],
+        last_sql="SELECT COUNT(city) FROM student_club WHERE county = 'Orange County'",
+        gold_sql=(
+            "SELECT COUNT(city) FROM zip_code JOIN member ON member.zip = zip_code.zip "
+            "WHERE county = 'Orange County'"
+        ),
+    )
+    assert bucket == "dw_agent"
+    assert "단일 큐브" not in reason
+
+
+def test_classify_failure_compiled_extra_join_is_semantic() -> None:
+    bucket, reason = classify_failure(
+        pred_rows=[[0]],
+        gold_rows=[[7]],
+        errors=[],
+        last_sql="SELECT COUNT(city) FROM student_club WHERE county = 'Orange County'",
+        gold_sql="SELECT COUNT(city) FROM zip_code WHERE county = 'Orange County'",
+        compiled_sql=(
+            "SELECT COUNT(zip_code.city) FROM member "
+            "INNER JOIN zip_code ON member.zip = zip_code.zip "
+            "WHERE zip_code.county = 'Orange County'"
+        ),
+    )
+    assert bucket == "semantic_layer"
+    assert "JOIN" in reason or "조인" in reason
+
+
+def test_classify_failure_type_coerce_match_is_type() -> None:
+    bucket, reason = classify_failure(
+        pred_rows=[["7"]],
+        gold_rows=[[7]],
+        errors=[],
+        last_sql="SELECT COUNT(*) FROM c",
+        gold_sql="SELECT COUNT(*) FROM t",
+    )
+    assert bucket == "dw_agent"
+    assert "타입" in reason
 
 
 def test_classify_failure_wrong_rows_after_join_block_is_semantic() -> None:

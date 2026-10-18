@@ -39,7 +39,9 @@ BIRD gold `SQL`은 **물리 SELECT**이므로 `execute_sql`(시맨틱-only)에 �
 |--------|------|
 | `dw_agent` | 시맨틱 표면으로 답이 가능한데 에이전트 SQL/로직이 틀림 |
 | `sql_mcp_code` | 유효해 보이는 시맨틱 SQL이 파서·컴파일러에서 거절/오류 |
-| `semantic_layer` | 메타(metric/dimension/view) 부족으로 표현 불가 |
+| `semantic_layer` | 메타(metric/dimension/view) 부족으로 표현 불가 · 또는 컴파일된 물리 SQL의 JOIN이 gold 대비 과도/추가 |
+
+`tool_calls_from_messages`는 `execute_sql` 결과를 `log_max` 문자로 자르지 않고 rows만 `row_limit`(기본 500, `run_gold_sql`과 동일)으로 보존한다. EX 실패 시 `classify_failure`는 gold SQL에 JOIN이 있다는 사실만으로 `semantic_layer`로 묶지 않고, dry_run 컴파일 SQL·행 집합의 조인/필터/타입 차이로 세분한다.
 
 ## Commands
 

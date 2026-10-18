@@ -81,7 +81,9 @@ async def eval_one(
             )
             agent = AgentRun(
                 final=final,
-                tool_calls=tool_calls_from_messages(messages, log_max=log_max),
+                tool_calls=tool_calls_from_messages(
+                    messages, log_max=log_max, row_limit=row_limit
+                ),
                 elapsed_ms=int((time.perf_counter() - t0) * 1000),
                 model=model,
             )

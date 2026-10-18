@@ -129,8 +129,17 @@ def serialize_messages(messages: list[Any], *, log_max: int = 4000) -> list[dict
     return steps
 
 
-def tool_calls_from_messages(messages: list[Any], *, log_max: int = 4000) -> list[dict[str, Any]]:
-    """AI tool_call + 이어지는 ToolMessage 결과를 한 리스트로."""
+def tool_calls_from_messages(
+    messages: list[Any],
+    *,
+    log_max: int = 4000,
+    row_limit: int = 500,
+) -> list[dict[str, Any]]:
+    """AI tool_call + 이어지는 ToolMessage 결과를 한 리스트로.
+
+    execute_sql 결과는 채점용으로 log_max 문자 절단을 하지 않고,
+    run_gold_sql과 동일한 행 상한(row_limit)만 적용한다.
+    """
     out: list[dict[str, Any]] = []
     pending: dict[str, dict[str, Any]] = {}
     for msg in messages:
@@ -147,19 +156,26 @@ def tool_calls_from_messages(messages: list[Any], *, log_max: int = 4000) -> lis
                 pending[str(tid)] = rec
         if getattr(msg, "type", None) == "tool" or type(msg).__name__ == "ToolMessage":
             content = getattr(msg, "content", "")
-            text = content if isinstance(content, str) else json.dumps(content, default=str)
-            if log_max > 0 and len(text) > log_max:
-                text = text[:log_max] + f"…(+{len(text) - log_max})"
             tid = getattr(msg, "tool_call_id", None)
+            tool_name = getattr(msg, "name", None)
+            if tid and str(tid) in pending and not tool_name:
+                tool_name = pending[str(tid)].get("name")
+            if tool_name == "execute_sql":
+                stored: Any = _clip_execute_sql_result(content, row_limit=row_limit)
+            else:
+                text = content if isinstance(content, str) else json.dumps(content, default=str)
+                if log_max > 0 and len(text) > log_max:
+                    text = text[:log_max] + f"…(+{len(text) - log_max})"
+                stored = text
             if tid and str(tid) in pending:
-                pending[str(tid)]["result"] = text
+                pending[str(tid)]["result"] = stored
             else:
                 out.append(
                     {
-                        "name": getattr(msg, "name", None),
+                        "name": tool_name,
                         "args": None,
                         "id": tid,
-                        "result": text,
+                        "result": stored,
                     }
                 )
     return out
@@ -230,6 +246,20 @@ def unwrap_tool_result(result: Any) -> dict[str, Any] | None:
     return body if isinstance(body, dict) else {"raw": body}
 
 
+def _clip_execute_sql_result(result: Any, *, row_limit: int = 500) -> Any:
+    """execute_sql 결과는 문자 log_max로 자르지 않고, rows만 row_limit으로 보존."""
+    body = unwrap_tool_result(result)
+    if not isinstance(body, dict):
+        return result  # 파싱 실패 시에도 문자 절단하지 않음
+    rows = body.get("rows")
+    if isinstance(rows, list) and len(rows) > row_limit:
+        body = dict(body)
+        body["rows"] = rows[:row_limit]
+        body["row_count"] = row_limit
+        body["truncated"] = True
+    return body
+
+
 def last_successful_rows(agent: dict[str, Any] | AgentRun | None) -> list[list[Any]] | None:
     """마지막 성공 execute_sql의 rows (validation/error 제외)."""
     if agent is None:
@@ -279,6 +309,23 @@ def last_execute_sql(agent: dict[str, Any] | AgentRun | None) -> str | None:
             args = tc.get("args") or {}
             if isinstance(args, dict) and args.get("sql"):
                 last = str(args["sql"])
+    return last
+
+
+def last_compiled_sql(agent: dict[str, Any] | AgentRun | None) -> str | None:
+    """마지막 dry_run execute_sql이 반환한 컴파일된 물리 SQL."""
+    if agent is None:
+        return None
+    tool_calls = agent.tool_calls if isinstance(agent, AgentRun) else (agent.get("tool_calls") or [])
+    last: str | None = None
+    for tc in tool_calls:
+        if not isinstance(tc, dict) or tc.get("name") != "execute_sql":
+            continue
+        body = unwrap_tool_result(tc.get("result"))
+        if not isinstance(body, dict):
+            continue
+        if body.get("dry_run") is True and isinstance(body.get("sql"), str) and body["sql"]:
+            last = str(body["sql"])
     return last
 
 
@@ -377,6 +424,104 @@ def _rank_errors(
     return ranked
 
 
+def _join_count(sql: str) -> int:
+    return len(re.findall(r"\bjoin\b", sql.lower()))
+
+
+def _coerce_cell(v: Any) -> Any:
+    """타입만 다른 동일 논리값 비교용."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float):
+        if v == int(v):
+            return int(v)
+        return v
+    if isinstance(v, str):
+        s = v.strip()
+        if re.fullmatch(r"-?\d+", s):
+            return int(s)
+        if re.fullmatch(r"-?\d+\.\d+", s):
+            return float(s)
+        return s
+    return v
+
+
+def _rows_match_after_type_coerce(
+    pred: list[list[Any]], gold: list[list[Any]]
+) -> bool:
+    def _norm(rows: list[list[Any]]) -> set[Any]:
+        out: list[tuple[Any, ...]] = []
+        for r in rows:
+            out.append(tuple(_coerce_cell(c) for c in r))
+        try:
+            return set(out)
+        except TypeError:
+            return set(map(repr, out))
+
+    return _norm(pred) == _norm(gold)
+
+
+def _classify_wrong_rows(
+    *,
+    pred_rows: list[list[Any]],
+    gold_rows: list[list[Any]],
+    last_sql: str | None,
+    gold_sql: str | None,
+    compiled_sql: str | None,
+) -> tuple[FailureBucket, str]:
+    """실행 성공·EX 실패 → 조인/필터/타입 차이로 세분 분류."""
+    # EX 실패인데 타입 정규화 후 집합이 같으면 타입/표현만 다른 경우
+    if _rows_match_after_type_coerce(pred_rows, gold_rows):
+        return "dw_agent", "execute_sql 성공·값 일치하나 타입/표현 형식 불일치"
+
+    if (
+        pred_rows
+        and gold_rows
+        and isinstance(pred_rows[0], list)
+        and isinstance(gold_rows[0], list)
+        and len(pred_rows[0]) != len(gold_rows[0])
+    ):
+        return "dw_agent", "프로젝션 열 개수/구성이 gold와 불일치"
+
+    phys = compiled_sql or ""
+    gsql = gold_sql or ""
+    agent_sql = last_sql or ""
+
+    if phys:
+        g_joins = _join_count(gsql)
+        p_joins = _join_count(phys)
+        # 컴파일 결과가 gold보다 조인을 추가/과다하게 넣으면 뷰 토폴로지 이슈
+        if g_joins == 0 and p_joins >= 1:
+            return (
+                "semantic_layer",
+                "컴파일된 물리 SQL이 gold에 없는 JOIN을 포함(뷰 조인 토폴로지)",
+            )
+        if p_joins >= g_joins + 2:
+            return (
+                "semantic_layer",
+                "컴파일된 물리 SQL의 JOIN이 gold보다 과도함(팬아웃/Chasm 의심)",
+            )
+        g_where = bool(re.search(r"\bwhere\b", gsql.lower()))
+        p_where = bool(re.search(r"\bwhere\b", phys.lower()))
+        a_where = bool(re.search(r"\bwhere\b", agent_sql.lower()))
+        if g_where and not a_where and not p_where:
+            return "dw_agent", "컴파일/에이전트 SQL에 gold WHERE 필터가 없어 결과 불일치"
+        if re.search(r"\bdate_trunc\b", agent_sql.lower()) or "datetime(" in phys.lower():
+            if re.search(r"date_trunc\s*\(\s*['\"]year['\"]", agent_sql.lower()) and re.search(
+                r"=\s*['\"]?\d{4}", agent_sql.lower()
+            ):
+                return "dw_agent", "date_trunc 연도 비교 타입 불일치로 오답"
+
+    if gold_rows and len(pred_rows) > max(3, len(gold_rows) * 3):
+        return "semantic_layer", "결과 행 수가 gold 대비 과도(조인 팬아웃 의심)"
+    if gold_rows and len(pred_rows) == 0:
+        return "dw_agent", "필터/조인으로 결과 공집합(gold는 비공집합)"
+
+    return "dw_agent", "execute_sql은 성공했으나 gold_rows와 불일치(로직/필터/값)"
+
+
 def classify_failure(
     *,
     pred_rows: list[list[Any]] | None,
@@ -384,6 +529,7 @@ def classify_failure(
     errors: list[str],
     last_sql: str | None,
     gold_sql: str | None = None,
+    compiled_sql: str | None = None,
 ) -> tuple[FailureBucket, str]:
     """EX 실패 1건 → (bucket, reason)."""
     sql = last_sql or ""
@@ -398,13 +544,13 @@ def classify_failure(
                 "semantic_layer",
                 "시맨틱 제약(JOIN/metric/subquery 등)에 막힌 뒤 근사 질의로 오답",
             )
-        gsql = (gold_sql or "").lower()
-        if " join " in gsql and " join " not in sql.lower():
-            return (
-                "semantic_layer",
-                "gold는 JOIN인데 에이전트는 단일 큐브만 질의해 오답 — named metric/관계 메타 점검",
-            )
-        return "dw_agent", "execute_sql은 성공했으나 gold_rows와 불일치(로직/필터/값)"
+        return _classify_wrong_rows(
+            pred_rows=pred_rows,
+            gold_rows=gold_rows,
+            last_sql=last_sql,
+            gold_sql=gold_sql,
+            compiled_sql=compiled_sql,
+        )
 
     # CASE WHEN without END → agent syntax
     if re.search(r"\bCASE\b", sql_u) and not re.search(r"\bEND\b", sql_u):
@@ -425,9 +571,11 @@ def classify_failure(
 def score_eval_item(item: dict[str, Any]) -> dict[str, Any]:
     agent = item.get("agent")
     gold = item.get("gold_rows")
-    pred = last_successful_rows(agent if isinstance(agent, dict) else None)
-    errors = collect_execute_errors(agent if isinstance(agent, dict) else None)
-    sql = last_execute_sql(agent if isinstance(agent, dict) else None)
+    agent_d = agent if isinstance(agent, dict) else None
+    pred = last_successful_rows(agent_d)
+    errors = collect_execute_errors(agent_d)
+    sql = last_execute_sql(agent_d)
+    compiled = last_compiled_sql(agent_d)
     ex = bool(gold is not None and rows_match_ex(pred, gold))
     bucket: FailureBucket | None = None
     reason: str | None = None
@@ -438,6 +586,7 @@ def score_eval_item(item: dict[str, Any]) -> dict[str, Any]:
             errors=errors,
             last_sql=sql,
             gold_sql=item.get("gold_sql") if isinstance(item.get("gold_sql"), str) else None,
+            compiled_sql=compiled,
         )
     return {
         "question_id": item.get("question_id"),
@@ -449,6 +598,7 @@ def score_eval_item(item: dict[str, Any]) -> dict[str, Any]:
         "pred_row_count": len(pred) if isinstance(pred, list) else None,
         "error_count": len(errors),
         "last_sql": sql,
+        "compiled_sql": compiled,
         "last_error": errors[-1] if errors else None,
         "failure_bucket": bucket,
         "failure_reason": reason,
