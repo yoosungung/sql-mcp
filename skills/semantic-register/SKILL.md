@@ -54,6 +54,10 @@ Progress:
 
 `metadata_get(kind, name)`. 검색 인덱스는 서버가 CRUD 성공 후 재구축한다.
 
+로컬 `target_db/<db>/meta/`를 고쳤다면 다이어그램 투영을 갱신한다:
+
+`python3 ./target_db/generate_semantic_map.py <db_id>` → `meta/semantic-map.md`
+
 ## Do not
 
 - DW 에이전트 세션에서 `metadata_*` 사용.

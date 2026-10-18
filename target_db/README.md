@@ -32,7 +32,12 @@ python3 ./target_db/generate_meta.py
 # → target_db/<db_id>/meta/<name>.json   (table | view | cube | metric)
 python3 ./target_db/enrich_meta_from_qa.py
 # → evidence 기반 domain metric/segment 추가 (generate_meta 이후; 덮어쓰지 않음)
+python3 ./target_db/generate_semantic_map.py
+# → target_db/<db_id>/meta/semantic-map.md  (diagram-first ERD + OLAP Mermaid)
+python3 ./target_db/generate_semantic_map.py financial   # 단일 DB
 ```
+
+- **semantic-map.md** (`generate_semantic_map.py`): meta JSON의 읽기 전용 투영. §A Views(Mermaid=테이블명+join · Column mappings에 `(PK)`/`(FK)`) · §B Cubes(표). SoT는 JSON. 테스트: `python3 -m pytest target_db/test_generate_semantic_map.py` (venv의 pytest).
 
 - **table** / **view** / **cube**: `target`=`{db_id}`(MCP `list_databases.name` = `TargetConfig.id`와 동일). table은 `schema`=`main`, 필터 비움. FK `to`가 비면 참조 테이블 PK로 채우며, 선언 순서(컬럼 순서 우선)를 유지한다. (`as_code`는 table 컬럼이 아니라 cube dimension에만 둔다.)
 - **view**: FK + (컬럼명=타 테이블 PK, **단 child 자신의 PK 컬럼 제외**) + (동일 FK 컬럼 패턴 전파, PK→PK 제외)로 그래프를 만들고, 연결 요소마다 hub 기준 BFS 스패닝 간선 + **사이클을 닫는 추가 FK 간선**을 모두 `inner` join으로 보존한다(컴파일러가 질의 시 최단 경로 서브그래프·스패닝 트리만 방출). 전부 연결되면 `{db_id}_all`, 아니면 `{db_id}_{hub}`. 조인 키 동치류(Equivalence Class) 내 물리 컬럼명이 다르면(`event_id` vs `link_to_event`, `zip_code` vs `zip`) 각 이름을 모두 뷰 컬럼으로 노출하고 상호 매핑을 부여한다.

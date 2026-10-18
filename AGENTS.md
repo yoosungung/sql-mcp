@@ -17,10 +17,11 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
 | `<comp>/DESIGN.md` | 컴포넌트 *내부* 설계 + `## Commands` (빌드/실행/테스트) | `server/` (M1+), `semantic/`, `client/`. Frontend/`api/`는 범위 취소 |
 | `deploy/SETUP.md` | 배포 런북 | `deploy/` |
 | `deploy/k8s/base/` | Kustomize 베이스 | `deploy/k8s/base/` |
-| `target_db/README.md` | BIRD Mini-Dev SQLite 로컬 타깃 + Q-SQL(`bird_qa/`) 사용법 | `target_db/` |
+| `target_db/README.md` | BIRD Mini-Dev SQLite 로컬 타깃 + Q-SQL(`bird_qa/`) · meta JSON · `semantic-map.md` 생성 | `target_db/` |
 | `client/DESIGN.md` · `client/README.md` | LangChain v1 `create_agent` + sql-mcp 예제 (BIRD 질문) | `client/` |
 | `server/spec.md` | 시맨틱 SQL 6단계 컴파일·타입별 `meta_*` 상세 | `server/` |
 | `skills/` | 코딩 에이전트용 Agent Skills 정본: `semantic-table-view` → `semantic-cube-metric-segment` → (`semantic-from-qa`) → `semantic-register`. MCP Resource(`https://sql-mcp.local/skills/…`). Cursor는 `.cursor/skills` → `../skills` | `skills/` |
+| `docs/change_sementic.md` | BIRD eval 기반 **시맨틱 메타 수정 계획**(검토용 초안; 구현 전 합의) | `docs/` |
 
 #### 규칙:
 

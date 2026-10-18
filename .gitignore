@@ -4,12 +4,9 @@ __pycache__/
 /target/
 /data/
 **/*.db
-target_db/**/*.sqlite
-target_db/**/*.partial
-target_db/**/*.sqlite-shm
-target_db/**/*.sqlite-wal
-target_db/**/*.json
-target_db/bird_qa/
-target_db/.cache/
+target_db/
+!target_db/**/*.sh
+!target_db/**/*.py
+!target_db/README.md
 client/.venv/
 client/eval/
