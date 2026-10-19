@@ -636,6 +636,60 @@
     }
 
     #[test]
+    fn compiles_d25_temporal_helpers_in_semantic_select() {
+        let docs = example_docs();
+        let sql_age = compile_semantic_sql_with_binds(
+            &docs,
+            "SELECT YEAR(CURRENT_DATE) - YEAR(order_date) AS age_years, \
+                    AVG(DATEDIFF(CURRENT_DATE, order_date)) AS avg_age_days \
+             FROM sales GROUP BY YEAR(CURRENT_DATE) - YEAR(order_date)",
+            Some("finance"),
+            None,
+            DialectProfile::Sqlite,
+        )
+        .unwrap();
+        let lower = sql_age.to_ascii_lowercase();
+        assert!(
+            lower.contains("julianday") || lower.contains("substr"),
+            "expected SQLite temporal rewrite, got: {sql_age}"
+        );
+        assert!(
+            lower.contains("current_date"),
+            "expected CURRENT_DATE preserved, got: {sql_age}"
+        );
+        assert_select_only(&sql_age).unwrap();
+
+        let sql_extract = compile_semantic_sql_with_binds(
+            &docs,
+            "SELECT EXTRACT(YEAR FROM order_date) AS y, COUNT(*) AS n \
+             FROM sales GROUP BY EXTRACT(YEAR FROM order_date)",
+            Some("finance"),
+            None,
+            DialectProfile::Sqlite,
+        )
+        .unwrap();
+        assert!(
+            sql_extract.contains("strftime('%Y'"),
+            "expected EXTRACT→strftime on SQLite, got: {sql_extract}"
+        );
+        assert_select_only(&sql_extract).unwrap();
+
+        let sql_pg = compile_semantic_sql_with_binds(
+            &docs,
+            "SELECT YEAR(order_date) AS y, COUNT(*) AS n FROM sales GROUP BY YEAR(order_date)",
+            Some("finance"),
+            None,
+            DialectProfile::Postgres,
+        )
+        .unwrap();
+        assert!(
+            sql_pg.to_ascii_uppercase().contains("EXTRACT(YEAR FROM"),
+            "expected PG YEAR→EXTRACT, got: {sql_pg}"
+        );
+        assert_select_only(&sql_pg).unwrap();
+    }
+
+    #[test]
     fn compiles_metadata_metric_and_segment_subqueries_and_rejects_adhoc_subqueries() {
         let mut docs = example_docs();
         docs.push(json!({

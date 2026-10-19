@@ -359,9 +359,6 @@ def _bucket_from_error(msg: str) -> tuple[FailureBucket, str] | None:
         return "semantic_layer", "JOIN 측에 쓸 metric/ad-hoc 프로젝션 부족(메타·질의 표면)"
     if "subquery not allowed" in m:
         return "semantic_layer", "서브쿼리 불가 — 사전 집계 metric/view 등록 필요"
-    if "unsupported metric expression form: extract" in m:
-        return "semantic_layer", "EXTRACT 미지원 — date_trunc용 date dimension/metric 등록 필요"
-
     # sql-mcp code — only clear server-side failures (not agent-authored junk SQL)
     if "internal" in m or "panic" in m:
         return "sql_mcp_code", "서버 내부 오류"
@@ -377,9 +374,9 @@ def _bucket_from_error(msg: str) -> tuple[FailureBucket, str] | None:
     if "ungrouped cube join without select distinct" in m:
         return "dw_agent", "ungrouped Cube JOIN에 SELECT DISTINCT 또는 GROUP BY 누락"
     if "function not allowed" in m and any(
-        x in m for x in ("divide", "subtract", "multiply", "year", "month", "strftime")
+        x in m for x in ("subtract", "multiply", "timestampdiff", "dateadd")
     ):
-        return "dw_agent", "물리 함수(DIVIDE/YEAR/strftime) 사용 — `/`·date_trunc 등으로 대체 가능"
+        return "dw_agent", "비허용 함수 사용 — D25 날짜 편의·DIVIDE·date_trunc로 대체"
     if "qualifier" in m and "does not match" in m:
         return "dw_agent", "물리 테이블 alias(T1 등) 사용 — FROM cube name만 허용"
     if "select *" in m:

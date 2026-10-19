@@ -1,15 +1,16 @@
-//! Target SQL dialect emit (D21).
+//! Target SQL dialect emit (D21·D25).
 //!
 //! Semantic compile emits **canonical** physical SQL: ANSI `"…"` identifiers and
-//! Postgres-shaped helpers such as `date_trunc`. At the execution boundary,
+//! Postgres-shaped helpers such as `date_trunc` plus D25 temporal helpers
+//! (`CURRENT_DATE`/`NOW`/`DATEDIFF`/`YEAR`/`EXTRACT`). At the execution boundary,
 //! `DialectProfile` rewrites date functions, adapts quotes, and wraps row limits.
 //! Compile Steps 1–7 stay engine-neutral. Ad-hoc OLAP only — no execution bind rewrite.
 
 use std::ops::ControlFlow;
 
 use sqlparser::ast::{
-    BinaryOperator, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, Ident,
-    VisitMut, VisitorMut, Value as AstValue,
+    BinaryOperator, DateTimeField, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments,
+    Ident, VisitMut, VisitorMut, Value as AstValue,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
@@ -72,12 +73,20 @@ impl DialectProfile {
         Ok(self.adapt_compiled_sql(&rewritten))
     }
 
-    /// Rewrite canonical `date_trunc('unit', expr)`, safe `/`, and dialect helpers.
-    /// Postgres skips the walk only when there is no `DIVIDE(` and no `/` (no-op path).
+    /// Rewrite canonical `date_trunc`, safe `/`, and D25 temporal helpers.
+    /// Postgres skips the walk when none of those triggers appear.
     /// Unsupported `date_trunc` units → `validation`.
     pub fn rewrite_date_trunc(self, sql: &str) -> Result<String, AppError> {
         let lower = sql.to_ascii_lowercase();
-        if self == Self::Postgres && !lower.contains("divide(") && !lower.contains('/') {
+        let needs_pg_walk = lower.contains('/')
+            || lower.contains("divide(")
+            || lower.contains("now(")
+            || lower.contains("datediff(")
+            || lower.contains("year(")
+            || lower.contains("month(")
+            || lower.contains("day(")
+            || lower.contains("extract(");
+        if self == Self::Postgres && !needs_pg_walk {
             return Ok(sql.to_string());
         }
         let dialect = GenericDialect {};
@@ -217,31 +226,35 @@ impl VisitorMut for DateTruncRewriter {
         match expr {
             Expr::Function(func) => {
                 let fname = func.name.to_string().to_ascii_lowercase();
-                if fname == "date_trunc" {
-                    match rewrite_date_trunc_fn(self.profile, func) {
-                        Ok(new_expr) => *expr = new_expr,
-                        Err(e) => {
-                            self.err = Some(e);
-                            return ControlFlow::Break(());
-                        }
-                    }
+                let rewritten = if fname == "date_trunc" {
+                    Some(rewrite_date_trunc_fn(self.profile, func))
                 } else if fname == "divide" {
-                    match rewrite_divide_fn(self.profile, func) {
+                    Some(rewrite_divide_fn(self.profile, func))
+                } else if fname == "now" {
+                    Some(rewrite_now_fn(self.profile, func))
+                } else if fname == "datediff" {
+                    Some(rewrite_datediff_fn(self.profile, func))
+                } else if matches!(fname.as_str(), "year" | "month" | "day") {
+                    Some(rewrite_ymd_fn(self.profile, &fname, func))
+                } else {
+                    None
+                };
+                if let Some(result) = rewritten {
+                    match result {
                         Ok(new_expr) => *expr = new_expr,
                         Err(e) => {
                             self.err = Some(e);
                             return ControlFlow::Break(());
                         }
                     }
-                } else if self.profile == DialectProfile::Sqlite
-                    && matches!(fname.as_str(), "year" | "month" | "day")
-                {
-                    match rewrite_sqlite_ymd_fn(&fname, func) {
-                        Ok(new_expr) => *expr = new_expr,
-                        Err(e) => {
-                            self.err = Some(e);
-                            return ControlFlow::Break(());
-                        }
+                }
+            }
+            Expr::Extract { field, expr: inner, .. } if self.profile == DialectProfile::Sqlite => {
+                match rewrite_sqlite_extract(field.clone(), inner) {
+                    Ok(new_expr) => *expr = new_expr,
+                    Err(e) => {
+                        self.err = Some(e);
+                        return ControlFlow::Break(());
                     }
                 }
             }
@@ -362,7 +375,58 @@ fn rewrite_divide_fn(profile: DialectProfile, func: &Function) -> Result<Expr, A
     Ok(rewrite_safe_divide(profile, &num, &den))
 }
 
-fn rewrite_sqlite_ymd_fn(fname: &str, func: &Function) -> Result<Expr, AppError> {
+fn rewrite_now_fn(profile: DialectProfile, func: &Function) -> Result<Expr, AppError> {
+    // NOW() / NOW — Oracle has no NOW; others keep identity.
+    match &func.args {
+        FunctionArguments::None | FunctionArguments::List(_) => {}
+        FunctionArguments::Subquery(_) => {
+            return Err(AppError::Validation(
+                "NOW does not accept subquery arguments".into(),
+            ));
+        }
+    }
+    if let FunctionArguments::List(list) = &func.args {
+        if !list.args.is_empty() {
+            return Err(AppError::Validation(
+                "NOW requires zero arguments".into(),
+            ));
+        }
+    }
+    match profile {
+        DialectProfile::Oracle => Ok(parse_expr_fragment("CURRENT_TIMESTAMP")),
+        DialectProfile::Postgres | DialectProfile::Mysql | DialectProfile::Sqlite => {
+            Ok(Expr::Function(func.clone()))
+        }
+    }
+}
+
+fn rewrite_datediff_fn(profile: DialectProfile, func: &Function) -> Result<Expr, AppError> {
+    let FunctionArguments::List(list) = &func.args else {
+        return Err(AppError::Validation(
+            "DATEDIFF requires (end, start) arguments".into(),
+        ));
+    };
+    if list.args.len() != 2 {
+        return Err(AppError::Validation(
+            "DATEDIFF requires exactly two arguments (end, start)".into(),
+        ));
+    }
+    let end = unnamed_arg_expr(&list.args[0])?.to_string();
+    let start = unnamed_arg_expr(&list.args[1])?.to_string();
+    let replacement = match profile {
+        DialectProfile::Mysql => format!("DATEDIFF({end}, {start})"),
+        DialectProfile::Postgres => {
+            format!("(CAST({end} AS date) - CAST({start} AS date))")
+        }
+        DialectProfile::Sqlite => {
+            format!("CAST(julianday({end}) - julianday({start}) AS INTEGER)")
+        }
+        DialectProfile::Oracle => format!("(TRUNC({end}) - TRUNC({start}))"),
+    };
+    Ok(parse_expr_fragment(&replacement))
+}
+
+fn rewrite_ymd_fn(profile: DialectProfile, fname: &str, func: &Function) -> Result<Expr, AppError> {
     let FunctionArguments::List(list) = &func.args else {
         return Err(AppError::Validation(format!(
             "{fname} requires 1 argument"
@@ -374,17 +438,50 @@ fn rewrite_sqlite_ymd_fn(fname: &str, func: &Function) -> Result<Expr, AppError>
         )));
     }
     let arg_sql = unnamed_arg_expr(&list.args[0])?.to_string();
-    let replacement = match fname {
-        "year" => format!("CAST(SUBSTR(CAST({arg_sql} AS TEXT), 1, 4) AS INTEGER)"),
-        "month" => format!(
-            "CAST(COALESCE(strftime('%m', {arg_sql}), SUBSTR(REPLACE(CAST({arg_sql} AS TEXT), '-', ''), 5, 2)) AS INTEGER)"
-        ),
-        "day" => format!(
-            "CAST(COALESCE(strftime('%d', {arg_sql}), SUBSTR(REPLACE(CAST({arg_sql} AS TEXT), '-', ''), 7, 2)) AS INTEGER)"
-        ),
+    let field = match fname {
+        "year" => "YEAR",
+        "month" => "MONTH",
+        "day" => "DAY",
         _ => unreachable!(),
     };
+    let replacement = match profile {
+        DialectProfile::Mysql => {
+            // Native YEAR/MONTH/DAY — keep identity.
+            return Ok(Expr::Function(func.clone()));
+        }
+        DialectProfile::Postgres | DialectProfile::Oracle => {
+            format!("EXTRACT({field} FROM {arg_sql})")
+        }
+        DialectProfile::Sqlite => match fname {
+            "year" => format!("CAST(SUBSTR(CAST({arg_sql} AS TEXT), 1, 4) AS INTEGER)"),
+            "month" => format!(
+                "CAST(COALESCE(strftime('%m', {arg_sql}), SUBSTR(REPLACE(CAST({arg_sql} AS TEXT), '-', ''), 5, 2)) AS INTEGER)"
+            ),
+            "day" => format!(
+                "CAST(COALESCE(strftime('%d', {arg_sql}), SUBSTR(REPLACE(CAST({arg_sql} AS TEXT), '-', ''), 7, 2)) AS INTEGER)"
+            ),
+            _ => unreachable!(),
+        },
+    };
     Ok(parse_expr_fragment(&replacement))
+}
+
+fn rewrite_sqlite_extract(field: DateTimeField, inner: &Expr) -> Result<Expr, AppError> {
+    let arg_sql = inner.to_string();
+    let fmt = match field {
+        DateTimeField::Year => "%Y",
+        DateTimeField::Month => "%m",
+        DateTimeField::Day => "%d",
+        DateTimeField::Hour => "%H",
+        other => {
+            return Err(AppError::Validation(format!(
+                "EXTRACT field '{other}' not supported for sqlite"
+            )));
+        }
+    };
+    Ok(parse_expr_fragment(&format!(
+        "CAST(strftime('{fmt}', {arg_sql}) AS INTEGER)"
+    )))
 }
 
 fn rewrite_sqlite_date_trunc_for_literal(
@@ -883,5 +980,83 @@ mod tests {
             sql.contains("* 1.0"),
             "expected float promote on numerator, got: {sql}"
         );
+    }
+
+    #[test]
+    fn rewrite_d25_temporal_helpers_per_dialect() {
+        let year_sql = r#"SELECT YEAR("d") AS "y" FROM "t""#;
+        let pg_year = DialectProfile::Postgres.emit_physical_sql(year_sql).unwrap();
+        assert!(
+            pg_year.to_ascii_uppercase().contains("EXTRACT(YEAR FROM"),
+            "expected PG YEAR→EXTRACT, got: {pg_year}"
+        );
+        let ora_year = DialectProfile::Oracle.emit_physical_sql(year_sql).unwrap();
+        assert!(
+            ora_year.to_ascii_uppercase().contains("EXTRACT(YEAR FROM"),
+            "expected Oracle YEAR→EXTRACT, got: {ora_year}"
+        );
+        let mysql_year = DialectProfile::Mysql.emit_physical_sql(year_sql).unwrap();
+        assert!(
+            mysql_year.to_ascii_uppercase().contains("YEAR("),
+            "expected MySQL YEAR identity, got: {mysql_year}"
+        );
+
+        let now_sql = r#"SELECT NOW() AS "ts" FROM "t""#;
+        let ora_now = DialectProfile::Oracle.emit_physical_sql(now_sql).unwrap();
+        assert!(
+            ora_now.to_ascii_uppercase().contains("CURRENT_TIMESTAMP"),
+            "expected Oracle NOW→CURRENT_TIMESTAMP, got: {ora_now}"
+        );
+        assert!(
+            !ora_now.to_ascii_uppercase().contains("NOW("),
+            "Oracle must not keep NOW(), got: {ora_now}"
+        );
+        let pg_now = DialectProfile::Postgres.emit_physical_sql(now_sql).unwrap();
+        assert!(
+            pg_now.to_ascii_uppercase().contains("NOW"),
+            "expected PG NOW identity, got: {pg_now}"
+        );
+
+        let diff_sql = r#"SELECT DATEDIFF(CURRENT_DATE, "d") AS "age" FROM "t""#;
+        let mysql_diff = DialectProfile::Mysql.emit_physical_sql(diff_sql).unwrap();
+        assert!(
+            mysql_diff.to_ascii_uppercase().contains("DATEDIFF("),
+            "expected MySQL DATEDIFF identity, got: {mysql_diff}"
+        );
+        let pg_diff = DialectProfile::Postgres.emit_physical_sql(diff_sql).unwrap();
+        let pg_diff_u = pg_diff.to_ascii_uppercase();
+        assert!(
+            pg_diff_u.contains("CAST(")
+                && pg_diff_u.contains(" AS DATE)")
+                && pg_diff.contains(" - "),
+            "expected PG date subtraction, got: {pg_diff}"
+        );
+        let lite_diff = DialectProfile::Sqlite.emit_physical_sql(diff_sql).unwrap();
+        assert!(
+            lite_diff.to_ascii_lowercase().contains("julianday"),
+            "expected SQLite julianday DATEDIFF, got: {lite_diff}"
+        );
+        let ora_diff = DialectProfile::Oracle.emit_physical_sql(diff_sql).unwrap();
+        assert!(
+            ora_diff.to_ascii_uppercase().contains("TRUNC("),
+            "expected Oracle TRUNC DATEDIFF, got: {ora_diff}"
+        );
+
+        let extract_sql = r#"SELECT EXTRACT(YEAR FROM "d") AS "y" FROM "t""#;
+        let lite_ex = DialectProfile::Sqlite.emit_physical_sql(extract_sql).unwrap();
+        assert!(
+            lite_ex.contains("strftime('%Y'") && lite_ex.to_ascii_uppercase().contains("AS INTEGER"),
+            "expected SQLite EXTRACT→strftime, got: {lite_ex}"
+        );
+        let pg_ex = DialectProfile::Postgres.emit_physical_sql(extract_sql).unwrap();
+        assert!(
+            pg_ex.to_ascii_uppercase().contains("EXTRACT(YEAR FROM"),
+            "expected PG EXTRACT identity, got: {pg_ex}"
+        );
+
+        let bad = DialectProfile::Postgres
+            .emit_physical_sql(r#"SELECT DATEDIFF("a") FROM "t""#)
+            .unwrap_err();
+        assert!(matches!(bad, AppError::Validation(_)));
     }
 }

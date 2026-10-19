@@ -300,12 +300,8 @@ pub fn sample_sql(
         sql.push_str(w);
         sql.push(')');
     }
-    // where_extra / expressions may contain canonical date_trunc.
-    if sql.to_ascii_lowercase().contains("date_trunc") {
-        dialect.rewrite_date_trunc(&sql)
-    } else {
-        Ok(sql)
-    }
+    // where_extra / expressions may contain canonical date helpers (D21·D25).
+    dialect.emit_physical_sql(&sql)
 }
 
 #[cfg(test)]
