@@ -508,7 +508,7 @@
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
-          "description": "aggregation이 group일 때 GROUP BY에 쓰는 view 컬럼.",
+          "description": "aggregation이 group일 때, 질의에 GROUP BY/차원 프로젝션이 없으면 쓰는 기본 GROUP BY 축(view 컬럼). 허용목록이 아니며 질의가 다른 축을 주면 override(D24).",
           "items": { "$ref": "#/$defs/name" }
         },
         "filter": {

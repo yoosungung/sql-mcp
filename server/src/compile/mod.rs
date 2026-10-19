@@ -332,13 +332,6 @@ pub(crate) fn validate_member_or_scalar_expr(
     Ok(())
 }
 
-pub(crate) fn extract_member_idents(expr: &str, members: &HashSet<String>) -> Result<Vec<String>, AppError> {
-    if members.contains(expr) {
-        return Ok(vec![expr.to_string()]);
-    }
-    Ok(extract_idents(expr)?.into_iter().collect())
-}
-
 /// D23 Ungrouped (detail) mode: project dimensions/facts/scalars as row-level columns (no aggregation).
 pub(crate) fn compile_cube_query_ungrouped(
     docs: &[Value],
@@ -696,8 +689,8 @@ pub fn compile_cube_query(
         metric_docs.push((m_name.as_str(), m_doc, m_expr));
     }
 
-    // Validate that every active dimension is allowed by each named group metric's own group_by.
-    let check_dims_against_named_metrics = |dims: &[String]| -> Result<(), AppError> {
+    // D24: metric.group_by is default grain only (not an allowlist). Validate members/scalars/windows.
+    let validate_active_dims = |dims: &[String]| -> Result<(), AppError> {
         for d in dims {
             if contains_window_sql(d)? {
                 return Err(AppError::Validation(
@@ -705,26 +698,16 @@ pub fn compile_cube_query(
                 ));
             }
             validate_member_or_scalar_expr(cube, &members, d, role)?;
-            let dim_ids = extract_member_idents(d, &members)?;
-            for (_, m_gb) in &named_metric_gbs {
-                for id in &dim_ids {
-                    if !m_gb.iter().any(|g| g == id) {
-                        return Err(AppError::Validation(format!(
-                            "dimension {id} not in metric group_by"
-                        )));
-                    }
-                }
-            }
         }
         Ok(())
     };
 
     // Determine effective group_by dimensions.
     let active_gb: Vec<String> = if let Some(explicit) = &spec.explicit_group_by {
-        check_dims_against_named_metrics(explicit)?;
+        validate_active_dims(explicit)?;
         explicit.clone()
     } else if !spec.dimensions.is_empty() {
-        check_dims_against_named_metrics(&spec.dimensions)?;
+        validate_active_dims(&spec.dimensions)?;
         spec.dimensions.clone()
     } else if !named_metric_gbs.is_empty() && !has_adhoc_metrics {
         let first_gb = &named_metric_gbs[0].1;

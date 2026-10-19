@@ -45,7 +45,7 @@
 
 - 기존 cube가 있으면 **덮어쓰지 말고** 멤버·metric·segment를 추가·수정한다.
 - 같은 식·같은 필터면 이름을 하나로 통합한다 (질문 문구를 name에 넣지 말 것).
-- `aggregation=group` metric의 `group_by`는 컴파일러가 질의 시점의 GROUP BY 차원을 검증하는 **허용 목록(allowlist)**이자 미지정 시 기본 축이다. 질문마다 다른 차원으로 슬라이싱되는 범용 metric이면, `group_by`를 임의 1~2개 차원으로 좁히지 말고 **해당 그레인에서 유효한 모든 컬럼 기반 dimension view 컬럼**을 `group_by`에 넣는다(`dimension X not in metric group_by` 에러 방지).
+- `aggregation=group` metric의 `group_by`는 질의에 축이 없을 때 쓰는 **기본 grain**이다(D24, 허용목록 아님). bare `SELECT metric` 결과에 맞는 **기본 리포트 축만** 넣고, 질문마다 다른 슬라이스는 시맨틱 SQL의 `GROUP BY`/차원 프로젝션으로 override한다.
 - segment `filter`는 cube **멤버 이름** 기준 boolean 한 식(필요 시 `IN (SELECT …)`/`EXISTS (SELECT …)` 포함 가능).
 - 이름 우선권·식 제한은 cube 스킬 contract와 동일.
 
@@ -64,6 +64,6 @@
 - [ ] 후보마다: 재사용성(다른 질문/지식에서도 의미 있음) 확인
 - [ ] metric/segment 외부 식에 물리 SQL 별칭 잔재(`T1.` 등) 없음
 - [ ] 식별자가 대상 cube의 dim/fact/view 컬럼 규칙과 맞음
-- [ ] `aggregation=group` metric의 `group_by`가 슬라이싱 가능한 모든 유효 차원 view 컬럼을 포함함
+- [ ] `aggregation=group` metric의 `group_by`가 기본으로 쓸 리포트 축만 담음(차원 전부 나열하지 않음)
 - [ ] 질문 건수 ≫ 신규 metric/segment 건수 (과적합 아님)
 - [ ] eval·실행 비교를 이 산출의 완료 조건으로 쓰지 않음
