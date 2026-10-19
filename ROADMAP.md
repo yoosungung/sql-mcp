@@ -58,7 +58,7 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 | D21 | 타깃 SQL 방언(dialect) | **결정: Cube식 DialectProfile emit.** 컴파일은 엔진 중립(canonical ANSI `"…"` · `date_trunc`). emit: `date_trunc`→엔진별 식 · quote adapt · `wrap_row_limit`. **비채택:** 자유 SQL 트랜스파일 · `sqlparser` Display 방언 위임 · **실행 bind 스타일 rewrite**(ad-hoc OLAP만, 드라이버 prepared bind 경로 없음). 상세 [ARCHITECTURE.md](ARCHITECTURE.md) · [server/DESIGN.md](server/DESIGN.md) · [server/spec.md](server/spec.md) |
 | D22 | 물리 vs 시맨틱 식별자 | **결정: 부분 완화.** `$defs/name`(시맨틱) 유지 · `$defs/physical_ident`(물리 db/schema/table/컬럼·mapping·join on·as_code key/value) 분리. view 컬럼·cube 멤버는 시맨틱 `name`만. 물리명에 공백·기호가 있으면 view 별칭 + `mappings.column`에 물리 유지. `quote_ident`는 동일 허용 집합. |
 | D23 | 시맨틱 SELECT 모드 | **결정: 그레인 기반 2-모드(Grouped vs Ungrouped).** **(1) Grouped(집계):** 명명 metric · ad-hoc 집계(`sum/count/avg/min/max`) · metric 파생 연산 **동일 SELECT 혼용 허용** + 차원 스칼라 식(`date_trunc` 등) + 차원-only `GROUP BY`(+ `HAVING`/`ORDER BY` 집계식) 허용. grain = 명시 `GROUP BY`(별칭·위치·식 포함) / 프로젝션 차원 / 명명 metric `group_by` 또는 전역 집계. 명명 metric은 활성 차원이 자신의 `group_by`에 속하는지 개별 검증, ad-hoc은 전 차원 허용. 같은 `target` cube JOIN 허용(metric 없는 JOIN 측은 참조 차원 `GROUP BY` 서브쿼리로 팬아웃 방지). **(2) Ungrouped(행 상세):** metric·집계·`GROUP BY`·`HAVING` 없는 dim/fact(+비집계 스칼라 식) 프로젝션. `SELECT DISTINCT` 보존. 비-`DISTINCT` 상세 조회는 요약 뷰(`summary: true`) 우회(원천 뷰 선택) 및 다대다 팬아웃(Chasm Trap) 방지를 위해 cube JOIN 거절. 전 모드/절에서 fact·dim·metric·segment `role` 및 `encryption` 직접 검사. |
-| D24 | metric `group_by` 의미 | **제안(미합의): 명시적 슬라이스 허용목록(allowlist)만.** 필드명 `group_by` 유지. 질의 grain은 **항상** 호출자 SQL(`GROUP BY` / 프로젝션 차원)이 정하고, 메타 `group_by`는 “이 metric과 함께 쓸 수 있는 차원 ⊆ 목록” 검증만 한다. 축 미지정 시 **전역 집계**(빈 `GROUP BY`) — 목록 전체를 기본 grain으로 쓰지 않는다. Cube multi-stage `group_by`(고정 grain) · MetricFlow linkable 유도 · 필수축(`required_group_by`)과 구분. 상세는 아래 «후속 — metric group_by = 슬라이스 allowlist (D24)». |
+| D24 | metric `group_by` 의미 | **제안(미합의): 기본 grain만. 허용목록(allowlist) 폐기.** 필드명 `group_by` 유지. 질의에 `GROUP BY`/프로젝션 차원이 없으면 명명 metric `group_by`(복수면 교집합)를 유효 grain으로 쓴다. 질의가 축을 명시하면 **그 축을 따르고**, `group_by` 밖 차원으로 슬라이스해도 거절하지 않는다(`dimension X not in metric group_by` 제거). Cube multi-stage `group_by`(고정 grain·질의 무시)와 다름 — 여기는 **기본값**일 뿐 override 가능. 상세는 아래 «후속 — metric group_by = 기본 grain (D24)». |
 
 (제거: D5 세션형 Streamable HTTP, D10/D11 Frontend. stdio는 로컬용으로 복원)
 
@@ -148,56 +148,56 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 - [x] **Ungrouped 상세 모드 가드:** 비집계 스칼라 식(`a * b`, `a / b` 등) 및 `SELECT DISTINCT` 지원 · 비-`DISTINCT` 상세 조회 시 요약 뷰(`summary: true`) 우회(원천 뷰 라우팅) · 다대다 팬아웃(Chasm Trap) 방지를 위해 비-`DISTINCT` Ungrouped Cube JOIN 거절(Grouped Cube JOIN에서 metric 없는 측은 참조 차원 `GROUP BY` 서브쿼리로 팬아웃 방지)
 - [x] 계약·파이프라인 문서(`ARCHITECTURE.md` · `server/spec.md` · `server/DESIGN.md`)와 TDD
 
-### 후속 — metric `group_by` = 슬라이스 allowlist (D24)
+### 후속 — metric `group_by` = 기본 grain (D24)
 
 #### 현황(문제)
 
 지금 `metric.group_by`는 **두 역할**을 겸한다.
 
-1. **Allowlist:** 활성 차원 ⊆ `group_by` (컴파일러 `dimension X not in metric group_by`)
-2. **Default grain:** 질의에 `GROUP BY`/프로젝션 차원이 없고 명명 metric만 있으면, 복수 metric `group_by`의 **교집합 전체**를 유효 `GROUP BY`로 씀 (`compile/mod.rs` `active_gb`)
+1. **Allowlist:** 활성 차원 ⊆ `group_by` (컴파일러 `dimension X not in metric group_by`) — 목록 밖 슬라이스 거절
+2. **Default grain:** 질의에 `GROUP BY`/프로젝션 차원이 없고 명명 metric만 있으면, 복수 metric `group_by`의 **교집합**을 유효 `GROUP BY`로 씀 (`compile/mod.rs` `active_gb`)
 
-문서도 갈라져 있다: skills/contract는 “허용목록+기본축”, `ARCHITECTURE.md`·`document.schema.json`은 “GROUP BY에 쓰는 view 컬럼”. Cube의 동명 `group_by`는 multi-stage **고정 grain**이라 혼동 여지가 크다.
+skills/contract는 “허용목록(+기본축)”으로 적혀 있어, 범용 metric에 **그레인 호환 차원 전체**를 `group_by`에 넣으라는 부담이 생긴다. 원 의도는 **기본 집계 축**이지 슬라이스 상한이 아니다.
 
 #### 목표
 
-`group_by`를 **명시적 슬라이스 허용목록**으로 단일화한다. “이 metric을 어떤 차원으로 자를 수 있는가”만 메타에 두고, **실제로 어떻게 자를지(grain)는 시맨틱 SQL이 명시**한다.
+`group_by`를 **기본 grain 전용**으로 단일화하고, **허용목록 검증을 제거**한다. bare `SELECT metric`은 메타 기본축으로 묶고, 질의가 다른 차원으로 자르면 그대로 허용한다(cube 멤버·role·encryption 가드만 적용).
 
 #### 옵션
 
 | 옵션 | 요지 | 장점 | 단점 |
 |------|------|------|------|
-| **A (권장)** | 필드명 `group_by` 유지. 의미=allowlist only. 축 미지정 → 전역 집계. 기본 grain 필드 없음 | 스키마 변경 최소 · Cube 고정-grain과 이름만 같고 역할이 문서상 분리됨 · 질의 의 grain과 일치 | bare `SELECT metric` 행동 변경(브레이킹) · 기존 메타가 “기본축”으로 쓰이던 기대 깨짐 |
-| B | A + 선택 필드 `default_group_by` (기본축 분리) | 브레이킹을 선택적으로 흡수 | 필드 2개 · 작성 부담 · skills/스키마/검증 복잡도↑ |
-| C | 필드 개명(`slice_by` / `allowed_dimensions`) + allowlist only | Cube `group_by`와 이름 충돌 제거 | 전 메타·예시·에이전트 JSON 대량 rename · 이득 대비 침습 큼 |
-| D (비채택) | allowlist 제거, MetricFlow식 linkable만 유도 | 작성 부담↓ | 그레인 가드 약화 · 현 컴파일러/등록 모델과 거리 큼 |
+| **A (권장)** | 필드명 `group_by` 유지. 의미=**default grain only**. allowlist 검증 삭제. 질의 축 있으면 override | 스키마 변경 최소 · bare metric UX 유지 · 범용 metric에 차원 전부 나열 불필요 · ARCHITECTURE “GROUP BY에 쓰는 컬럼”과 정합 | 잘못된 그레인 슬라이스를 메타로 막지 못함(질의·요약뷰·반가산 가드에 위임) |
+| B | 필드 개명 `default_group_by` + allowlist 삭제 | 이름과 의미 일치 | rename 침습 · 이득 대비 큼 |
+| C (비채택) | allowlist만 남기고 default grain 제거 | — | **요청과 반대** |
+| D (비채택) | Cube식 고정 grain(질의 차원 무시) | — | override 불가 · 현 D23과 충돌 |
 
-**권장: A.** 필수축이 필요해지면 이후 `required_group_by`(MetricFlow #2107류)를 **별도**로 검토 — allowlist와 반대 방향(must vs may)이므로 D24에 섞지 않는다.
+**권장: A.** Cube multi-stage `group_by`/`grain.keep_only`(고정)와 문서에서 한 줄로 구분한다.
 
-#### 제안 계약(합의 후 ARCHITECTURE §1/§4에 반영)
+#### 제안 계약(합의 후 ARCHITECTURE §1/§4·D23 문구 수정)
 
-- `aggregation=group` ⇒ `group_by: string[]` **필수**, 각 원소 ⊆ 연결 view 컬럼(현 links 검증 유지).
-- 의미: 이 metric과 함께 `GROUP BY`/차원 프로젝션에 쓸 수 있는 **허용 차원 집합**. 질의 활성 차원의 식별자 ⊆ 목록(교집합이 아니라 **각** named metric 목록에 속해야 함 — 현 검증 유지).
-- **Default grain 제거:** 명시 `GROUP BY`도 프로젝션 차원도 없으면 `active_gb = []`(전역 집계). 복수 metric이어도 교집합을 자동 GROUP BY로 펼치지 않는다.
-- ad-hoc 집계: 계속 전 차원 허용(또는 cube dim 전체 allowlist 가상 — 현 `materialize_adhoc_metrics`와 동등). D24는 **명명 metric** 메타 의미만 바꾼다.
-- `rollup`/`cube`/`grouping_sets`: `group_by` 필드 금지(현 스키마) 유지. 슬라이스 목록과 SQL 그룹핑 확장자는 별개.
-- 빈 배열: 스키마 `minItems: 1` 유지(전역-only metric은 축을 쓰지 않는 질의만 허용하려면 별도 합의; 기본은 “최소 1개 슬라이스 가능 차원” 작성 강제).
+- `aggregation=group` ⇒ `group_by: string[]` **필수**, 각 원소 ⊆ 연결 view 컬럼(저장 시 links 검증 유지).
+- 의미: 질의에 그룹 축이 없을 때 쓰는 **기본 `GROUP BY` 축**. 복수 명명 metric이면 각 `group_by`의 **교집합**(현 동작 유지).
+- **Allowlist 폐기:** 명시 `GROUP BY`/프로젝션 차원이 `group_by`에 없어도 **거절하지 않는다.** 활성 차원은 cube dimension/fact(+스칼라 식) 존재·`role`·`encryption`만 검사.
+- grain 결정 우선순위(명명 metric Grouped): 명시 `GROUP BY` → 프로젝션 차원 → (adhoc 없으면) metric `group_by` 교집합 → 전역 집계.
+- ad-hoc 집계: 전 차원 허용 유지. ephemeral metric의 넓은 `group_by`는 default grain용으로만 의미 있게 정리(allowlist로 쓰지 않음).
+- `rollup`/`cube`/`grouping_sets`: `group_by` 필드 금지(현 스키마) 유지.
 
 #### 구현 순서 (TDD · 합의 후)
 
-1. **문서(계약 먼저):** `ARCHITECTURE.md` metric `group_by` 문단 · D23 grain 문장의 “명명 metric `group_by` 또는 전역 집계” → “명시 grain 없으면 전역 집계; `group_by`는 allowlist” · `document.schema.json` description · `server/spec.md` Step 2 Group By 결정 · skills `semantic-cube-metric-segment` / `semantic-from-qa` / `semantic-register` contract · 예시 JSON은 목록을 “슬라이스 가능 차원 전체”로 재기술(값 자체는 넓게 유지 가능).
-2. **실패 테스트:** `SELECT <named_metric> FROM cube`(+group_by에 여러 차원)가 **더 이상** 그 목록으로 `GROUP BY`하지 않고 전역 집계 SQL을 내는지 · `SELECT dim, metric … GROUP BY dim`에서 dim∉목록이면 기존처럼 거절 · dim∈목록이면 통과.
-3. **구현:** `compile/mod.rs`의 `else if !named_metric_gbs.is_empty() && !has_adhoc_metrics { common_gb… }` 분기를 제거(또는 빈 vec). allowlist 검증 루프는 유지. ad-hoc ephemeral metric의 `group_by: allowed_gb`는 “가상 allowlist”로 두되 default grain 경로에 의존하지 않게 정리.
-4. **회귀:** pipeline/compile 골든 · BIRD/client 예시 질의 중 bare metric 의존분 점검 · `describe_table`이 `group_by`를 그대로 노출하는지는 스키마 설명만 갱신.
-5. **메타 마이그레이션 가이드(문서):** 기존 JSON의 `group_by` 배열은 **삭제하지 말고** 허용 슬라이스로 재해석. “기본 리포트 축”이 필요하면 질의에 `GROUP BY`/`SELECT dim, metric`을 명시. 좁은 `group_by`(1~2개)로 작성된 범용 metric은 슬라이스 실패가 나므로 skills 가이드대로 그레인 호환 차원 전체를 채우도록 재등록.
+1. **문서(계약 먼저):** `ARCHITECTURE.md` — “`group`이면 `group_by`에 **기본** GROUP BY 축”; D23에서 “활성 차원이 `group_by`에 속하는지 개별 검증” **삭제**. skills `semantic-cube-metric-segment` / `semantic-from-qa`의 “허용목록·차원 전체 포함” 가이드를 **기본 리포트 축만 기입**으로 교체. `document.schema.json` description · `server/spec.md` Group By 결정 문단 정합.
+2. **실패 테스트:** `group_by: [region]`인 metric에 `SELECT other_dim, metric … GROUP BY other_dim`이 **통과**하는지(지금 실패). bare `SELECT metric`은 여전히 `GROUP BY region`(또는 교집합)인지.
+3. **구현:** `compile/mod.rs`의 `check_dims_against_named_metrics` / `dimension X not in metric group_by` 경로 제거. default-grain 분기(`named_metric_gbs` 교집합)는 **유지**.
+4. **회귀:** allowlist를 전제로 한 테스트·골든 수정 · 요약뷰/반가산·role/encryption 가드는 그대로.
+5. **메타 가이드:** 기존에 “슬라이스 가능 차원 전부”를 넣었던 `group_by`는 **기본으로 쓰고 싶은 축만** 남기도록 재작성 권고(넓혀 둔 배열은 해롭지 않으나 bare metric이 과다 GROUP BY 됨).
 
 #### 완료 체크리스트
 
-- [ ] D24 합의(권장 A 확정 또는 B/C 채택) 후 위 표를 **결정:** 으로 갱신
-- [ ] 계약·스키마·skills·spec 문구 정합
-- [ ] 컴파일러 default-grain 제거 + allowlist 검증 유지 (TDD)
-- [ ] 예시/타깃 메타·에이전트 가이드에 bare metric = 전역 집계 명시
-- [ ] Cube/MetricFlow와의 의미 차이를 `ARCHITECTURE.md` 또는 skills에 한 줄 교차 참조(동명 `group_by` 혼동 방지)
+- [ ] D24 합의(권장 A) 후 위 표를 **결정:** 으로 갱신
+- [ ] 계약·스키마·skills·spec에서 allowlist 서술 제거 · 기본 grain으로 통일
+- [ ] 컴파일러 allowlist 검증 제거 + default-grain 유지 (TDD)
+- [ ] “범용 metric에 차원 전부 넣기” skills 체크리스트 삭제/교체
+- [ ] Cube 고정-grain과의 차이 한 줄 명시
 
 ## 구현 시 작업 규칙
 
