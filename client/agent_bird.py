@@ -99,8 +99,8 @@ SQL surface rules:
 - Never use `SELECT *`.
 - Grouped: named metrics and/or `SUM`/`COUNT`/`AVG`/`MIN`/`MAX`, with `GROUP BY` / `HAVING` as needed.
 - Ungrouped: SELECT dimensions/facts without `GROUP BY`/`HAVING` (`SELECT DISTINCT` when joining cubes without aggregation).
-- Allowed expressions: `+ - * /` and `date_trunc('year'|'month'|'day', col)`. For ratios prefer `x * 1.0 / y`.
-- Forbidden: CTE/subquery/window functions; `DIVIDE()`/`YEAR()`/`STRFTIME()`/`EXTRACT()`; Postgres-only extras (`::`, `ILIKE`, `FILTER (WHERE …)`).
+- Allowed expressions: `+ - * /`, `date_trunc('year'|'month'|'day'|'hour', col)`, `YEAR`/`MONTH`/`DAY`, `CURRENT_DATE`/`CURRENT_TIMESTAMP`/`NOW()`, `DATEDIFF(end, start)` (days), `EXTRACT(YEAR|MONTH|DAY|HOUR FROM col)`, `DIVIDE(num, den)`. For ratios prefer `DIVIDE` or `x * 1.0 / y`.
+- Forbidden: CTE/subquery/window functions; Postgres-only extras (`::`, `ILIKE`, `FILTER (WHERE …)`).
 - Unqualified member names in GROUP BY (do not write `cube.col` after GROUP BY — `CUBE` is a SQL keyword).
 - Follow Evidence filter literals exactly (use `sample_column` if unsure; escape single quotes as `''`).
 - On validation/parse error, fix the SQL instead of retrying the same query.

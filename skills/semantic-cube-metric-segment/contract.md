@@ -19,7 +19,7 @@
 - 필터·metric·segment·dimension/fact `expression`은 코딩 에이전트가 작성한 **신뢰된 SQL 조각**. 새 DSL 없음.
 - **허용 함수 및 구문:**
   - 기본 집계(`SUM`, `COUNT`, `AVG`, `MIN`, `MAX`) 및 산술·비교·논리·`CASE WHEN`·`CAST`·`COALESCE`/`NULLIF`
-  - 날짜·문자열·비율 편의 스칼라 함수: `date_trunc('year'|'month'|'day'|'hour', x)`, `YEAR(x)`, `MONTH(x)`, `DAY(x)`, `STRFTIME(fmt, x)`, `SUBSTR`/`SUBSTRING`, `LENGTH`, `REPLACE`, `INSTR`, `IFNULL`, `IIF(cond, t, f)`, `DIVIDE(num, den)`(0 나눗셈 안전 실수 나눗셈)
+  - 날짜·문자열·비율 편의 스칼라 함수: `CURRENT_DATE`, `CURRENT_TIMESTAMP`, `NOW()`, `date_trunc('year'|'month'|'day'|'hour', x)`, `YEAR(x)`, `MONTH(x)`, `DAY(x)`, `DATEDIFF(end, start)`(일수), `EXTRACT(YEAR|MONTH|DAY|HOUR FROM x)`, `STRFTIME(fmt, x)`, `SUBSTR`/`SUBSTRING`, `LENGTH`, `REPLACE`, `INSTR`, `IFNULL`, `IIF(cond, t, f)`, `DIVIDE(num, den)`(0 나눗셈 안전 실수 나눗셈)
   - **윈도우 함수 (`OVER (PARTITION BY … ORDER BY …)`):** `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `NTILE`, `PERCENT_RANK`, `CUME_DIST`, `LAG`, `LEAD`, `FIRST_VALUE`, `LAST_VALUE`, `NTH_VALUE` 및 `SUM`/`COUNT`/`AVG`/`MIN`/`MAX` `OVER (...)`
   - **등록된 메타데이터 내 서브쿼리:** `metric.expression`, `metric.filter.expression`, `segment.filter.expression`에는 읽기 전용 `SELECT` 서브쿼리(`(SELECT …)`, `IN (SELECT …)`, `EXISTS (SELECT …)`)를 허용한다. 서브쿼리 내부는 시맨틱 큐브 SQL(컴파일러가 재귀 컴파일) 또는 물리 SQL로 작성할 수 있으며, 외부 스코프의 식별자 치환은 서브쿼리 내부 스코프를 침범하지 않는다. (단, DW 에이전트가 `execute_sql`에 직접 넘기는 ad-hoc `SELECT`/`WHERE`의 서브쿼리는 보안상 거부됨.)
   - 다중 문장·쓰기·쓰기 CTE 거부.

@@ -3,8 +3,8 @@
 use std::collections::HashSet;
 
 use sqlparser::ast::{
-    BinaryOperator, Expr, FunctionArg, FunctionArgExpr, FunctionArguments, SetExpr, Statement,
-    UnaryOperator, WindowType,
+    BinaryOperator, DateTimeField, Expr, FunctionArg, FunctionArgExpr, FunctionArguments, SetExpr,
+    Statement, UnaryOperator, WindowType,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
@@ -15,6 +15,7 @@ const METRIC_FUNCS: &[&str] = &[
     "sum", "count", "avg", "min", "max", "coalesce", "nullif", "greatest", "least", "abs", "round",
     "date_trunc", "lower", "upper", "trim", "substr", "substring", "length", "replace", "instr",
     "ifnull", "iif", "date", "datetime", "strftime", "year", "month", "day", "divide",
+    "current_date", "current_timestamp", "now", "datediff",
 ];
 
 const WINDOW_ONLY_FUNCS: &[&str] = &[
@@ -25,7 +26,14 @@ const WINDOW_ONLY_FUNCS: &[&str] = &[
 const FILTER_FUNCS: &[&str] = &[
     "coalesce", "nullif", "lower", "upper", "trim", "abs", "round", "date_trunc", "substr",
     "substring", "length", "replace", "instr", "ifnull", "iif", "date", "datetime", "strftime",
-    "year", "month", "day", "divide",
+    "year", "month", "day", "divide", "current_date", "current_timestamp", "now", "datediff",
+];
+
+const EXTRACT_FIELDS: &[DateTimeField] = &[
+    DateTimeField::Year,
+    DateTimeField::Month,
+    DateTimeField::Day,
+    DateTimeField::Hour,
 ];
 
 /// Ad-hoc / non-subquery metric `expression`: single scalar/aggregate/window expr (D16).
@@ -402,6 +410,14 @@ fn walk_value_expr_opts(
         }
         Expr::Nested(inner) => walk_value_expr_opts(inner, allow_agg, allow_subquery),
         Expr::Cast { expr, .. } => walk_value_expr_opts(expr, allow_agg, allow_subquery),
+        Expr::Extract { field, expr, .. } => {
+            if !EXTRACT_FIELDS.contains(field) {
+                return Err(AppError::Validation(format!(
+                    "EXTRACT field not allowed: {field}"
+                )));
+            }
+            walk_value_expr_opts(expr, allow_agg, allow_subquery)
+        }
         Expr::Substring {
             expr,
             substring_from,
@@ -683,7 +699,10 @@ fn collect_idents(expr: &Expr, out: &mut HashSet<String>) {
                 out.insert(last.value.clone());
             }
         }
-        Expr::UnaryOp { expr, .. } | Expr::Nested(expr) | Expr::Cast { expr, .. } => {
+        Expr::UnaryOp { expr, .. }
+        | Expr::Nested(expr)
+        | Expr::Cast { expr, .. }
+        | Expr::Extract { expr, .. } => {
             collect_idents(expr, out);
         }
         Expr::Substring {
@@ -911,5 +930,26 @@ mod tests {
             .collect();
         assert_idents_known("sum(iif(status_code = 'PAID', sale_amount, 0))", &known).unwrap();
         assert_idents_known("substring(order_date, 1, 4)", &known).unwrap();
+    }
+
+    #[test]
+    fn accepts_d24_temporal_helpers() {
+        assert_scalar_expr("CURRENT_DATE").unwrap();
+        assert_scalar_expr("CURRENT_TIMESTAMP").unwrap();
+        assert_scalar_expr("NOW()").unwrap();
+        assert_scalar_expr("DATEDIFF(CURRENT_DATE, order_date)").unwrap();
+        assert_scalar_expr("EXTRACT(YEAR FROM order_date)").unwrap();
+        assert_scalar_expr("EXTRACT(MONTH FROM order_date)").unwrap();
+        assert_scalar_expr("EXTRACT(DAY FROM order_date)").unwrap();
+        assert_scalar_expr("EXTRACT(HOUR FROM order_date)").unwrap();
+        assert_scalar_expr("YEAR(CURRENT_DATE) - YEAR(order_date)").unwrap();
+        assert_metric_expr("AVG(DATEDIFF(CURRENT_DATE, order_date))").unwrap();
+        assert_filter_expr("DATEDIFF(CURRENT_DATE, order_date) > 30").unwrap();
+        assert_filter_expr("EXTRACT(YEAR FROM order_date) = 2024").unwrap();
+        assert!(assert_scalar_expr("EXTRACT(WEEK FROM order_date)").is_err());
+
+        let known: HashSet<_> = ["order_date"].into_iter().map(str::to_string).collect();
+        assert_idents_known("EXTRACT(YEAR FROM order_date)", &known).unwrap();
+        assert_idents_known("DATEDIFF(CURRENT_DATE, order_date)", &known).unwrap();
     }
 }

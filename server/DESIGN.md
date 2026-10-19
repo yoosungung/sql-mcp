@@ -58,9 +58,10 @@ Cube.js `*Query` 어댑터와 같은 역할: **생성기 쪽 방언**, 자유 SQ
 
 | 원칙 | 내용 |
 |------|------|
-| 중립 컴파일 | Step 1–7은 **canonical** `"…"` + `date_trunc` — `engine`에 의존하지 않음 |
-| emit만 분기 | `emit_physical_sql` = `date_trunc` rewrite + quote adapt · 샘플 quote · `wrap_row_limit` |
+| 중립 컴파일 | Step 1–7은 **canonical** `"…"` + `date_trunc` + D24 날짜 편의 함수 — `engine`에 의존하지 않음 |
+| emit만 분기 | `emit_physical_sql` = `date_trunc`/날짜 편의 rewrite + quote adapt · 샘플 quote · `wrap_row_limit` |
 | `date_trunc` | 단위 `year`/`month`/`day`/`hour`. MySQL·Oracle·SQLite로 치환, PG는 유지. 그 외 단위 → `validation` |
+| D24 날짜 | `CURRENT_DATE`/`CURRENT_TIMESTAMP` identity · `NOW()`→Oracle `CURRENT_TIMESTAMP` · `DATEDIFF(end,start)` 일수 4방언 · `YEAR`/`MONTH`/`DAY`→PG/Oracle `EXTRACT` · `EXTRACT(YEAR\|MONTH\|DAY\|HOUR FROM x)`→SQLite `strftime` |
 | 비채택 | SQLGlot 전체 트랜스파일 · 실행 bind rewrite · ADBC/JDBC |
 
 `execute_sql` / `sample_column`은 `TargetConfig.engine` → `DialectProfile::for_engine`.

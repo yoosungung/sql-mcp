@@ -10,7 +10,7 @@
 4. **언어.** MCP 서버는 **Rust** + [`rmcp`](https://crates.io/crates/rmcp) (MCP spec `2026-07-28`).
 5. **범위.** **MCP 서버만.** Frontend·Admin UI·Admin API·**세션형 Streamable HTTP**는 **취소(범위 밖)**. Transport는 **일반 HTTP**(배포·원격)와 **stdio**(로컬 자식 프로세스). 둘 다 동일 툴 표면.
 6. **타깃 SQL = 시맨틱 SELECT만.** `execute_sql` 입력은 **시맨틱 SQL**(cube FROM · metric/dimension/segment/fact)이며, 서버가 6단계 파이프라인으로 물리 SELECT를 만든 뒤에만 타깃에 실행한다. **자유 물리 SELECT 경로는 없다(D19).** 시맨틱 SELECT는 **그레인 기반 2-모드(D23)**로 동작한다 — **(1) Grouped(집계) 모드:** 명명 metric·ad-hoc 집계(`sum/count/avg/min/max`)·metric 간 파생 연산·윈도우 함수(`OVER (PARTITION BY … ORDER BY …)`)를 **한 SELECT에서 자유롭게 혼용**할 수 있으며, `date_trunc` 등 차원 스칼라 식과 차원-only `GROUP BY`(+ `HAVING`/`ORDER BY` 집계식)도 허용한다. 같은 `target`인 cube JOIN을 허용하며, metric이 없는 JOIN 측도 참조 차원(`dims ∪ on_dims`)으로 `GROUP BY` 서브쿼리를 만들어 다대다 팬아웃(Chasm Trap)을 차단한다. **(2) Ungrouped(행 상세) 모드:** metric/집계·`GROUP BY`·`HAVING`이 모두 없는 순수 dimension·fact(+비집계 스칼라·윈도우 식) 조회다. `SELECT DISTINCT`를 지원하며, 비-`DISTINCT` 상세 행 조회는 사전 집계된 요약 뷰(`summary: true`)로 라우팅하지 않고 원천 뷰만 선택한다. 비-`DISTINCT` Ungrouped 모드의 cube JOIN은 다대다 행 폭발 방지를 위해 거절한다(`DISTINCT` 또는 Grouped 모드만 cube JOIN 허용). 질의의 모든 식에 등장하는 fact/dim/metric/segment의 `role`과 `encryption` 가드를 직접 검사한다. 컴파일·실행 결과는 단일 SELECT(읽기 CTE 허용)만. INSERT/UPDATE/DELETE/DDL/다중 문장/쓰기 CTE 거부. 행 상한·타임아웃 강제. (문서상 `execute_semantic_sql`은 `execute_sql` 이명.)
-7. **타깃 방언은 emit 어댑터(D21).** 시맨틱 컴파일은 **엔진 중립**(canonical ANSI `"…"` · `date_trunc`). `DialectProfile`이 emit에서 `date_trunc` rewrite · quote adapt · 행 상한 래퍼를 적용한다. 자유 SQL 트랜스파일·`sqlparser` Display 방언 위임·**실행 bind rewrite는 하지 않는다**(ad-hoc OLAP SELECT만).
+7. **타깃 방언은 emit 어댑터(D21·D24).** 시맨틱 컴파일은 **엔진 중립**(canonical ANSI `"…"` · `date_trunc` · 표준 날짜 편의 함수). `DialectProfile`이 emit에서 `date_trunc`/날짜 편의 함수 rewrite · quote adapt · 행 상한 래퍼를 적용한다. 자유 SQL 트랜스파일·`sqlparser` Display 방언 위임·**실행 bind rewrite는 하지 않는다**(ad-hoc OLAP SELECT만).
 8. **메타데이터 CRUD (예외).** 임베디드 시맨틱 저장소에 한해 MCP 툴로 **CRUD**를 제공한다. 요청/응답 바디는 **JSON**. 타깃 DB 쓰기가 아니다.
 9. **MCP 제공 능력.** (1) **database** 목록(`list_databases`) · **cube** 목록/상세(`list_tables`/`describe_table`) (2) 컬럼 검색(BM25/벡터/hybrid) (3) 컬럼 샘플(+code) (4) database SELECT SQL (5) **메타데이터 CRUD(JSON)** (6) **Resource:** 등록 문서 JSON Schema(`document.schema.json`) · **Agent Skills**(`skills/` 트리를 Resource로 제공). 그 외 툴·Resource는 기본 표면에 넣지 않는다. DW 에이전트에게는 메타 CRUD 도구를 주지 않는다. 이 에이전트에게 데이터베이스는 `list_databases` 항목이고, 테이블은 cube이며, 컬럼은 dimension, fact, metric이다.
 10. **시크릿.** 로그·에러·툴 응답에 DSN/비밀번호를 실지 않는다. 타깃 자격 증명은 기동 설정으로만 주입(채팅으로 비밀번호 받지 않음). 메타 CRUD JSON에도 시크릿 필드를 넣지 않는다.
@@ -171,10 +171,12 @@ HTTP ▶ rmcp tools
 | 능력 | 역할 | 엔진 예 |
 |------|------|---------|
 | `quote_ident` | 식별자 인용(샘플·타깃 직접 SQL) | Postgres/SQLite/Oracle `"…"` · MySQL `` `…` `` |
-| `rewrite_date_trunc` | canonical `date_trunc` → 엔진 식 | MySQL `DATE_FORMAT`/`DATE` · Oracle `TRUNC` · SQLite `datetime(…, 'start of …')` · PG identity |
+| `rewrite_date_trunc` | canonical `date_trunc` + 날짜 편의 함수 → 엔진 식 | MySQL `DATE_FORMAT`/`DATE` · Oracle `TRUNC` · SQLite `datetime(…, 'start of …')` · PG identity; D24: `NOW`/`DATEDIFF`/`YEAR`·`EXTRACT` 등 |
 | `adapt_compiled_sql` | canonical `"…"` → 엔진 quote | MySQL backticks · 나머지 identity |
 | `wrap_row_limit` | 행 상한 래퍼 | `LIMIT n` · Oracle `FETCH FIRST n ROWS ONLY` |
 | `emit_physical_sql` | rewrite + quote adapt | `pipeline` Step 8 |
+
+**D24 canonical 날짜 표면** (metric/dimension/filter 식): `CURRENT_DATE` · `CURRENT_TIMESTAMP` · `NOW()` · `date_trunc('year'|'month'|'day'|'hour', x)` · `YEAR`/`MONTH`/`DAY` · `DATEDIFF(end, start)`(일수) · `EXTRACT(YEAR|MONTH|DAY|HOUR FROM x)`. emit: Oracle `NOW`→`CURRENT_TIMESTAMP` · `DATEDIFF`→PG 날짜 차·SQLite `julianday`·Oracle `TRUNC` 차 · `YEAR`/`MONTH`/`DAY`→PG/Oracle `EXTRACT` · SQLite `EXTRACT`→`strftime`.
 
 `compile`은 canonical만 낸다. `:name` 바인드 파라미터는 `params` 제공 시 이스케이프된 리터럴로 치환하며, 드라이버 prepared bind rewrite는 하지 않는다.
 

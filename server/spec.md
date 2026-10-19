@@ -158,13 +158,14 @@ CREATE VIRTUAL TABLE column_index_fts USING fts5(
 - SELECT에 `code."{value_column}" AS "{dim}__value"` 추가(외부 `ORDER BY`/`LIMIT`/`OFFSET` 유지).
 - 출력: 타깃으로 보낼 최종 물리 SQL 문자열(식별자 quote는 D21 프로필)
 
-### Step 8 (실행 경계): DialectProfile emit · 행 상한 · 타임아웃 (D21)
+### Step 8 (실행 경계): DialectProfile emit · 행 상한 · 타임아웃 (D21·D24)
 
-- Step 1–7은 엔진 중립 **canonical** 물리 SQL(식별자 `"…"` · `date_trunc`).
+- Step 1–7은 엔진 중립 **canonical** 물리 SQL(식별자 `"…"` · `date_trunc` · 표준 날짜 편의 함수).
 - `pipeline` 말미: `DialectProfile::emit_physical_sql` = `rewrite_date_trunc` → `adapt_compiled_sql`(MySQL backticks).
   - `date_trunc('year'|'month'|'day'|'hour', expr)` → MySQL `DATE_FORMAT`/`DATE` · Oracle `TRUNC` · SQLite `datetime(…, 'start of …')`(단, SQLite에서 `'YYYY'`/`YYYY`/`'YYYY-MM'`/`'YYYYMM'`/`'YYYY-MM-DD'` 리터럴과 직접 비교·`BETWEEN`·`IN`될 때는 리터럴 포맷에 맞춰 `SUBSTR`/`strftime`/`date`로 자동 적응) · Postgres 유지. 미지원 단위 → `validation`.
-  - 편의 스칼라 함수(`DIVIDE(a, b)`, `YEAR(d)`, `MONTH(d)`, `DAY(d)`, `SUBSTR`/`SUBSTRING`, `LENGTH`, `REPLACE`, `INSTR`, `IFNULL`, `IIF`, `STRFTIME`)를 허용하며, SQLite 타깃에서는 정수 나눗셈 절삭을 막기 위해 `/` 좌변을 `CAST(… AS REAL)`로 승격한다.
-- 타깃 `execute_select`는 `wrap_row_limit` 및 `SQL_MCP_TIMEOUT_MS` 타임아웃을 적용하며, 실행 직전 미해석 `:param`이 남아 있으면 `validation`으로 거절한다. `sample_sql`은 인라인 보안 필터 + 프로필 quote + `rewrite_date_trunc`를 적용한다.
+  - 편의 스칼라 함수(`DIVIDE(a, b)`, `YEAR(d)`, `MONTH(d)`, `DAY(d)`, `CURRENT_DATE`, `CURRENT_TIMESTAMP`, `NOW()`, `DATEDIFF(end, start)`(일수), `EXTRACT(YEAR|MONTH|DAY|HOUR FROM d)`, `SUBSTR`/`SUBSTRING`, `LENGTH`, `REPLACE`, `INSTR`, `IFNULL`, `IIF`, `STRFTIME`)를 허용한다.
+  - D24 emit: `NOW()` → Oracle `CURRENT_TIMESTAMP`(나머지 identity) · `DATEDIFF(end, start)` → MySQL identity · PG `(CAST(end AS date) - CAST(start AS date))` · SQLite `CAST(julianday(end) - julianday(start) AS INTEGER)` · Oracle `(TRUNC(end) - TRUNC(start))` · `YEAR`/`MONTH`/`DAY` → PG/Oracle `EXTRACT(… FROM …)`(MySQL identity · SQLite 기존 `SUBSTR`/`strftime`) · `EXTRACT` → SQLite `CAST(strftime(…) AS INTEGER)`(나머지 identity). SQLite 타깃에서는 정수 나눗셈 절삭을 막기 위해 `/` 좌변을 `CAST(… AS REAL)`로 승격한다.
+- 타깃 `execute_select`는 `wrap_row_limit` 및 `SQL_MCP_TIMEOUT_MS` 타임아웃을 적용하며, 실행 직전 미해석 `:param`이 남아 있으면 `validation`으로 거절한다. `sample_sql`은 인라인 보안 필터 + 프로필 `emit_physical_sql`을 적용한다.
 
 ## 4. 개발 시 주의사항 (Checklist)
 
