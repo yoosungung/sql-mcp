@@ -192,7 +192,7 @@ fn name_desc_text(name: &str, doc: &Value) -> String {
     }
 }
 
-/// D12: cube/dim/fact/metric/segment — name + description; dim/fact also append type.
+/// D12/D24: cube/dim/fact — name + description; dim/fact also append type.
 fn member_index_text(item: &Value) -> String {
     let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let with_desc = name_desc_text(name, item);
@@ -209,7 +209,7 @@ fn extract_index_rows(doc: &Value) -> Vec<IndexRow> {
 
 fn extract_index_rows_with_targets(
     doc: &Value,
-    cube_targets: &HashMap<String, String>,
+    _cube_targets: &HashMap<String, String>,
 ) -> Vec<IndexRow> {
     let kind = doc.get("kind").and_then(|v| v.as_str()).unwrap_or("");
     let name = doc.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -245,23 +245,8 @@ fn extract_index_rows_with_targets(
                 }
             }
         }
-        "metric" | "segment" => {
-            let cube = doc.get("cube").and_then(|v| v.as_str()).unwrap_or("");
-            let target = cube_targets
-                .get(cube)
-                .cloned()
-                .or_else(|| doc.get("target").and_then(|v| v.as_str()).map(str::to_string))
-                .unwrap_or_else(|| "dw".to_string());
-            // doc_name = cube (DW `table`); field_name = metric/segment name.
-            rows.push(IndexRow {
-                target,
-                doc_kind: kind.into(),
-                doc_name: cube.into(),
-                field_name: name.into(),
-                field_role: kind.into(),
-                text: name_desc_text(name, doc),
-            });
-        }
+        // D24: metric/segment are describe_table.examples only — not search columns.
+        "metric" | "segment" => {}
         _ => {}
     }
     rows
@@ -720,27 +705,10 @@ mod tests {
         let metric: Value =
             serde_json::from_str(include_str!("../../semantic/examples/metrics/revenue.json"))
                 .unwrap();
-        let rows = extract_index_rows(&metric);
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].field_role, "metric");
-        assert_eq!(rows[0].doc_name, "sales");
-        assert_eq!(rows[0].field_name, "revenue");
-        assert_eq!(rows[0].text, "revenue 지역·일자별 판매 금액 합계.");
-        assert!(!rows[0].text.contains("sum"));
-        let dw = hit_to_dw_item(&SearchHit {
-            target: "dw".into(),
-            doc_kind: "metric".into(),
-            doc_name: "sales".into(),
-            field_name: "revenue".into(),
-            field_role: "metric".into(),
-            text: rows[0].text.clone(),
-            score: 1.0,
-            mode: "keyword".into(),
-        });
-        assert_eq!(dw["kind"], "metric");
-        assert_eq!(dw["table"], "sales");
-        assert_eq!(dw["name"], "revenue");
-        assert_eq!(dw["description"], "지역·일자별 판매 금액 합계.");
+        assert!(
+            extract_index_rows(&metric).is_empty(),
+            "D24: metric/segment are not search columns"
+        );
         let table_hit = hit_to_dw_item(&SearchHit {
             target: "dw".into(),
             doc_kind: "cube".into(),

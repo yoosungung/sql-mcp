@@ -6,7 +6,7 @@
 ## 0. 확정 전제 (계획과 동일)
 
 1. **카탈로그는 타입별 `meta_*` 테이블**에 저장한다. `document(kind,name,body)` 단일 blob 정본은 쓰지 않는다. MCP `metadata_*` **입출력은 JSON**(`document.schema.json`)이며, 저장 시 타입별 행으로 분해·조회 시 JSON으로 재조립한다.
-2. **타깃 질의는 시맨틱 SELECT만.** 자유 물리 SELECT 경로는 없다(D19). 공개 툴 `execute_sql`의 입력은 시맨틱 SQL이고, 6단계 컴파일 후에만 물리 SQL이 생성·실행된다. (문서·다이어그램의 `execute_semantic_sql`은 **이명** — 공개 툴명을 바꾸지 않는다.) **D23:** 시맨틱 SELECT는 그레인 기반 2-모드로 동작한다 — **(1) Grouped(집계) 모드:** 명명 metric · ad-hoc 집계(`sum/count/avg/min/max`) · metric 파생 연산 **동일 SELECT 혼용 허용**, 차원 스칼라 식(`date_trunc` 등) 및 차원-only `GROUP BY`/`HAVING` 허용, `HAVING`/`ORDER BY` 집계식 허용, 동일 `target` cube JOIN 허용(metric 없는 JOIN 측은 참조 차원 `GROUP BY` 서브쿼리로 다대다 팬아웃 방지). **(2) Ungrouped(행 상세) 모드:** metric·집계·`GROUP BY`·`HAVING` 없는 dim·fact(+비집계 스칼라 식) 프로젝션, `SELECT DISTINCT` 지원, 비-`DISTINCT` 상세 조회 시 요약 뷰(`summary: true`) 우회(원천 뷰 선택) 및 비-`DISTINCT` cube JOIN 거절.
+2. **타깃 질의는 시맨틱 SELECT만.** 자유 물리 SELECT 경로는 없다(D19). 공개 툴 `execute_sql`의 입력은 시맨틱 SQL이고, 6단계 컴파일 후에만 물리 SQL이 생성·실행된다. (문서·다이어그램의 `execute_semantic_sql`은 **이명** — 공개 툴명을 바꾸지 않는다.) **D24:** 등록 metric/segment는 `describe_table.examples`로만 제시하고 SQL 식별자로 해석하지 않는다. ad-hoc 시맨틱 SQL은 읽기 전용 ANSI SELECT 전체(서브쿼리·CTE·FROM 파생·윈도우·집합연산)를 허용한다. **D23:** 시맨틱 SELECT는 그레인 기반 2-모드로 동작한다 — **(1) Grouped(집계) 모드:** ad-hoc 집계(`sum/count/avg/min/max`) · 파생 연산 **동일 SELECT 혼용 허용**, 차원 스칼라 식(`date_trunc` 등) 및 차원-only `GROUP BY`/`HAVING` 허용, `HAVING`/`ORDER BY` 집계식 허용, 동일 `target` cube JOIN 허용(집계 없는 JOIN 측은 참조 차원 `GROUP BY` 서브쿼리로 다대다 팬아웃 방지). **(2) Ungrouped(행 상세) 모드:** 집계·`GROUP BY`·`HAVING` 없는 dim·fact(+비집계 스칼라 식) 프로젝션, `SELECT DISTINCT` 지원, 비-`DISTINCT` 상세 조회 시 요약 뷰(`summary: true`) 우회(원천 뷰 선택) 및 비-`DISTINCT` cube JOIN 거절.
 3. **툴 표면 유지:** `execute_sql`, `sample_column`, `search_columns`, `metadata_*` 등 현행 이름. `sample_cube_data`는 `sample_column`의 이명이다.
 4. **타깃 접속:** Postgres·MySQL=`sqlx`, SQLite=`libsql`(로컬), Oracle=`oracledb`(thin). JDBC/ODBC/ADBC는 쓰지 않는다.
 5. **검색:** keyword는 **FTS5**(순위는 `bm25()` — 별도 BM25 엔진이 아님). **vector + hybrid(RRF) 유지.** 구조화 FTS(`meta_search_fts`)와 embedding side table을 쓰며, FTS를 이중으로 두지 않는다.
@@ -111,15 +111,15 @@ CREATE VIRTUAL TABLE column_index_fts USING fts5(
 - 동작:
   - `Parser::parse_sql(&GenericDialect, sql)` 실행.
   - AST 최상위가 `Statement::Query`인지 확인하고, DDL/DML·세션 변경·파일 접근 등은 즉시 거절.
-  - FROM의 Cube(단일·JOIN·UNION)를 식별하고 `cube` · 참조된 `dimension`/`fact` · `metric` · `segment` · 물리 `table`의 `role` 접근 가능 여부를 모두 검증.
+  - FROM의 Cube(단일·JOIN·UNION·CTE/서브쿼리 내부)를 식별하고 `cube` · 참조된 `dimension`/`fact` · 물리 `table`의 `role` 접근 가능 여부를 검증(D24: 명명 metric/segment 식별자 없음).
 - 출력: 정제된 시맨틱 Query AST
 
 ### Step 2: 래핑(Metric, Segment, 일반 WHERE, HAVING/ORDER BY/LIMIT) 전개 및 가산성 분석
 
 - 동작:
-  - WHERE 전개: 호출자 ad-hoc WHERE 절의 직접 서브쿼리는 거절(`assert_no_subquery_in_ast`)한 뒤, 세그먼트 식별자는 `meta_segments.filter_expression`(읽기 전용 서브쿼리 허용, `assert_segment_filter_expr`)으로 치환하고, 일반 dimension/fact 조건식은 AST 제한 및 식별자 검증(`assert_idents_known`) 후 보존한다.
-  - Metric 및 집계·윈도우 전개(D23): 명명 metric(등록된 `metric.expression`에는 읽기 전용 서브쿼리 및 윈도우 함수 허용, `assert_metadata_metric_expr`), ad-hoc 집계(`sum/count/avg/min/max`), 윈도우 함수(`ROW_NUMBER`/`RANK`/`DENSE_RANK`/`NTILE`/`LAG`/`LEAD`/`FIRST_VALUE`/`LAST_VALUE`/`NTH_VALUE` 및 `SUM`/`COUNT`/`AVG`/`MIN`/`MAX` `OVER (...)`), metric 간 파생 연산을 동일 SELECT에서 함께 지원한다. 단일 metric(또는 모든 활성 metric의 필터가 동일)이면 `filter_expression`을 WHERE AND로 두고, 복수 metric에서 개별 필터(또는 무필터 ad-hoc 혼합)가 다르면 `CASE WHEN (filter) THEN expr END`로 집계 내부에 주입한다.
-  - Group By 결정: 명시된 `GROUP BY`(차원 식별자·프로젝션 별칭·위치 `1..N`·차원 스칼라 식; 윈도우 함수는 `GROUP BY`에서 거절) → 없으면 프로젝션된 dimension(및 비-윈도우 차원 스칼라 식) → 둘 다 없으면 명명 metric 전용 질의는 `metric.group_by` 기본값, ad-hoc 포함 질의는 전역 집계를 사용한다. 각 명명 metric(`aggregation=group`)은 활성 차원이 자신의 `metric.group_by`에 속하는지 개별 검증하며, `aggregation`이 `rollup`/`cube`/`grouping_sets`이면 해당 그룹핑 절을 생성한다. 프로젝션에 metric 없이 차원만 두고 `GROUP BY`/`HAVING`/집계 `ORDER BY`를 쓴 질의도 Grouped 모드로 컴파일한다.
+  - WHERE 전개(D24): 호출자 ad-hoc WHERE의 읽기 서브쿼리를 허용하고 `expand_semantic_subqueries`로 재귀 컴파일(fail-closed)한다. 세그먼트 이름은 식별자가 아니며, 일반 dimension/fact 조건식만 AST 제한·식별자 검증 후 보존한다.
+  - 집계·윈도우 전개(D23/D24): ad-hoc 집계(`sum/count/avg/min/max`), 윈도우 함수, 파생 연산, SELECT/WHERE 서브쿼리를 동일 SELECT에서 지원한다. 등록 metric/segment는 질의 식별자가 아니다.
+  - Group By 결정: 명시된 `GROUP BY`(차원 식별자·프로젝션 별칭·위치 `1..N`·차원 스칼라 식; 윈도우 함수는 `GROUP BY`에서 거절) → 없으면 프로젝션된 dimension → 둘 다 없으면 ad-hoc 전역 집계. `aggregation`이 `rollup`/`cube`/`grouping_sets`이면 해당 그룹핑 절을 생성한다. 프로젝션에 집계 없이 차원만 두고 `GROUP BY`/`HAVING`/집계 `ORDER BY`를 쓴 질의도 Grouped 모드로 컴파일한다.
   - 가산성: `COUNT(DISTINCT)` / `AVG` / `MEDIAN` 등이면 `is_semi_additive` — 요약 뷰 그레뉼러리티 불일치 방지.
 - 출력: Dimension·Fact 기준 큐브 SQL 계획 + 필터 목록 + `DISTINCT`/`HAVING`/`ORDER BY`/`LIMIT`/`OFFSET`
 

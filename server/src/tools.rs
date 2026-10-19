@@ -122,7 +122,7 @@ pub struct SampleColumnArgs {
 pub struct ExecuteSqlArgs {
     /// Database name from `list_databases`.
     pub database: String,
-    /// Analytical SELECT using table names and their dimensions, facts, metrics, or segments. FROM must be a listed table name.
+    /// Analytical SELECT using table names and their dimensions/facts (ad-hoc aggregates OK). FROM must be a listed table name or subquery/CTE over them.
     pub sql: String,
     /// Your access role for row/column permissions.
     pub caller_role: Option<String>,
@@ -287,7 +287,7 @@ impl SqlMcp {
     }
 
     #[tool(
-        description = "Describe one table: dimensions, facts, metrics, and segments you may use in SQL. Call after list_tables or search_columns when you need column details—not for browsing the table list."
+        description = "Describe one table: dimensions and facts (SQL columns), plus optional examples (metric/segment expression snippets to copy into ad-hoc SELECT—not column names). Call after list_tables or search_columns when you need column details."
     )]
     async fn describe_table(
         &self,
@@ -321,31 +321,33 @@ impl SqlMcp {
         let cube_name = args.table.as_str();
         let dimensions = project_dim_fact_members(cube.get("dimensions"), role, true);
         let facts = project_dim_fact_members(cube.get("facts"), role, false);
-        let metrics: Vec<Value> = metrics
+        let mut examples: Vec<Value> = Vec::new();
+        for m in metrics
             .into_iter()
             .filter(|m| m.get("cube").and_then(|v| v.as_str()) == Some(cube_name))
             .filter(|m| crate::compile::check_role_access(m.get("role"), role).is_ok())
-            .map(|m| project_metric(&m))
-            .collect();
-        let segments: Vec<Value> = segments
+        {
+            examples.push(project_metric_example(&m));
+        }
+        for s in segments
             .into_iter()
             .filter(|s| s.get("cube").and_then(|v| v.as_str()) == Some(cube_name))
             .filter(|s| crate::compile::check_role_access(s.get("role"), role).is_ok())
-            .map(|s| project_segment(&s))
-            .collect();
+        {
+            examples.push(project_segment_example(&s));
+        }
         ok_json(json!({
             "database": cube.get("target").and_then(|v| v.as_str()).unwrap_or(""),
             "name": cube.get("name").and_then(|v| v.as_str()).unwrap_or(cube_name),
             "description": cube.get("description").and_then(|v| v.as_str()).unwrap_or(""),
             "dimensions": dimensions,
             "facts": facts,
-            "metrics": metrics,
-            "segments": segments,
+            "examples": examples,
         }))
     }
 
     #[tool(
-        description = "Search tables and columns by business keyword (dimensions, facts, metrics, segments). Use when you know a term but not the exact table or column name; prefer list_tables when browsing one database."
+        description = "Search tables and columns by business keyword (dimensions and facts only). Use when you know a term but not the exact table or column name; prefer list_tables when browsing one database."
     )]
     async fn search_columns(
         &self,
@@ -470,7 +472,7 @@ impl SqlMcp {
     }
 
     #[tool(
-        description = "Run a read-only analytical SELECT and return columns, rows, row_count, and execution_time_ms. FROM must be a table from list_tables; select dimensions, facts, metrics, or segments from describe_table. Do not write warehouse/physical SQL. Set dry_run=true only to inspect compiled SQL without fetching rows."
+        description = "Run a read-only analytical SELECT and return columns, rows, row_count, and execution_time_ms. FROM must be a table from list_tables (or a subquery/CTE over those tables); select dimensions, facts, and ad-hoc aggregates/scalars. Copy metric/segment snippets from describe_table.examples into SQL—do not treat example names as columns. Do not write warehouse/physical SQL. Set dry_run=true only to inspect compiled SQL without fetching rows."
     )]
     async fn execute_sql(
         &self,
@@ -550,7 +552,7 @@ impl SqlMcp {
 #[tool_handler(
     name = "sql-mcp",
     version = "0.1.0",
-    instructions = "Query governed analytics tables: list_databases → list_tables/search_columns → describe_table/sample_column → execute_sql. Tables expose dimensions, facts, metrics, and segments—not raw warehouse catalogs."
+    instructions = "Query governed analytics tables: list_databases → list_tables/search_columns → describe_table/sample_column → execute_sql. Tables expose dimensions and facts as columns; metric/segment appear only as describe_table.examples (SQL snippets to copy)—not raw warehouse catalogs."
 )]
 impl ServerHandler for SqlMcp {
     fn get_info(&self) -> ServerConfig {
@@ -568,7 +570,7 @@ impl ServerHandler for SqlMcp {
         )
         .with_server_info(rmcp::model::Implementation::new("sql-mcp", "0.1.0"))
         .with_instructions(
-            "Query governed analytics tables: list_databases → list_tables/search_columns → describe_table/sample_column → execute_sql. Tables expose dimensions, facts, metrics, and segments—not raw warehouse catalogs."
+            "Query governed analytics tables: list_databases → list_tables/search_columns → describe_table/sample_column → execute_sql. Tables expose dimensions and facts as columns; metric/segment appear only as describe_table.examples (SQL snippets to copy)—not raw warehouse catalogs."
                 .to_string(),
         )
     }
@@ -693,8 +695,10 @@ fn project_dim_fact_members(
         .collect()
 }
 
-fn project_metric(m: &Value) -> Value {
+/// D24: metric/segment are example snippets, not SQL columns.
+fn project_metric_example(m: &Value) -> Value {
     let mut out = json!({
+        "kind": "metric",
         "name": m.get("name").cloned().unwrap_or(Value::Null),
         "description": m.get("description").cloned().unwrap_or(json!("")),
         "expression": m.get("expression").cloned().unwrap_or(Value::Null),
@@ -713,8 +717,9 @@ fn project_metric(m: &Value) -> Value {
     out
 }
 
-fn project_segment(s: &Value) -> Value {
+fn project_segment_example(s: &Value) -> Value {
     json!({
+        "kind": "segment",
         "name": s.get("name").cloned().unwrap_or(Value::Null),
         "description": s.get("description").cloned().unwrap_or(json!("")),
         "filter": filter_as_expression(s.get("filter")),
@@ -1033,12 +1038,19 @@ mod tests {
         assert!(branch.get("kind").is_none());
         assert!(branch.get("target").is_none());
         assert!(branch.get("view").is_none());
-        assert_eq!(branch["metrics"].as_array().unwrap().len(), 1);
-        assert_eq!(branch["segments"].as_array().unwrap().len(), 1);
-        assert_eq!(
-            branch["segments"][0]["filter"],
-            "status_code = 'PAID'"
+        assert!(branch.get("metrics").is_none());
+        assert!(branch.get("segments").is_none());
+        let examples = branch["examples"].as_array().unwrap();
+        assert_eq!(examples.len(), 2);
+        assert!(
+            examples.iter().any(|e| e["kind"] == "metric" && e["name"] == "revenue"),
+            "expected revenue metric example: {examples:?}"
         );
+        let paid = examples
+            .iter()
+            .find(|e| e["kind"] == "segment" && e["name"] == "paid")
+            .expect("paid segment example");
+        assert_eq!(paid["filter"], "status_code = 'PAID'");
         let dim0 = &branch["dimensions"][0];
         assert!(dim0.get("role").is_none());
         assert!(dim0.get("column").is_none());
@@ -1079,9 +1091,10 @@ mod tests {
             finance_facts.contains(&"sale_amount"),
             "finance sees sale_amount: {finance_facts:?}"
         );
-        assert!(finance["metrics"][0].get("cube").is_none());
-        assert!(finance["metrics"][0].get("kind").is_none());
-        assert!(finance["metrics"][0].get("role").is_none());
+        let ex0 = &finance["examples"][0];
+        assert_eq!(ex0["kind"], "metric");
+        assert!(ex0.get("cube").is_none());
+        assert!(ex0.get("role").is_none());
     }
 
     #[test]
@@ -1125,7 +1138,7 @@ mod tests {
         let body = tool_json(
             mcp.execute_sql(Parameters(ExecuteSqlArgs {
                 database: "dw".into(),
-                sql: "SELECT revenue FROM sales WHERE paid".into(),
+                sql: "SELECT region_code, count(*) AS cnt FROM sales WHERE status_code = 'PAID' GROUP BY region_code".into(),
                 caller_role: Some("branch".into()),
                 params: Some(params),
                 dry_run: None,
@@ -1166,7 +1179,7 @@ mod tests {
         let result = mcp
             .execute_sql(Parameters(ExecuteSqlArgs {
                 database: "dw".into(),
-                sql: "SELECT revenue FROM sales WHERE paid".into(),
+                sql: "SELECT region_code, count(*) AS cnt FROM sales WHERE status_code = 'PAID' GROUP BY region_code".into(),
                 caller_role: Some("branch".into()),
                 params: None,
                 dry_run: Some(true),
@@ -1179,13 +1192,13 @@ mod tests {
         assert!(body.get("rows").is_none());
         let sql = body["sql"].as_str().expect("sql");
         assert!(!sql.is_empty());
-        assert!(sql.to_ascii_lowercase().contains("sum("));
+        assert!(sql.to_ascii_lowercase().contains("count("));
         assert_eq!(boom.selects.load(Ordering::SeqCst), 0);
 
         let err = mcp
             .execute_sql(Parameters(ExecuteSqlArgs {
                 database: "dw".into(),
-                sql: "SELECT revenue FROM sales WHERE paid".into(),
+                sql: "SELECT region_code, count(*) AS cnt FROM sales WHERE status_code = 'PAID' GROUP BY region_code".into(),
                 caller_role: Some("branch".into()),
                 params: None,
                 dry_run: None,
@@ -1237,7 +1250,7 @@ mod tests {
         let dry = mcp
             .execute_sql(Parameters(ExecuteSqlArgs {
                 database: "dw".into(),
-                sql: "SELECT revenue FROM sales".into(),
+                sql: "SELECT region_code, count(*) AS cnt FROM sales GROUP BY region_code".into(),
                 caller_role: None,
                 params: Some(params),
                 dry_run: Some(true),

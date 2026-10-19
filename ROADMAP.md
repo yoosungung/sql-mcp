@@ -57,7 +57,8 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 | D20 | table/view/cube `target` | **결정:** 등록 JSON에 MCP `target` id 필수. leaf table·view·cube 동일 target 강제. `list_tables`/`describe_table`=cube 표면. 같은 target cube JOIN/UNION 허용(다른 target 거절) |
 | D21 | 타깃 SQL 방언(dialect) | **결정: Cube식 DialectProfile emit.** 컴파일은 엔진 중립(canonical ANSI `"…"` · `date_trunc`). emit: `date_trunc`→엔진별 식 · quote adapt · `wrap_row_limit`. **비채택:** 자유 SQL 트랜스파일 · `sqlparser` Display 방언 위임 · **실행 bind 스타일 rewrite**(ad-hoc OLAP만, 드라이버 prepared bind 경로 없음). 상세 [ARCHITECTURE.md](ARCHITECTURE.md) · [server/DESIGN.md](server/DESIGN.md) · [server/spec.md](server/spec.md) |
 | D22 | 물리 vs 시맨틱 식별자 | **결정: 부분 완화.** `$defs/name`(시맨틱) 유지 · `$defs/physical_ident`(물리 db/schema/table/컬럼·mapping·join on·as_code key/value) 분리. view 컬럼·cube 멤버는 시맨틱 `name`만. 물리명에 공백·기호가 있으면 view 별칭 + `mappings.column`에 물리 유지. `quote_ident`는 동일 허용 집합. |
-| D23 | 시맨틱 SELECT 모드 | **결정: 그레인 기반 2-모드(Grouped vs Ungrouped).** **(1) Grouped(집계):** 명명 metric · ad-hoc 집계(`sum/count/avg/min/max`) · metric 파생 연산 **동일 SELECT 혼용 허용** + 차원 스칼라 식(`date_trunc` 등) + 차원-only `GROUP BY`(+ `HAVING`/`ORDER BY` 집계식) 허용. grain = 명시 `GROUP BY`(별칭·위치·식 포함) / 프로젝션 차원 / 명명 metric `group_by` 또는 전역 집계. 명명 metric은 활성 차원이 자신의 `group_by`에 속하는지 개별 검증, ad-hoc은 전 차원 허용. 같은 `target` cube JOIN 허용(metric 없는 JOIN 측은 참조 차원 `GROUP BY` 서브쿼리로 팬아웃 방지). **(2) Ungrouped(행 상세):** metric·집계·`GROUP BY`·`HAVING` 없는 dim/fact(+비집계 스칼라 식) 프로젝션. `SELECT DISTINCT` 보존. 비-`DISTINCT` 상세 조회는 요약 뷰(`summary: true`) 우회(원천 뷰 선택) 및 다대다 팬아웃(Chasm Trap) 방지를 위해 cube JOIN 거절. 전 모드/절에서 fact·dim·metric·segment `role` 및 `encryption` 직접 검사. |
+| D23 | 시맨틱 SELECT 모드 | **결정: 그레인 기반 2-모드(Grouped vs Ungrouped).** **(1) Grouped(집계):** ad-hoc 집계(`sum/count/avg/min/max`)·파생 연산·윈도우 **동일 SELECT 혼용 허용** + 차원 스칼라 식(`date_trunc` 등) + 차원-only `GROUP BY`(+ `HAVING`/`ORDER BY` 집계식) 허용. grain = 명시 `GROUP BY`(별칭·위치·식 포함) / 프로젝션 차원 또는 전역 집계. 같은 `target` cube JOIN 허용(집계 없는 JOIN 측은 참조 차원 `GROUP BY` 서브쿼리로 팬아웃 방지). **(2) Ungrouped(행 상세):** 집계·`GROUP BY`·`HAVING` 없는 dim/fact(+비집계 스칼라 식) 프로젝션. `SELECT DISTINCT` 보존. 비-`DISTINCT` 상세 조회는 요약 뷰(`summary: true`) 우회(원천 뷰 선택) 및 다대다 팬아웃(Chasm Trap) 방지를 위해 cube JOIN 거절. 전 모드/절에서 fact·dim `role` 및 `encryption` 직접 검사. |
+| D24 | metric/segment DW 표면 · ad-hoc SELECT | **결정:** metric·segment는 cube **컬럼이 아님**. `describe_table`은 expression/filter를 **`examples`로만** 제시하고, `execute_sql`은 명명 metric/segment 식별자를 **해석하지 않음**(에이전트가 dim/fact로 ad-hoc SELECT 작성). `search_columns` 인덱스에서 metric/segment 제외. 시맨틱 SQL은 **읽기 전용 ANSI SELECT 전체** 허용(서브쿼리·읽기 CTE·윈도우·UNION/EXCEPT/INTERSECT 등). INSERT/UPDATE/DELETE/DDL/다중 문장/쓰기 CTE만 거절. 자유 물리 SELECT 경로 없음(D19). |
 
 (제거: D5 세션형 Streamable HTTP, D10/D11 Frontend. stdio는 로컬용으로 복원)
 
@@ -146,6 +147,13 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 - [x] **`HAVING` · `ORDER BY` 확장:** `HAVING` 내 집계 함수(`COUNT(*)`, `SUM(...)` 등) 허용(`assert_having_expr`) · `ORDER BY`에 별칭·위치·멤버·스칼라 식·집계식 직접 허용
 - [x] **Ungrouped 상세 모드 가드:** 비집계 스칼라 식(`a * b`, `a / b` 등) 및 `SELECT DISTINCT` 지원 · 비-`DISTINCT` 상세 조회 시 요약 뷰(`summary: true`) 우회(원천 뷰 라우팅) · 다대다 팬아웃(Chasm Trap) 방지를 위해 비-`DISTINCT` Ungrouped Cube JOIN 거절(Grouped Cube JOIN에서 metric 없는 측은 참조 차원 `GROUP BY` 서브쿼리로 팬아웃 방지)
 - [x] 계약·파이프라인 문서(`ARCHITECTURE.md` · `server/spec.md` · `server/DESIGN.md`)와 TDD
+
+### 후속 — metric/segment 예제화 · 읽기 ANSI SELECT (D24)
+
+- [x] DW 표면: `describe_table.examples` · `search_columns`에서 metric/segment 제외 · 툴/에이전트 문구
+- [x] `execute_sql` 명명 metric/segment 식별자 해석 제거(ad-hoc dim/fact만)
+- [x] ad-hoc 읽기 ANSI SELECT: 서브쿼리·CTE·FROM 파생·윈도우·집합연산 · 서브쿼리 확장 fail-closed
+- [x] 계약·스펙·client `SYSTEM` 프롬프트 · TDD
 
 ## 구현 시 작업 규칙
 

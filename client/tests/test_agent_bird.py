@@ -18,15 +18,18 @@ def test_system_prompt_requires_sql_not_olap_dsl() -> None:
     s = SYSTEM.lower()
     assert "sql select" in s or "select text" in s
     assert "mdx" in s and "dax" in s
-    assert "cube" in s and ("dimension" in s or "metric" in s)
+    assert "cube" in s and "dimension" in s
+    assert "examples" in s
 
 
-def test_system_prompt_covers_d23_and_join() -> None:
+def test_system_prompt_covers_d23_d24_and_join() -> None:
     s = SYSTEM
     assert "GROUP BY" in s and "HAVING" in s
     assert "JOIN" in s
     assert "SELECT DISTINCT" in s
     assert "SELECT *" in s
+    assert "subquery" in s.lower() or "WITH" in s
+    assert "CTE" in s or "WITH" in s
 
 
 def test_system_prompt_retry_and_escaping() -> None:
