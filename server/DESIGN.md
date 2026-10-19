@@ -29,7 +29,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `ast_select` | SELECT/WHERE/GROUP BY AST 조립·파서 정규화 |
 | `date_range` | 날짜 구간 추출(리터럴·`:bind`·OR/DNF)·union disjoint 판정 |
 | `pipeline/` | 시맨틱 SQL AST → `compile_*` → 물리 SELECT. 공개 API는 `crate::pipeline::*` 유지 |
-| `pipeline/mod` | 엔트리·단일 큐브·집합 연산(UNION/INTERSECT/EXCEPT) 오케스트레이션 |
+| `pipeline/mod` | 엔트리·단일 큐브·집합 연산(UNION/INTERSECT/EXCEPT) 오케스트레이션. FROM `relation_alias_cube`는 첫 식별자를 큐브로 정규화(`cube`·`cube.phys`·`AS alias`) |
 | `pipeline/join` | 다중 큐브 JOIN · ON 검증/리라이트 |
 | `pipeline/clauses` | SELECT 프로젝션 분류·adhoc 집계·WHERE 세그먼트·GROUP BY/HAVING/ORDER BY/LIMIT |
 | `semantic/typed` | JSON ↔ 타입별 `meta_*` 분해/재조립 |

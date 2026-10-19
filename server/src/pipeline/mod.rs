@@ -335,12 +335,16 @@ pub(crate) fn relation_cube_name(rel: &TableFactor) -> Result<String, AppError> 
 pub(crate) fn relation_alias_cube(rel: &TableFactor) -> Result<(String, String), AppError> {
     match rel {
         TableFactor::Table { name, alias, .. } => {
-            if name.0.len() != 1 {
-                return Err(AppError::Validation(
-                    "physical schema.table FROM is not allowed; use cube name only".into(),
-                ));
-            }
-            let cube = name.0[0].to_string();
+            // Flexible FROM: `cube`, `cube.physical`, or `db.schema.tbl` → first ident is the
+            // cube name (LLM physical-SQL habit). Trailing parts are ignored for routing.
+            let cube = name
+                .0
+                .first()
+                .and_then(|p| p.as_ident())
+                .map(|id| id.value.clone())
+                .ok_or_else(|| {
+                    AppError::Validation("semantic FROM must be a cube identifier".into())
+                })?;
             let al = alias
                 .as_ref()
                 .map(|a| a.name.value.clone())

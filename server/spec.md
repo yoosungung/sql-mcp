@@ -111,7 +111,7 @@ CREATE VIRTUAL TABLE column_index_fts USING fts5(
 - 동작:
   - `Parser::parse_sql(&GenericDialect, sql)` 실행.
   - AST 최상위가 `Statement::Query`인지 확인하고, DDL/DML·세션 변경·파일 접근 등은 즉시 거절.
-  - FROM의 Cube(단일·JOIN·UNION)를 식별하고 `cube` · 참조된 `dimension`/`fact` · `metric` · `segment` · 물리 `table`의 `role` 접근 가능 여부를 모두 검증.
+  - FROM의 Cube(단일·JOIN·UNION)를 식별하고 `cube` · 참조된 `dimension`/`fact` · `metric` · `segment` · 물리 `table`의 `role` 접근 가능 여부를 모두 검증. FROM 관계는 **첫 식별자**를 큐브 이름으로 정규화한다 — `FROM cube` · `FROM cube AS T1` · `FROM cube.physical_table`(·`AS alias`) 모두 동일 큐브로 라우팅(후행 물리 세그먼트는 무시).
 - 출력: 정제된 시맨틱 Query AST
 
 ### Step 2: 래핑(Metric, Segment, 일반 WHERE, HAVING/ORDER BY/LIMIT) 전개 및 가산성 분석

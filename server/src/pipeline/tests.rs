@@ -58,6 +58,58 @@
     }
 
     #[test]
+    fn accepts_qualified_from_as_cube_name() {
+        // LLM physical habit: FROM cube.physical_table → route to cube.
+        let docs = example_docs();
+        assert_eq!(
+            cube_name_from_semantic_sql("SELECT revenue FROM sales.orders").unwrap(),
+            "sales"
+        );
+        let sql = compile_semantic_sql(
+            &docs,
+            "SELECT revenue FROM sales.orders WHERE paid",
+            Some("branch"),
+        )
+        .unwrap();
+        assert!(sql.to_ascii_lowercase().contains("sum("));
+        assert_select_only(&sql).unwrap();
+    }
+
+    #[test]
+    fn accepts_from_cube_with_alias() {
+        let docs = example_docs();
+        assert_eq!(
+            cube_names_from_semantic_sql("SELECT T1.revenue FROM sales AS T1").unwrap(),
+            vec!["sales".to_string()]
+        );
+        let sql = compile_semantic_sql(
+            &docs,
+            "SELECT T1.revenue FROM sales AS T1 WHERE paid",
+            Some("branch"),
+        )
+        .unwrap();
+        assert!(sql.to_ascii_lowercase().contains("sum("));
+        assert_select_only(&sql).unwrap();
+    }
+
+    #[test]
+    fn accepts_qualified_from_with_alias() {
+        let docs = example_docs();
+        assert_eq!(
+            cube_name_from_semantic_sql("SELECT T1.revenue FROM sales.orders AS T1").unwrap(),
+            "sales"
+        );
+        let sql = compile_semantic_sql(
+            &docs,
+            "SELECT T1.revenue FROM sales.orders AS T1 WHERE paid",
+            Some("branch"),
+        )
+        .unwrap();
+        assert!(sql.to_ascii_lowercase().contains("sum("));
+        assert_select_only(&sql).unwrap();
+    }
+
+    #[test]
     fn compiles_union_all_same_target() {
         let docs = docs_with_second_cube("dw");
         let sql = compile_semantic_sql(
@@ -115,11 +167,12 @@
     }
 
     #[test]
-    fn rejects_physical_from() {
+    fn rejects_unknown_cube_in_qualified_from() {
+        // Qualified FROM still requires the first ident to be a registered cube.
         let docs = example_docs();
         let err = compile_semantic_sql(
             &docs,
-            "SELECT order_id FROM sales.orders",
+            "SELECT revenue FROM nosuch_db.orders",
             None,
         )
         .unwrap_err();
