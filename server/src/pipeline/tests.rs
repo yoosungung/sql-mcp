@@ -550,10 +550,34 @@
         )
         .unwrap();
         assert!(sql.contains("AS REAL)"), "expected REAL cast for SQLite division: {sql}");
-        assert!(sql.contains("NULLIF("), "expected NULLIF from DIVIDE helper: {sql}");
+        assert!(sql.contains("NULLIF("), "expected NULLIF from `/` and DIVIDE: {sql}");
         assert!(
             sql.contains(r#"CAST(SUBSTR(CAST("orders"."order_date" AS TEXT), 1, 4) AS INTEGER) = 2024"#),
             "expected integer year comparison rewrite in SQLite: {sql}"
+        );
+        assert_select_only(&sql).unwrap();
+    }
+
+    #[test]
+    fn raw_division_emit_includes_nullif_without_divide_helper() {
+        let docs = example_docs();
+        let sql = compile_semantic_sql_with_binds(
+            &docs,
+            "SELECT sales.region_code, \
+                    SUM(sale_amount) / COUNT(*) AS avg_sale \
+             FROM sales GROUP BY sales.region_code",
+            Some("finance"),
+            None,
+            DialectProfile::Sqlite,
+        )
+        .unwrap();
+        assert!(
+            sql.contains("NULLIF("),
+            "expected engine NULLIF wrap on raw `/`, got: {sql}"
+        );
+        assert!(
+            !sql.to_ascii_lowercase().contains("divide("),
+            "must not require DIVIDE helper, got: {sql}"
         );
         assert_select_only(&sql).unwrap();
     }
@@ -663,8 +687,10 @@
         )
         .unwrap();
         assert!(
-            sql_adhoc_win.contains(r#"SUM("orders"."sale_amount") / SUM(SUM("orders"."sale_amount")) OVER ()"#),
-            "unexpected ad-hoc share window SQL: {sql_adhoc_win}"
+            sql_adhoc_win.contains("NULLIF(")
+                && sql_adhoc_win.contains(r#"SUM("orders"."sale_amount")"#)
+                && sql_adhoc_win.contains(r#"SUM(SUM("orders"."sale_amount")) OVER ()"#),
+            "unexpected ad-hoc share window SQL (expect safe `/`): {sql_adhoc_win}"
         );
         assert_select_only(&sql_adhoc_win).unwrap();
 

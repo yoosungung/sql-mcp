@@ -72,10 +72,12 @@ impl DialectProfile {
         Ok(self.adapt_compiled_sql(&rewritten))
     }
 
-    /// Rewrite canonical `date_trunc('unit', expr)` and dialect helpers to the target dialect.
-    /// Postgres: identity unless `DIVIDE(` helper is used. Unsupported units → `validation`.
+    /// Rewrite canonical `date_trunc('unit', expr)`, safe `/`, and dialect helpers.
+    /// Postgres skips the walk only when there is no `DIVIDE(` and no `/` (no-op path).
+    /// Unsupported `date_trunc` units → `validation`.
     pub fn rewrite_date_trunc(self, sql: &str) -> Result<String, AppError> {
-        if self == Self::Postgres && !sql.to_ascii_lowercase().contains("divide(") {
+        let lower = sql.to_ascii_lowercase();
+        if self == Self::Postgres && !lower.contains("divide(") && !lower.contains('/') {
             return Ok(sql.to_string());
         }
         let dialect = GenericDialect {};
@@ -246,12 +248,9 @@ impl VisitorMut for DateTruncRewriter {
             Expr::BinaryOp {
                 left,
                 op: BinaryOperator::Divide,
-                ..
-            } if self.profile == DialectProfile::Sqlite => {
-                if !is_already_real_expr(left) {
-                    let left_sql = left.to_string();
-                    **left = parse_expr_fragment(&format!("CAST({left_sql} AS REAL)"));
-                }
+                right,
+            } => {
+                *expr = rewrite_safe_divide(self.profile, left, right);
             }
             _ => {}
         }
@@ -269,9 +268,78 @@ fn is_already_real_expr(expr: &Expr) -> bool {
             AstValue::Number(n, _) => n.contains('.'),
             _ => false,
         },
+        Expr::BinaryOp {
+            op: BinaryOperator::Multiply,
+            left,
+            right,
+        } => {
+            // `(x * 1.0)` / `(1.0 * x)` already promotes to float.
+            is_float_one(left) || is_float_one(right)
+        }
         Expr::Nested(inner) => is_already_real_expr(inner),
         _ => false,
     }
+}
+
+fn is_float_one(expr: &Expr) -> bool {
+    match expr {
+        Expr::Value(v) => match &v.value {
+            AstValue::Number(n, _) => n == "1.0" || n == "1.00",
+            _ => false,
+        },
+        Expr::Nested(inner) => is_float_one(inner),
+        _ => false,
+    }
+}
+
+/// True when `expr` is `NULLIF(…, 0)` (optionally nested), so we do not double-wrap.
+fn is_nullif_zero(expr: &Expr) -> bool {
+    match expr {
+        Expr::Nested(inner) => is_nullif_zero(inner),
+        Expr::Function(func) if func.name.to_string().eq_ignore_ascii_case("nullif") => {
+            let FunctionArguments::List(list) = &func.args else {
+                return false;
+            };
+            if list.args.len() != 2 {
+                return false;
+            }
+            match unnamed_arg_expr(&list.args[1]) {
+                Ok(arg) => matches!(
+                    arg,
+                    Expr::Value(v) if matches!(&v.value, AstValue::Number(n, _) if n == "0")
+                ),
+                Err(_) => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Float-promote numerator and wrap denominator with `NULLIF(…, 0)` (idempotent).
+fn rewrite_safe_divide(profile: DialectProfile, num: &Expr, den: &Expr) -> Expr {
+    let num_sql = num.to_string();
+    let den_sql = if is_nullif_zero(den) {
+        den.to_string()
+    } else {
+        format!("NULLIF({}, 0)", den)
+    };
+    let replacement = match profile {
+        DialectProfile::Sqlite => {
+            if is_already_real_expr(num) {
+                format!("{num_sql} / {den_sql}")
+            } else {
+                format!("CAST({num_sql} AS REAL) / {den_sql}")
+            }
+        }
+        _ => {
+            if is_already_real_expr(num) {
+                format!("{num_sql} / {den_sql}")
+            } else {
+                format!("({num_sql} * 1.0) / {den_sql}")
+            }
+        }
+    };
+    parse_expr_fragment(&replacement)
 }
 
 fn is_date_trunc(func: &Function) -> bool {
@@ -289,13 +357,9 @@ fn rewrite_divide_fn(profile: DialectProfile, func: &Function) -> Result<Expr, A
             "DIVIDE requires exactly two arguments".into(),
         ));
     }
-    let num = unnamed_arg_expr(&list.args[0])?.to_string();
-    let den = unnamed_arg_expr(&list.args[1])?.to_string();
-    let replacement = match profile {
-        DialectProfile::Sqlite => format!("CAST({num} AS REAL) / NULLIF({den}, 0)"),
-        _ => format!("({num} * 1.0) / NULLIF({den}, 0)"),
-    };
-    Ok(parse_expr_fragment(&replacement))
+    let num = unnamed_arg_expr(&list.args[0])?;
+    let den = unnamed_arg_expr(&list.args[1])?;
+    Ok(rewrite_safe_divide(profile, &num, &den))
 }
 
 fn rewrite_sqlite_ymd_fn(fname: &str, func: &Function) -> Result<Expr, AppError> {
@@ -760,8 +824,12 @@ mod tests {
             .emit_physical_sql(r#"SELECT COUNT("a") * 100 / COUNT("b") AS "pct" FROM "t""#)
             .unwrap();
         assert!(
-            div_sql.contains("AS REAL) / COUNT(\"b\")"),
+            div_sql.contains("AS REAL)"),
             "expected REAL cast on SQLite division numerator, got: {div_sql}"
+        );
+        assert!(
+            div_sql.contains("NULLIF(COUNT(\"b\"), 0)"),
+            "expected NULLIF on raw `/` denominator, got: {div_sql}"
         );
 
         let helper_sql = DialectProfile::Sqlite
@@ -776,6 +844,44 @@ mod tests {
         assert!(
             helper_sql.contains(r#"CAST(SUBSTR(CAST("d" AS TEXT), 1, 4) AS INTEGER)"#),
             "expected YEAR(d) rewrite for SQLite, got: {helper_sql}"
+        );
+
+        let raw = DialectProfile::Sqlite
+            .emit_physical_sql(r#"SELECT SUM("a") / COUNT("b") AS "r" FROM "t""#)
+            .unwrap();
+        let via_divide = DialectProfile::Sqlite
+            .emit_physical_sql(r#"SELECT DIVIDE(SUM("a"), COUNT("b")) AS "r" FROM "t""#)
+            .unwrap();
+        assert_eq!(raw, via_divide, "raw `/` and DIVIDE must emit identically");
+    }
+
+    #[test]
+    fn postgres_raw_division_gets_nullif_and_float_promote() {
+        let sql = DialectProfile::Postgres
+            .emit_physical_sql(r#"SELECT COUNT("a") / COUNT("b") AS "r" FROM "t""#)
+            .unwrap();
+        assert!(
+            sql.contains("* 1.0") && sql.contains("NULLIF(COUNT(\"b\"), 0)"),
+            "expected float promote + NULLIF on Postgres `/`, got: {sql}"
+        );
+    }
+
+    #[test]
+    fn safe_divide_is_idempotent_when_nullif_already_present() {
+        let sql = DialectProfile::Postgres
+            .emit_physical_sql(r#"SELECT "a" / NULLIF("b", 0) AS "r" FROM "t""#)
+            .unwrap();
+        assert!(
+            !sql.to_ascii_uppercase().contains("NULLIF(NULLIF("),
+            "must not double-wrap NULLIF, got: {sql}"
+        );
+        assert!(
+            sql.contains("NULLIF(\"b\", 0)"),
+            "expected original NULLIF preserved, got: {sql}"
+        );
+        assert!(
+            sql.contains("* 1.0"),
+            "expected float promote on numerator, got: {sql}"
         );
     }
 }
