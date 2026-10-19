@@ -57,8 +57,8 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 | D20 | table/view/cube `target` | **결정:** 등록 JSON에 MCP `target` id 필수. leaf table·view·cube 동일 target 강제. `list_tables`/`describe_table`=cube 표면. 같은 target cube JOIN/UNION 허용(다른 target 거절) |
 | D21 | 타깃 SQL 방언(dialect) | **결정: Cube식 DialectProfile emit.** 컴파일은 엔진 중립(canonical ANSI `"…"` · `date_trunc`). emit: `date_trunc`→엔진별 식 · quote adapt · `wrap_row_limit`. **비채택:** 자유 SQL 트랜스파일 · `sqlparser` Display 방언 위임 · **실행 bind 스타일 rewrite**(ad-hoc OLAP만, 드라이버 prepared bind 경로 없음). 상세 [ARCHITECTURE.md](ARCHITECTURE.md) · [server/DESIGN.md](server/DESIGN.md) · [server/spec.md](server/spec.md) |
 | D22 | 물리 vs 시맨틱 식별자 | **결정: 부분 완화.** `$defs/name`(시맨틱) 유지 · `$defs/physical_ident`(물리 db/schema/table/컬럼·mapping·join on·as_code key/value) 분리. view 컬럼·cube 멤버는 시맨틱 `name`만. 물리명에 공백·기호가 있으면 view 별칭 + `mappings.column`에 물리 유지. `quote_ident`는 동일 허용 집합. |
-| D23 | 시맨틱 SELECT 모드 | **결정: 그레인 기반 2-모드(Grouped vs Ungrouped).** **(1) Grouped(집계):** 명명 metric · ad-hoc 집계(`sum/count/avg/min/max`) · metric 파생 연산 **동일 SELECT 혼용 허용** + 차원 스칼라 식(`date_trunc` 등) + 차원-only `GROUP BY`(+ `HAVING`/`ORDER BY` 집계식) 허용. grain = 명시 `GROUP BY`(별칭·위치·식 포함) / 프로젝션 차원 / 명명 metric `group_by` 또는 전역 집계. 명명 metric은 활성 차원이 자신의 `group_by`에 속하는지 개별 검증, ad-hoc은 전 차원 허용. 같은 `target` cube JOIN 허용(metric 없는 JOIN 측은 참조 차원 `GROUP BY` 서브쿼리로 팬아웃 방지). **(2) Ungrouped(행 상세):** metric·집계·`GROUP BY`·`HAVING` 없는 dim/fact(+비집계 스칼라 식) 프로젝션. `SELECT DISTINCT` 보존. 비-`DISTINCT` 상세 조회는 요약 뷰(`summary: true`) 우회(원천 뷰 선택) 및 다대다 팬아웃(Chasm Trap) 방지를 위해 cube JOIN 거절. 전 모드/절에서 fact·dim·metric·segment `role` 및 `encryption` 직접 검사. |
-| D24 | metric `group_by` 의미 | **제안(미합의): 기본 grain만. 허용목록(allowlist) 폐기.** 필드명 `group_by` 유지. 질의에 `GROUP BY`/프로젝션 차원이 없으면 명명 metric `group_by`(복수면 교집합)를 유효 grain으로 쓴다. 질의가 축을 명시하면 **그 축을 따르고**, `group_by` 밖 차원으로 슬라이스해도 거절하지 않는다(`dimension X not in metric group_by` 제거). Cube multi-stage `group_by`(고정 grain·질의 무시)와 다름 — 여기는 **기본값**일 뿐 override 가능. 상세는 아래 «후속 — metric group_by = 기본 grain (D24)». |
+| D23 | 시맨틱 SELECT 모드 | **결정: 그레인 기반 2-모드(Grouped vs Ungrouped).** **(1) Grouped(집계):** 명명 metric · ad-hoc 집계(`sum/count/avg/min/max`) · metric 파생 연산 **동일 SELECT 혼용 허용** + 차원 스칼라 식(`date_trunc` 등) + 차원-only `GROUP BY`(+ `HAVING`/`ORDER BY` 집계식) 허용. grain = 명시 `GROUP BY`(별칭·위치·식 포함) / 프로젝션 차원 / 명명 metric `group_by` 기본축(D24) 또는 전역 집계. 질의 축이 metric `group_by` 밖이어도 허용(D24). ad-hoc은 전 차원 허용. 같은 `target` cube JOIN 허용(metric 없는 JOIN 측은 참조 차원 `GROUP BY` 서브쿼리로 팬아웃 방지). **(2) Ungrouped(행 상세):** metric·집계·`GROUP BY`·`HAVING` 없는 dim/fact(+비집계 스칼라 식) 프로젝션. `SELECT DISTINCT` 보존. 비-`DISTINCT` 상세 조회는 요약 뷰(`summary: true`) 우회(원천 뷰 선택) 및 다대다 팬아웃(Chasm Trap) 방지를 위해 cube JOIN 거절. 전 모드/절에서 fact·dim·metric·segment `role` 및 `encryption` 직접 검사. |
+| D24 | metric `group_by` 의미 | **결정: 기본 grain만. 허용목록(allowlist) 폐기.** 필드명 `group_by` 유지. 질의에 `GROUP BY`/프로젝션 차원이 없으면 명명 metric `group_by`(복수면 교집합)를 유효 grain으로 쓴다. 질의가 축을 명시하면 **그 축을 따르고**, `group_by` 밖 차원으로 슬라이스해도 거절하지 않는다. Cube multi-stage `group_by`(고정 grain·질의 무시)와 다름 — 여기는 **기본값**일 뿐 override 가능. |
 
 (제거: D5 세션형 Streamable HTTP, D10/D11 Frontend. stdio는 로컬용으로 복원)
 
@@ -193,11 +193,11 @@ skills/contract는 “허용목록(+기본축)”으로 적혀 있어, 범용 me
 
 #### 완료 체크리스트
 
-- [ ] D24 합의(권장 A) 후 위 표를 **결정:** 으로 갱신
-- [ ] 계약·스키마·skills·spec에서 allowlist 서술 제거 · 기본 grain으로 통일
-- [ ] 컴파일러 allowlist 검증 제거 + default-grain 유지 (TDD)
-- [ ] “범용 metric에 차원 전부 넣기” skills 체크리스트 삭제/교체
-- [ ] Cube 고정-grain과의 차이 한 줄 명시
+- [x] D24 합의(권장 A) 후 위 표를 **결정:** 으로 갱신
+- [x] 계약·스키마·skills·spec에서 allowlist 서술 제거 · 기본 grain으로 통일
+- [x] 컴파일러 allowlist 검증 제거 + default-grain 유지 (TDD)
+- [x] “범용 metric에 차원 전부 넣기” skills 체크리스트 삭제/교체
+- [x] Cube 고정-grain과의 차이 한 줄 명시
 
 ## 구현 시 작업 규칙
 

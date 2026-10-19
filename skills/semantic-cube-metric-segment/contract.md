@@ -60,7 +60,7 @@
 | `description` | 메타 사용(검색·업무 의미). 없으면 `""` |
 | `expression` | 연결된 cube의 view 컬럼(또는 fact/dim) 연산·집계·윈도우·서브쿼리 식. 예: `sum(sale_amount)` |
 | `aggregation` | `group` \| `rollup` \| `cube` \| `grouping_sets` |
-| `group_by` | `aggregation=group`일 때 필수: 이 metric과 함께 `GROUP BY`/프로젝션할 수 있는 **허용 view 컬럼(allowlist)** 배열이자 미지정 시 기본 그룹핑 축. 컴파일러가 `metric.group_by`에 없는 차원으로 그룹핑하는 질의를 거절하므로(`dimension X not in metric group_by`), 범용 metric은 해당 그레인에서 유효한 큐브의 모든 컬럼 기반 dimension view 컬럼을 포함해야 한다(임의로 1~2개만 넣지 말 것). |
+| `group_by` | `aggregation=group`일 때 필수: 질의에 `GROUP BY`/차원 프로젝션이 없을 때 쓰는 **기본 GROUP BY 축**(view 컬럼 배열, D24). 허용목록이 아니며, 질의가 다른 차원으로 자르면 override된다. bare `SELECT metric`이 과다 축으로 묶이지 않게 **기본으로 쓰고 싶은 축만** 넣는다(슬라이스 가능 차원 전체를 나열할 필요 없음). |
 | `filter` | `{ expression }` 또는 `null` |
 | `name` | 같은 cube의 dimension·fact 이름과 **겹치면 안 됨** |
 
@@ -74,7 +74,7 @@
 - [ ] cube·dim·fact·metric·segment `description`은 메타 사용 서술만(생성 출처 문구 없음). 없으면 `""`
 - [ ] `column`과 `expression` 동시 사용 없음
 - [ ] metric `name` ∉ 같은 cube dimension/fact names
-- [ ] `aggregation=group` ⇒ `group_by` ⊆ view columns (그레인 호환 차원 전체 포함 확인)
+- [ ] `aggregation=group` ⇒ `group_by` ⊆ view columns (기본 리포트 축만; 차원 전부 나열 금지에 가깝게)
 - [ ] segment `filter.expression` non-empty
 - [ ] 식에 다중 문장·쓰기·쓰기 CTE 없음
 - [ ] `as_code.table`·key/value 컬럼이 등록 table에 존재(dimension만)

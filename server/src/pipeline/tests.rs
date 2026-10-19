@@ -406,7 +406,7 @@
     }
 
     #[test]
-    fn compiles_mixing_named_metric_and_adhoc_and_enforces_named_grain() {
+    fn compiles_mixing_named_metric_and_adhoc_and_allows_query_grain_override() {
         let docs = example_docs();
         let sql = compile_semantic_sql(
             &docs,
@@ -422,17 +422,25 @@
         assert!(upper.contains("ROUND("), "{sql}");
         assert_select_only(&sql).unwrap();
 
-        // Named metric `revenue` only allows `region_code` and `order_date` in group_by, so `customer_id` is rejected when mixed with `revenue`.
-        let err = compile_semantic_sql(
+        // D24: `revenue.group_by` is default grain only — slicing by `customer_id` (not in that list) is allowed.
+        let override_sql = compile_semantic_sql(
             &docs,
             "SELECT customer_id, revenue, count(*) AS cnt FROM sales",
             Some("finance"),
         )
-        .unwrap_err();
-        assert!(
-            matches!(err, AppError::Validation(ref m) if m.contains("not in metric group_by")),
-            "{err:?}"
-        );
+        .unwrap();
+        let o = override_sql.to_ascii_lowercase();
+        assert!(o.contains("group by"), "{override_sql}");
+        assert!(o.contains("customer_id"), "{override_sql}");
+        assert_select_only(&override_sql).unwrap();
+
+        // Bare named metric still uses metadata default group_by axes.
+        let bare = compile_semantic_sql(&docs, "SELECT revenue FROM sales", Some("finance")).unwrap();
+        let b = bare.to_ascii_lowercase();
+        assert!(b.contains("group by"), "{bare}");
+        assert!(b.contains("region_code") || b.contains("region"), "{bare}");
+        assert!(b.contains("order_date") || b.contains("order"), "{bare}");
+        assert_select_only(&bare).unwrap();
 
         // Pure ad-hoc aggregate without `revenue` can group by `customer_id`.
         let adhoc_ok = compile_semantic_sql(
