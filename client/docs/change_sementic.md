@@ -1,7 +1,7 @@
 # 시맨틱 수정 계획 (초안 · 검토용)
 
 > **상태**: Eric 검토·수정 대기. 구현·등록·재eval은 이 문서 합의 후에만.
-> **근거**: `client/docs/eval_report.md` (EX 37.76%, 286문항) · `target_db/generate_meta.py` / `enrich_meta_from_qa.py` · skills `semantic-*` 계약 · OLAP star/grain (chasm·fan trap 회피).
+> **근거**: `client/docs/eval_report.md` (최신 EX 34.97% · 직전 37.76%, 286문항) · `target_db/generate_meta.py` / `enrich_meta_from_qa.py` · skills `semantic-*` 계약 · OLAP star/grain (chasm·fan trap 회피).
 > **범위**: **시맨틱 메타(table/view/cube/metric/segment)와 그 생성기**. 에이전트 프롬프트·EX Soft-F1·서버 방언은 [§6 범위 밖](#6-범위-밖-별도-트랙)에만 링크.
 
 파일명 `change_sementic`은 요청 경로 그대로(오타 `sementic` 유지).
@@ -12,7 +12,7 @@
 
 | 목표 | 성공 기준 (제안) |
 |------|------------------|
-| BIRD SMALL_DBS EX 상향 | 전체 EX **≥ 50%** (현재 37.76%). 1차 게이트: `california_schools` **≥ 25%**, `formula_1` **≥ 40%**. |
+| BIRD SMALL_DBS EX 상향 | 전체 EX **≥ 50%** (현재 34.97%). 1차 게이트: `california_schools` **≥ 25%**, `formula_1` **≥ 40%**. |
 | 그레인 안전 | 집계 질의에서 Fan/Chasm으로 인한 “행 수 과다/공집합” 실패가 **시맨틱 원인**으로 재현·감소 가능한 수준으로 줄어듦. |
 | 에이전트 발견성 | 질문 어휘(`excellence rate`, `eligible free`, `Virtual=F` 등) ↔ `describe_table`/metric/segment/description **1:1 매핑**이 문서에 명시. |
 
@@ -50,10 +50,10 @@ sqlite → generate_meta.py → meta/{table,view,cube,*_count}.json
 
 | 우선 | db_id | 현재 EX | 초점 |
 |------|-------|---------|------|
-| P0 | california_schools | 3.3% | 명명·동의어·metric/segment 발견성, schools↔frpm↔satscores 그레인 |
-| P0 | formula_1 | 28.8% | **멀티 큐브**(results / lapTimes / standings …)로 One-Big-View 해체 |
-| P1 | student_club | 54.2% | event–budget 직접 경로·amount/status 모호성 정리 |
-| P1 | toxicology · thrombosis | 37.5% / 30% | bridge·나이/진단 코호트 segment·metric |
+| P0 | california_schools | 10.0% | 명명·동의어·metric/segment 발견성, schools↔frpm↔satscores 그레인 |
+| P0 | formula_1 | 16.7% | **멀티 큐브**(results / lapTimes / standings …)로 One-Big-View 해체 |
+| P1 | student_club | 52.1% | event–budget 직접 경로·amount/status 모호성 정리 |
+| P1 | toxicology · thrombosis | 30.0% / 34.0% | bridge·나이/진단 코호트 segment·metric |
 | P2 | superhero | 61.5% | 유지·회귀만 (role-playing 이미 분리) |
 
 ---
@@ -102,7 +102,7 @@ sqlite → generate_meta.py → meta/{table,view,cube,*_count}.json
 
 ### 4.2 P0-B — california_schools 메타 큐레이션
 
-**문제:** EX 3.3%. schools/frpm/satscores 조인은 단순(2 join)이나 **멤버·메트릭 발견 실패**가 큼. enrich에 `excellence_rate` / `eligible_free_rate_k12` / `avg_math_score` / `exclusively_virtual`가 **이미 존재**하나 에이전트가 컬럼처럼 오용.
+**문제:** EX 10.0%(직전 3.3%). schools/frpm/satscores 조인은 단순(2 join)이나 **멤버·메트릭 발견 실패**가 큼. enrich에 `excellence_rate` / `eligible_free_rate_k12` / `avg_math_score` / `exclusively_virtual`가 **이미 존재**하나 에이전트가 컬럼처럼 오용.
 
 **작업 (시맨틱):**
 
