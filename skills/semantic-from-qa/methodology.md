@@ -45,7 +45,7 @@
 
 - 기존 cube가 있으면 **덮어쓰지 말고** 멤버·metric·segment를 추가·수정한다.
 - 같은 식·같은 필터면 이름을 하나로 통합한다 (질문 문구를 name에 넣지 말 것).
-- `aggregation=group` metric의 `group_by`는 질의에 축이 없을 때 쓰는 **기본 grain**이다(D24, 허용목록 아님). bare `SELECT metric` 결과에 맞는 **기본 리포트 축만** 넣고, 질문마다 다른 슬라이스는 시맨틱 SQL의 `GROUP BY`/차원 프로젝션으로 override한다.
+- `aggregation=group` metric의 `group_by`는 명명 metric을 컴파일할 때의 **기본 grain**이다(D24, 허용목록 아님). `execute_sql`은 metric 이름을 식별자로 쓰지 않으므로(D26), 질의 축은 ad-hoc `GROUP BY`/차원 프로젝션으로 쓴다. 메타에는 기본으로 쓰고 싶은 축만 넣는다.
 - segment `filter`는 cube **멤버 이름** 기준 boolean 한 식(필요 시 `IN (SELECT …)`/`EXISTS (SELECT …)` 포함 가능).
 - 이름 우선권·식 제한은 cube 스킬 contract와 동일.
 

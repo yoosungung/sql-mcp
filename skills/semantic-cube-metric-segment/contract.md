@@ -22,7 +22,7 @@
   - 비율·산술: 표준 연산자 `+ - * /`를 1급으로 사용(`(A - B) * 1.0 / C`, `A / C`). emit이 `/` 분모를 `NULLIF(…, 0)`으로 감싸고 실수로 승격한다. `DIVIDE(num, den)`은 동일 emit의 호환 별칭.
   - 날짜·문자열 편의 스칼라 함수: `CURRENT_DATE`, `CURRENT_TIMESTAMP`, `NOW()`, `date_trunc('year'|'month'|'day'|'hour', x)`, `YEAR(x)`, `MONTH(x)`, `DAY(x)`, `DATEDIFF(end, start)`(일수), `EXTRACT(YEAR|MONTH|DAY|HOUR FROM x)`, `STRFTIME(fmt, x)`, `SUBSTR`/`SUBSTRING`, `LENGTH`, `REPLACE`, `INSTR`, `IFNULL`, `IIF(cond, t, f)`
   - **윈도우 함수 (`OVER (PARTITION BY … ORDER BY …)`):** `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `NTILE`, `PERCENT_RANK`, `CUME_DIST`, `LAG`, `LEAD`, `FIRST_VALUE`, `LAST_VALUE`, `NTH_VALUE` 및 `SUM`/`COUNT`/`AVG`/`MIN`/`MAX` `OVER (...)`
-  - **등록된 메타데이터 내 서브쿼리:** `metric.expression`, `metric.filter.expression`, `segment.filter.expression`에는 읽기 전용 `SELECT` 서브쿼리(`(SELECT …)`, `IN (SELECT …)`, `EXISTS (SELECT …)`)를 허용한다. 서브쿼리 내부는 시맨틱 큐브 SQL(컴파일러가 재귀 컴파일) 또는 물리 SQL로 작성할 수 있으며, 외부 스코프의 식별자 치환은 서브쿼리 내부 스코프를 침범하지 않는다. (단, DW 에이전트가 `execute_sql`에 직접 넘기는 ad-hoc `SELECT`/`WHERE`의 서브쿼리는 보안상 거부됨.)
+  - **읽기 전용 서브쿼리:** 등록 `metric.expression`·`metric.filter`·`segment.filter`와, DW `execute_sql`의 ad-hoc SELECT/WHERE(D26) 모두 `(SELECT …)`·`IN (SELECT …)`·`EXISTS (SELECT …)`를 허용한다. 서브쿼리 안에 cube가 있으면 재귀 컴파일하고, 실패하면 fail-closed. 외부 스코프의 식별자 치환은 서브쿼리 내부 스코프를 침범하지 않는다.
   - 다중 문장·쓰기·쓰기 CTE 거부.
 - cube/metric/segment 식의 식별자: 저장 시에는 연결 그래프 위주; **컴파일 직전**에 dimension·fact·(해당 시) view/물리 컬럼으로 해석. 실패 시 `validation`.
 - cube·metric·segment의 식에서 쓰는 이름은 그 cube의 **dimension / fact 이름**(metric `expression`의 피연산은 view 컬럼 기준 연산으로 작성하되, 질의·segment filter는 멤버 이름).
@@ -61,7 +61,7 @@
 | `description` | 메타 사용(검색·업무 의미). 없으면 `""` |
 | `expression` | 연결된 cube의 view 컬럼(또는 fact/dim) 연산·집계·윈도우·서브쿼리 식. 예: `sum(sale_amount)` |
 | `aggregation` | `group` \| `rollup` \| `cube` \| `grouping_sets` |
-| `group_by` | `aggregation=group`일 때 필수: 질의에 `GROUP BY`/차원 프로젝션이 없을 때 쓰는 **기본 GROUP BY 축**(view 컬럼 배열, D24). 허용목록이 아니며, 질의가 다른 차원으로 자르면 override된다. bare `SELECT metric`이 과다 축으로 묶이지 않게 **기본으로 쓰고 싶은 축만** 넣는다(슬라이스 가능 차원 전체를 나열할 필요 없음). |
+| `group_by` | `aggregation=group`일 때 필수: 명명 metric을 컴파일할 때 축이 없으면 쓰는 **기본 GROUP BY 축**(view 컬럼 배열, D24). 허용목록이 아니다. `execute_sql`은 metric 이름을 쓰지 않으므로(D26) **기본으로 쓰고 싶은 축만** 넣는다. |
 | `filter` | `{ expression }` 또는 `null` |
 | `name` | 같은 cube의 dimension·fact 이름과 **겹치면 안 됨** |
 

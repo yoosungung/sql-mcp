@@ -544,14 +544,8 @@ pub(crate) fn classify_projection_for_cube(
     is_single_cube: bool,
     join_sides: Option<&[(String, String)]>,
 ) -> Result<ClassifiedProjection, AppError> {
-    let metric_names: HashSet<String> = docs
-        .iter()
-        .filter(|d| {
-            d.get("kind").and_then(|v| v.as_str()) == Some("metric")
-                && d.get("cube").and_then(|v| v.as_str()) == Some(cube_name)
-        })
-        .filter_map(|d| d.get("name").and_then(|v| v.as_str()).map(str::to_string))
-        .collect();
+    // D26: registered metrics are examples only — not SQL identifiers.
+    let metric_names: HashSet<String> = HashSet::new();
     let cube = find_doc(docs, "cube", cube_name)?;
     let mut dim_names = HashSet::new();
     let mut member_names = HashSet::new();
@@ -565,8 +559,7 @@ pub(crate) fn classify_projection_for_cube(
             }
         }
     }
-    let mut known_on_side = member_names.clone();
-    known_on_side.extend(metric_names.iter().cloned());
+    let known_on_side = member_names.clone();
 
     let mut out = ClassifiedProjection::default();
     let mut adhoc_idx = 0usize;
@@ -667,13 +660,13 @@ pub(crate) fn classify_projection_for_cube(
             }
         };
 
-        assert_no_subquery_in_ast(&stripped_expr)?;
         let stripped_sql = stripped_expr.to_string();
         let out_alias = alias_opt.unwrap_or_else(|| sanitize_adhoc_alias(&stripped_sql));
         let ids = extract_idents(&stripped_sql)?;
         let refs_named_metric = ids.iter().any(|id| metric_names.contains(id));
         let has_agg = contains_aggregate_sql(&stripped_sql)?;
         let has_window = contains_window_sql(&stripped_sql)?;
+        let has_subquery = expr_contains_subquery(&stripped_expr);
 
         if !refs_named_metric && has_agg {
             // Pure ad-hoc aggregate expression (e.g., sum(sale_amount), round(avg(x), 2), RANK() OVER (ORDER BY sum(sale_amount))).
@@ -734,15 +727,17 @@ pub(crate) fn classify_projection_for_cube(
             });
             out.attributed_items.push((idx, out_alias));
         } else {
-            // Non-aggregate scalar or window expression over cube dimensions/facts.
-            if ids.is_empty() && !has_window {
+            // Non-aggregate scalar, window, or subquery expression over cube dimensions/facts.
+            if ids.is_empty() && !has_window && !has_subquery {
                 return Err(AppError::Validation(
-                    "semantic SELECT projection must reference a cube member or metric".into(),
+                    "semantic SELECT projection must reference a cube member".into(),
                 ));
             }
             assert_scalar_expr(&stripped_sql)?;
-            assert_idents_known(&stripped_sql, &member_names)?;
-            if !has_window && !out.dims.iter().any(|d| d == &stripped_sql) {
+            if !ids.is_empty() {
+                assert_idents_known(&stripped_sql, &member_names)?;
+            }
+            if !has_window && !has_subquery && !out.dims.iter().any(|d| d == &stripped_sql) {
                 out.dims.push(stripped_sql.clone());
             }
             out.projections.push(CubeProjection {
@@ -753,6 +748,18 @@ pub(crate) fn classify_projection_for_cube(
         }
     }
     Ok(out)
+}
+
+fn expr_contains_subquery(expr: &Expr) -> bool {
+    use sqlparser::ast::{Visit, Visitor};
+    struct Det;
+    impl Visitor for Det {
+        type Break = ();
+        fn pre_visit_query(&mut self, _q: &Query) -> std::ops::ControlFlow<Self::Break> {
+            std::ops::ControlFlow::Break(())
+        }
+    }
+    expr.visit(&mut Det).is_break()
 }
 
 pub(crate) fn extract_where_for_cube(
@@ -766,40 +773,21 @@ pub(crate) fn extract_where_for_cube(
     let Some(selection) = &select.selection else {
         return Ok((Vec::new(), Vec::new()));
     };
-    let seg_map: HashMap<String, &Value> = docs
-        .iter()
-        .filter(|d| {
-            d.get("kind").and_then(|v| v.as_str()) == Some("segment")
-                && d.get("cube").and_then(|v| v.as_str()) == Some(cube_name)
-        })
-        .filter_map(|d| {
-            d.get("name")
-                .and_then(|v| v.as_str())
-                .map(|n| (n.to_string(), d))
-        })
-        .collect();
+    // D26: segments are examples only — not WHERE identifiers.
+    let empty_seg: HashMap<String, &Value> = HashMap::new();
 
     let mut conjuncts = Vec::new();
     split_and_conjuncts(selection, &mut conjuncts);
 
-    let mut segments = Vec::new();
     let mut where_exprs = Vec::new();
 
     for conj in conjuncts {
-        if let Some(seg_name) = match_segment_ident(conj, &seg_map, only_alias, cube_name) {
-            if !segments.iter().any(|s| s == &seg_name) {
-                segments.push(seg_name);
-            }
-            continue;
-        }
         if !is_single_cube && !expr_belongs_to_cube(conj, docs, cube_name, only_alias)? {
             continue;
         }
-        // Reject caller-supplied subqueries in ad-hoc WHERE before expanding registered segments.
-        assert_no_subquery_in_ast(conj)?;
         let rewritten = expand_segments_and_strip_qualifier(
             conj,
-            &seg_map,
+            &empty_seg,
             cube_name,
             only_alias,
             is_single_cube,
@@ -808,25 +796,7 @@ pub(crate) fn extract_where_for_cube(
         where_exprs.push(rewritten.to_string());
     }
 
-    Ok((segments, where_exprs))
-}
-
-pub(crate) fn assert_no_subquery_in_ast(expr: &Expr) -> Result<(), AppError> {
-    use sqlparser::ast::{Visit, Visitor};
-    struct SubqueryDetector;
-    impl Visitor for SubqueryDetector {
-        type Break = ();
-        fn pre_visit_query(&mut self, _q: &Query) -> std::ops::ControlFlow<Self::Break> {
-            std::ops::ControlFlow::Break(())
-        }
-    }
-    let mut det = SubqueryDetector;
-    if expr.visit(&mut det).is_break() {
-        return Err(AppError::Validation(
-            "subqueries are not allowed in semantic expressions".into(),
-        ));
-    }
-    Ok(())
+    Ok((Vec::new(), where_exprs))
 }
 
 pub(crate) fn split_and_conjuncts<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
@@ -892,15 +862,6 @@ pub(crate) fn expr_belongs_to_cube(
                 if let Some(n) = item.get("name").and_then(|v| v.as_str()) {
                     known.insert(n.to_string());
                 }
-            }
-        }
-    }
-    for d in docs {
-        if d.get("kind").and_then(|v| v.as_str()) == Some("segment")
-            && d.get("cube").and_then(|v| v.as_str()) == Some(cube_name)
-        {
-            if let Some(n) = d.get("name").and_then(|v| v.as_str()) {
-                known.insert(n.to_string());
             }
         }
     }

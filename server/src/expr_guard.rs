@@ -36,11 +36,11 @@ const EXTRACT_FIELDS: &[DateTimeField] = &[
     DateTimeField::Hour,
 ];
 
-/// Ad-hoc / non-subquery metric `expression`: single scalar/aggregate/window expr (D16).
+/// Ad-hoc metric/aggregate expression: scalar/aggregate/window + read-only subqueries (D16/D26).
 pub fn assert_metric_expr(expr: &str) -> Result<(), AppError> {
     let (normalized, _) = replace_binds(expr);
     let e = parse_as_select_expr(&normalized)?;
-    walk_value_expr_opts(&e, true, false)?;
+    walk_value_expr_opts(&e, true, true)?;
     Ok(())
 }
 
@@ -52,11 +52,11 @@ pub fn assert_metadata_metric_expr(expr: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// D23 scalar/window expression over dimensions/facts (no group-collapsing aggregate functions allowed).
+/// D23/D26 scalar/window/subquery expression over dimensions/facts (no group-collapsing aggregates).
 pub fn assert_scalar_expr(expr: &str) -> Result<(), AppError> {
     let (normalized, _) = replace_binds(expr);
     let e = parse_as_select_expr(&normalized)?;
-    walk_value_expr_opts(&e, false, false)?;
+    walk_value_expr_opts(&e, false, true)?;
     Ok(())
 }
 
@@ -234,11 +234,11 @@ pub fn assert_segment_filter_expr(expr: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// HAVING predicate: single boolean expr where value operands may contain aggregates (D23).
+/// HAVING predicate: boolean with aggregates and read-only subqueries (D23/D26).
 pub fn assert_having_expr(expr: &str) -> Result<(), AppError> {
     let (normalized, _) = replace_binds(expr);
     let e = parse_as_where_expr(&normalized)?;
-    walk_bool_expr_full(&e, true, false)?;
+    walk_bool_expr_full(&e, true, true)?;
     Ok(())
 }
 
@@ -835,8 +835,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_metric_subquery() {
-        assert!(assert_metric_expr("(select 1)").is_err());
+    fn adhoc_metric_allows_subquery() {
+        assert_metric_expr("sum(sale_amount) / (select sum(sale_amount) from sales)").unwrap();
+        assert_scalar_expr("(select max(sale_amount) from sales)").unwrap();
     }
 
     #[test]

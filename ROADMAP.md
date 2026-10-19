@@ -57,9 +57,10 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 | D20 | table/view/cube `target` | **결정:** 등록 JSON에 MCP `target` id 필수. leaf table·view·cube 동일 target 강제. `list_tables`/`describe_table`=cube 표면. 같은 target cube JOIN/UNION 허용(다른 target 거절) |
 | D21 | 타깃 SQL 방언(dialect) | **결정: Cube식 DialectProfile emit.** 컴파일은 엔진 중립(canonical ANSI `"…"` · `date_trunc`). emit: `date_trunc`→엔진별 식 · quote adapt · `wrap_row_limit`. **비채택:** 자유 SQL 트랜스파일 · `sqlparser` Display 방언 위임 · **실행 bind 스타일 rewrite**(ad-hoc OLAP만, 드라이버 prepared bind 경로 없음). 상세 [ARCHITECTURE.md](ARCHITECTURE.md) · [server/DESIGN.md](server/DESIGN.md) · [server/spec.md](server/spec.md) |
 | D22 | 물리 vs 시맨틱 식별자 | **결정: 부분 완화.** `$defs/name`(시맨틱) 유지 · `$defs/physical_ident`(물리 db/schema/table/컬럼·mapping·join on·as_code key/value) 분리. view 컬럼·cube 멤버는 시맨틱 `name`만. 물리명에 공백·기호가 있으면 view 별칭 + `mappings.column`에 물리 유지. `quote_ident`는 동일 허용 집합. |
-| D23 | 시맨틱 SELECT 모드 | **결정: 그레인 기반 2-모드(Grouped vs Ungrouped).** **(1) Grouped(집계):** 명명 metric · ad-hoc 집계(`sum/count/avg/min/max`) · metric 파생 연산 **동일 SELECT 혼용 허용** + 차원 스칼라 식(`date_trunc` 등) + 차원-only `GROUP BY`(+ `HAVING`/`ORDER BY` 집계식) 허용. grain = 명시 `GROUP BY`(별칭·위치·식 포함) / 프로젝션 차원 / 명명 metric `group_by` 기본축(D24) 또는 전역 집계. 질의 축이 metric `group_by` 밖이어도 허용(D24). ad-hoc은 전 차원 허용. 같은 `target` cube JOIN 허용(metric 없는 JOIN 측은 참조 차원 `GROUP BY` 서브쿼리로 팬아웃 방지). **(2) Ungrouped(행 상세):** metric·집계·`GROUP BY`·`HAVING` 없는 dim/fact(+비집계 스칼라 식) 프로젝션. `SELECT DISTINCT` 보존. 비-`DISTINCT` 상세 조회는 요약 뷰(`summary: true`) 우회(원천 뷰 선택) 및 다대다 팬아웃(Chasm Trap) 방지를 위해 cube JOIN 거절. 전 모드/절에서 fact·dim·metric·segment `role` 및 `encryption` 직접 검사. |
-| D24 | metric `group_by` 의미 | **결정: 기본 grain만. 허용목록(allowlist) 폐기.** 필드명 `group_by` 유지. 질의에 `GROUP BY`/프로젝션 차원이 없으면 명명 metric `group_by`(복수면 교집합)를 유효 grain으로 쓴다. 질의가 축을 명시하면 **그 축을 따르고**, `group_by` 밖 차원으로 슬라이스해도 거절하지 않는다. Cube multi-stage `group_by`(고정 grain·질의 무시)와 다름 — 여기는 **기본값**일 뿐 override 가능. |
-| D25 | 표준 날짜/시간 함수 | **결정: D21 emit 확장.** metric/dimension/filter 식에서 `CURRENT_DATE`·`CURRENT_TIMESTAMP`·`NOW()`·`DATEDIFF(end,start)`(일수)·`EXTRACT(YEAR\|MONTH\|DAY\|HOUR FROM x)` 공식 허용. `YEAR`/`MONTH`/`DAY`는 PG/Oracle도 `EXTRACT`로 rewrite. **비범위:** `DATEADD`/`TIMESTAMPDIFF`/3인자 `DATEDIFF`/임의 interval. 상세 [ARCHITECTURE.md](ARCHITECTURE.md) §5.1 · [server/spec.md](server/spec.md) |
+| D23 | 시맨틱 SELECT 모드 | **결정: 그레인 기반 2-모드(Grouped vs Ungrouped).** **(1) Grouped(집계):** ad-hoc 집계(`sum/count/avg/min/max`)·파생 연산·윈도우 **동일 SELECT 혼용 허용** + 차원 스칼라 식(`date_trunc` 등) + 차원-only `GROUP BY`(+ `HAVING`/`ORDER BY` 집계식) 허용. grain = 명시 `GROUP BY`(별칭·위치·식 포함) / 프로젝션 차원 또는 전역 집계. 같은 `target` cube JOIN 허용(집계 없는 JOIN 측은 참조 차원 `GROUP BY` 서브쿼리로 팬아웃 방지). **(2) Ungrouped(행 상세):** 집계·`GROUP BY`·`HAVING` 없는 dim/fact(+비집계 스칼라 식) 프로젝션. `SELECT DISTINCT` 보존. 비-`DISTINCT` 상세 조회는 요약 뷰(`summary: true`) 우회(원천 뷰 선택) 및 다대다 팬아웃(Chasm Trap) 방지를 위해 cube JOIN 거절. 전 모드/절에서 fact·dim `role` 및 `encryption` 직접 검사. 명명 metric/segment는 SQL 식별자가 아님(D26). |
+| D24 | metric `group_by` 의미 | **결정: 기본 grain만. 허용목록(allowlist) 폐기.** 필드명 `group_by` 유지. 명명 metric을 컴파일할 때 질의 축이 없으면 `group_by`(복수면 교집합)를 유효 grain으로 쓴다. 축이 있으면 override하고, 목록 밖 차원도 거절하지 않는다. `execute_sql`은 그 이름을 식별자로 쓰지 않는다(D26). Cube multi-stage 고정 grain과 다름. |
+| D25 | 표준 날짜/시간 함수 | **결정: D21 emit 확장.** metric/dimension/filter 식에서 `CURRENT_DATE`·`CURRENT_TIMESTAMP`·`NOW()`·`DATEDIFF(end,start)`(일수)·`EXTRACT(YEAR\|MONTH\|DAY\|HOUR FROM x)` 공식 허용. `YEAR`/`MONTH`/`DAY`는 PG/Oracle도 `EXTRACT`로 rewrite. 산술 `/`는 emit에서 0-안전 실수 나눗셈(`NULLIF`). **비범위:** `DATEADD`/`TIMESTAMPDIFF`/3인자 `DATEDIFF`/임의 interval. 상세 [ARCHITECTURE.md](ARCHITECTURE.md) §5.1 · [server/spec.md](server/spec.md) |
+| D26 | metric/segment DW 표면 · ad-hoc SELECT | **결정:** metric·segment는 cube **컬럼이 아님**. `describe_table`은 expression/filter를 **`examples`로만** 제시하고, `execute_sql`은 명명 metric/segment 식별자를 **해석하지 않음**(에이전트가 dim/fact로 ad-hoc SELECT 작성). `search_columns` 인덱스에서 metric/segment 제외. 시맨틱 SQL은 **읽기 전용 ANSI SELECT 전체** 허용(서브쿼리·읽기 CTE·윈도우·UNION/EXCEPT/INTERSECT 등). FROM `cube.physical`·`AS alias`는 첫 식별자를 큐브로 라우팅. INSERT/UPDATE/DELETE/DDL/다중 문장/쓰기 CTE만 거절. 자유 물리 SELECT 경로 없음(D19). |
 
 (제거: D5 세션형 Streamable HTTP, D10/D11 Frontend. stdio는 로컬용으로 복원)
 
@@ -152,15 +153,23 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 
 ### 후속 — metric `group_by` = 기본 grain (D24)
 
-- [x] allowlist 검증 제거. 질의 축이 `group_by` 밖이어도 허용하고, bare metric은 `group_by` 교집합을 기본 GROUP BY로 유지
-- [x] 계약·스키마·skills·spec을 기본 grain으로 통일
+- [x] allowlist 검증 제거. 명명 metric 컴파일 시 축이 없으면 `group_by` 교집합, 있으면 override
+- [x] 계약·스키마·skills를 기본 grain으로 통일
 - [x] Cube 고정 grain과 구분(여기는 override 가능)
 
 ### 후속 — 표준 날짜/시간 함수 (D25)
 
 - [x] `expr_guard`: `CURRENT_DATE`·`CURRENT_TIMESTAMP`·`NOW`·`DATEDIFF` allowlist · `EXTRACT(YEAR|MONTH|DAY|HOUR FROM …)` AST 허용
-- [x] `DialectProfile` emit: `NOW`→Oracle `CURRENT_TIMESTAMP` · `DATEDIFF` 4방언 · `YEAR`/`MONTH`/`DAY` PG/Oracle `EXTRACT` · SQLite `EXTRACT`→`strftime`
+- [x] `DialectProfile` emit: `NOW`→Oracle `CURRENT_TIMESTAMP` · `DATEDIFF` 4방언 · `YEAR`/`MONTH`/`DAY` PG/Oracle `EXTRACT` · SQLite `EXTRACT`→`strftime` · `/` → `NULLIF` 실수 나눗셈
 - [x] `sample` 경로 `emit_physical_sql` 정렬 · 계약·스킬 문서 · TDD
+
+### 후속 — metric/segment 예제화 · 읽기 ANSI SELECT (D26)
+
+- [x] DW 표면: `describe_table.examples` · `search_columns`에서 metric/segment 제외 · 툴/에이전트 문구
+- [x] `execute_sql` 명명 metric/segment 식별자 해석 제거(ad-hoc dim/fact만)
+- [x] ad-hoc 읽기 ANSI SELECT: 서브쿼리·CTE·FROM 파생·윈도우·집합연산 · 서브쿼리 확장 fail-closed
+- [x] FROM `cube.physical`·`AS alias`는 첫 식별자를 큐브로 라우팅
+- [x] 계약·스펙·client `SYSTEM` 프롬프트 · TDD
 
 ## 구현 시 작업 규칙
 

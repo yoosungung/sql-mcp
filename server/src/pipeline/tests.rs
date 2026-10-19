@@ -44,12 +44,12 @@
     }
 
     #[test]
-    fn compiles_revenue_with_segment() {
+    fn compiles_adhoc_sum_with_status_filter() {
         let docs = example_docs();
         let sql = compile_semantic_sql(
             &docs,
-            "SELECT revenue FROM sales WHERE paid",
-            Some("branch"),
+            "SELECT sum(sale_amount) AS revenue FROM sales WHERE status_code = 'PAID'",
+            Some("finance"),
         )
         .unwrap();
         assert!(sql.to_ascii_lowercase().contains("sum("));
@@ -62,13 +62,13 @@
         // LLM physical habit: FROM cube.physical_table → route to cube.
         let docs = example_docs();
         assert_eq!(
-            cube_name_from_semantic_sql("SELECT revenue FROM sales.orders").unwrap(),
+            cube_name_from_semantic_sql("SELECT sum(sale_amount) FROM sales.orders").unwrap(),
             "sales"
         );
         let sql = compile_semantic_sql(
             &docs,
-            "SELECT revenue FROM sales.orders WHERE paid",
-            Some("branch"),
+            "SELECT sum(sale_amount) AS revenue FROM sales.orders",
+            Some("finance"),
         )
         .unwrap();
         assert!(sql.to_ascii_lowercase().contains("sum("));
@@ -79,16 +79,16 @@
     fn accepts_from_cube_with_alias() {
         let docs = example_docs();
         assert_eq!(
-            cube_names_from_semantic_sql("SELECT T1.revenue FROM sales AS T1").unwrap(),
+            cube_names_from_semantic_sql("SELECT T1.region_code FROM sales AS T1").unwrap(),
             vec!["sales".to_string()]
         );
         let sql = compile_semantic_sql(
             &docs,
-            "SELECT T1.revenue FROM sales AS T1 WHERE paid",
-            Some("branch"),
+            "SELECT T1.region_code FROM sales AS T1",
+            Some("finance"),
         )
         .unwrap();
-        assert!(sql.to_ascii_lowercase().contains("sum("));
+        assert!(sql.to_ascii_lowercase().contains("region_code"), "{sql}");
         assert_select_only(&sql).unwrap();
     }
 
@@ -96,13 +96,13 @@
     fn accepts_qualified_from_with_alias() {
         let docs = example_docs();
         assert_eq!(
-            cube_name_from_semantic_sql("SELECT T1.revenue FROM sales.orders AS T1").unwrap(),
+            cube_name_from_semantic_sql("SELECT sum(T1.sale_amount) FROM sales.orders AS T1").unwrap(),
             "sales"
         );
         let sql = compile_semantic_sql(
             &docs,
-            "SELECT T1.revenue FROM sales.orders AS T1 WHERE paid",
-            Some("branch"),
+            "SELECT sum(T1.sale_amount) AS revenue FROM sales.orders AS T1",
+            Some("finance"),
         )
         .unwrap();
         assert!(sql.to_ascii_lowercase().contains("sum("));
@@ -114,8 +114,8 @@
         let docs = docs_with_second_cube("dw");
         let sql = compile_semantic_sql(
             &docs,
-            "SELECT revenue FROM sales UNION ALL SELECT revenue_b FROM sales_b",
-            None,
+            "SELECT sum(sale_amount) FROM sales UNION ALL SELECT sum(sale_amount) FROM sales_b",
+            Some("finance"),
         )
         .unwrap();
         let u = sql.to_ascii_uppercase();
@@ -129,8 +129,8 @@
         // sales stays dw; sales_b is other
         let err = compile_semantic_sql(
             &docs,
-            "SELECT revenue FROM sales UNION ALL SELECT revenue_b FROM sales_b",
-            None,
+            "SELECT sum(sale_amount) FROM sales UNION ALL SELECT sum(sale_amount) FROM sales_b",
+            Some("finance"),
         )
         .unwrap_err();
         assert!(matches!(err, AppError::Validation(_)), "{err:?}");
@@ -142,9 +142,9 @@
         let docs = docs_with_second_cube("dw");
         let sql = compile_semantic_sql(
             &docs,
-            "SELECT sales.revenue, sales_b.revenue_b \
+            "SELECT sum(sales.sale_amount), sum(sales_b.sale_amount) \
              FROM sales JOIN sales_b ON sales.region_code = sales_b.region_code",
-            None,
+            Some("finance"),
         )
         .unwrap();
         let u = sql.to_ascii_uppercase();
@@ -158,9 +158,9 @@
         let docs = docs_with_second_cube("other");
         let err = compile_semantic_sql(
             &docs,
-            "SELECT sales.revenue, sales_b.revenue_b \
+            "SELECT sum(sales.sale_amount), sum(sales_b.sale_amount) \
              FROM sales JOIN sales_b ON sales.region_code = sales_b.region_code",
-            None,
+            Some("finance"),
         )
         .unwrap_err();
         assert!(matches!(err, AppError::Validation(_)), "{err:?}");
@@ -172,7 +172,7 @@
         let docs = example_docs();
         let err = compile_semantic_sql(
             &docs,
-            "SELECT revenue FROM nosuch_db.orders",
+            "SELECT sum(sale_amount) FROM nosuch_db.orders",
             None,
         )
         .unwrap_err();
@@ -193,8 +193,8 @@
         let docs = example_docs();
         let sql = compile_semantic_sql_with_binds(
             &docs,
-            "SELECT revenue FROM sales WHERE paid",
-            Some("branch"),
+            "SELECT sum(sale_amount) AS revenue FROM sales WHERE status_code = 'PAID'",
+            Some("finance"),
             None,
             DialectProfile::Mysql,
         )
@@ -208,67 +208,52 @@
     }
 
     #[test]
-    fn compiles_multiple_metrics_with_distinct_filters_and_dynamic_group_by() {
-        let mut docs = example_docs();
-        docs.push(json!({
-            "kind": "metric",
-            "name": "paid_revenue",
-            "description": "결제 완료 판매 금액.",
-            "cube": "sales",
-            "expression": "sum(sale_amount)",
-            "aggregation": "group",
-            "group_by": ["region_code", "order_date"],
-            "filter": {"expression": "status_code = 'PAID'"},
-            "role": "all"
-        }));
+    fn compiles_multiple_adhoc_aggs_with_having_and_dynamic_group_by() {
+        let docs = example_docs();
         let mut binds = HashMap::new();
         binds.insert("caller_region".into(), "KR".into());
         let sql = compile_semantic_sql_with_binds(
             &docs,
-            "SELECT region_code AS reg, revenue AS total_rev, paid_revenue AS paid_rev \
+            "SELECT region_code AS reg, sum(sale_amount) AS total_rev, \
+             sum(CASE WHEN status_code = 'PAID' THEN sale_amount END) AS paid_rev \
              FROM sales \
              WHERE region_code = :caller_region \
-             HAVING revenue > 100 \
+             HAVING sum(sale_amount) > 100 \
              ORDER BY total_rev DESC \
              LIMIT 10 OFFSET 5",
-            Some("branch"),
+            Some("finance"),
             Some(&binds),
             DialectProfile::Postgres,
         )
         .unwrap();
         let upper = sql.to_ascii_uppercase();
-        assert!(upper.contains("CASE WHEN"), "expected CASE WHEN for distinct metric filters: {sql}");
         assert!(upper.contains("HAVING"), "expected HAVING clause: {sql}");
         assert!(upper.contains("ORDER BY \"TOTAL_REV\" DESC"), "expected ORDER BY total_rev DESC: {sql}");
         assert!(upper.contains("LIMIT 10"), "expected LIMIT 10: {sql}");
         assert!(upper.contains("OFFSET 5"), "expected OFFSET 5: {sql}");
         assert!(sql.contains("'KR'"), "expected bind :caller_region resolved to 'KR': {sql}");
-        // Dynamic group_by: only region_code was projected, so order_date should not be in GROUP BY
         assert!(!sql.contains("order_date\" AS"), "order_date should not be projected: {sql}");
         assert_select_only(&sql).unwrap();
     }
 
     #[test]
-    fn enforces_metric_segment_and_dimension_rbac_and_encryption_guards() {
+    fn enforces_fact_rbac_and_encryption_guards() {
         let mut docs = example_docs();
-        docs.push(json!({
-            "kind": "metric",
-            "name": "finance_metric",
-            "description": "재무 전용 지표.",
-            "cube": "sales",
-            "expression": "sum(sale_amount)",
-            "aggregation": "group",
-            "group_by": ["region_code"],
-            "filter": null,
-            "role": ["finance"]
-        }));
-        // Restricted metric rejected for branch role
+        // sale_amount is finance-only — branch cannot aggregate it
         assert!(matches!(
-            compile_semantic_sql(&docs, "SELECT finance_metric FROM sales", Some("branch")),
+            compile_semantic_sql(
+                &docs,
+                "SELECT sum(sale_amount) FROM sales",
+                Some("branch")
+            ),
             Err(AppError::Forbidden(_))
         ));
-        // Allowed for finance role
-        assert!(compile_semantic_sql(&docs, "SELECT finance_metric FROM sales", Some("finance")).is_ok());
+        assert!(compile_semantic_sql(
+            &docs,
+            "SELECT sum(sale_amount) FROM sales",
+            Some("finance")
+        )
+        .is_ok());
 
         // Mark customer_id as encrypted in sales cube and verify WHERE filter is rejected
         for doc in &mut docs {
@@ -287,8 +272,8 @@
         assert!(matches!(
             compile_semantic_sql(
                 &docs,
-                "SELECT revenue FROM sales WHERE customer_id = 'C1'",
-                Some("branch")
+                "SELECT sum(sale_amount) FROM sales WHERE customer_id = 'C1'",
+                Some("finance")
             ),
             Err(AppError::Validation(_))
         ));
@@ -299,9 +284,9 @@
         let docs = docs_with_second_cube("dw");
         let err = compile_semantic_sql(
             &docs,
-            "SELECT sales.revenue, sales_b.revenue_b \
+            "SELECT sum(sales.sale_amount), sum(sales_b.sale_amount) \
              FROM sales JOIN sales_b ON sales.nonexistent = sales_b.region_code",
-            None,
+            Some("finance"),
         )
         .unwrap_err();
         assert!(matches!(err, AppError::Validation(_)), "{err:?}");
@@ -459,12 +444,12 @@
     }
 
     #[test]
-    fn compiles_mixing_named_metric_and_adhoc_and_allows_query_grain_override() {
+    fn compiles_mixed_adhoc_aggs_and_rejects_unknown_named_metric() {
         let docs = example_docs();
         let sql = compile_semantic_sql(
             &docs,
-            "SELECT region_code, revenue, sum(sale_amount) AS total, \
-             revenue / count(*) AS avg_rev, round(revenue, 2) AS rev_round \
+            "SELECT region_code, sum(sale_amount) AS revenue, count(*) AS cnt, \
+             sum(sale_amount) / count(*) AS avg_rev, round(sum(sale_amount), 2) AS rev_round \
              FROM sales GROUP BY region_code",
             Some("finance"),
         )
@@ -475,27 +460,18 @@
         assert!(upper.contains("ROUND("), "{sql}");
         assert_select_only(&sql).unwrap();
 
-        // D24: `revenue.group_by` is default grain only — slicing by `customer_id` (not in that list) is allowed.
-        let override_sql = compile_semantic_sql(
+        // D26: registered metric names are not SQL identifiers.
+        let err = compile_semantic_sql(
             &docs,
             "SELECT customer_id, revenue, count(*) AS cnt FROM sales",
             Some("finance"),
         )
-        .unwrap();
-        let o = override_sql.to_ascii_lowercase();
-        assert!(o.contains("group by"), "{override_sql}");
-        assert!(o.contains("customer_id"), "{override_sql}");
-        assert_select_only(&override_sql).unwrap();
+        .unwrap_err();
+        assert!(
+            matches!(err, AppError::Validation(ref m) if m.contains("unknown semantic member")),
+            "{err:?}"
+        );
 
-        // Bare named metric still uses metadata default group_by axes.
-        let bare = compile_semantic_sql(&docs, "SELECT revenue FROM sales", Some("finance")).unwrap();
-        let b = bare.to_ascii_lowercase();
-        assert!(b.contains("group by"), "{bare}");
-        assert!(b.contains("region_code") || b.contains("region"), "{bare}");
-        assert!(b.contains("order_date") || b.contains("order"), "{bare}");
-        assert_select_only(&bare).unwrap();
-
-        // Pure ad-hoc aggregate without `revenue` can group by `customer_id`.
         let adhoc_ok = compile_semantic_sql(
             &docs,
             "SELECT customer_id, count(*) AS cnt FROM sales",
@@ -518,12 +494,11 @@
     }
 
     #[test]
-    fn compiles_mixing_named_and_adhoc_in_cube_join_and_filter_only_side() {
+    fn compiles_adhoc_aggs_in_cube_join_and_filter_only_side() {
         let docs = docs_with_second_cube("dw");
-        // Mixing named metric + ad-hoc aggregate across or within joined cubes is allowed.
         let sql = compile_semantic_sql(
             &docs,
-            "SELECT sales.revenue, sum(sales_b.sale_amount) AS total \
+            "SELECT sum(sales.sale_amount) AS revenue, sum(sales_b.sale_amount) AS total \
              FROM sales JOIN sales_b ON sales.region_code = sales_b.region_code",
             Some("finance"),
         )
@@ -533,10 +508,10 @@
         assert!(u.contains("SUM("), "{sql}");
         assert_select_only(&sql).unwrap();
 
-        // Joined side `sales_b` with 0 metrics (used only for join/filtering) compiles as a grouped subquery.
+        // Joined side used only for join/filtering compiles as a grouped subquery.
         let filter_side_sql = compile_semantic_sql(
             &docs,
-            "SELECT sales.revenue, sum(sales.sale_amount) AS total \
+            "SELECT sum(sales.sale_amount) AS total \
              FROM sales JOIN sales_b ON sales.region_code = sales_b.region_code \
              WHERE sales_b.status_code = 'PAID'",
             Some("finance"),
@@ -698,33 +673,12 @@
     }
 
     #[test]
-    fn compiles_metadata_metric_and_segment_subqueries_and_rejects_adhoc_subqueries() {
-        let mut docs = example_docs();
-        docs.push(json!({
-            "kind": "metric",
-            "name": "revenue_ratio",
-            "cube": "sales",
-            "description": "전체 매출 대비 비중.",
-            "expression": "SUM(sale_amount) / (SELECT SUM(sale_amount) FROM sales)",
-            "aggregation": "group",
-            "group_by": ["region_code"],
-            "role": "all"
-        }));
-        docs.push(json!({
-            "kind": "segment",
-            "name": "high_value_region",
-            "cube": "sales",
-            "description": "고매출 지역 세그먼트.",
-            "filter": {
-                "expression": "region_code IN (SELECT region_code FROM sales GROUP BY region_code HAVING SUM(sale_amount) > 1000)"
-            },
-            "role": "all"
-        }));
+    fn compiles_adhoc_subqueries_in_select_and_where() {
+        let docs = example_docs();
 
-        // 1. Metadata metric & segment with semantic subqueries compile cleanly (including NOT segment)
         let sql = compile_semantic_sql(
             &docs,
-            "SELECT region_code, revenue_ratio FROM sales WHERE high_value_region GROUP BY region_code",
+            "SELECT region_code,              SUM(sale_amount) / (SELECT SUM(sale_amount) FROM sales) AS revenue_ratio              FROM sales              WHERE region_code IN (SELECT region_code FROM sales GROUP BY region_code HAVING SUM(sale_amount) > 1000)              GROUP BY region_code",
             Some("finance"),
         )
         .unwrap();
@@ -734,70 +688,74 @@
         );
         assert!(
             sql.contains(r#""orders"."region_code" IN (SELECT"#),
-            "expected compiled IN (SELECT ...) segment in {sql}"
+            "expected compiled IN (SELECT ...) in {sql}"
         );
         assert_select_only(&sql).unwrap();
 
-        let sql_not_seg = compile_semantic_sql(
+        let sql_not = compile_semantic_sql(
             &docs,
-            "SELECT region_code, revenue_ratio FROM sales WHERE NOT high_value_region GROUP BY region_code",
+            "SELECT region_code, SUM(sale_amount) AS revenue              FROM sales              WHERE NOT (region_code IN (SELECT region_code FROM sales GROUP BY region_code HAVING SUM(sale_amount) > 1000))              GROUP BY region_code",
             Some("finance"),
         )
         .unwrap();
         assert!(
-            sql_not_seg.contains(r#"NOT ("orders"."region_code" IN (SELECT"#)
-                || sql_not_seg.contains(r#"NOT "orders"."region_code" IN (SELECT"#),
-            "expected negated segment subquery in {sql_not_seg}"
+            sql_not.contains(r#"NOT ("orders"."region_code" IN (SELECT"#)
+                || sql_not.contains(r#"NOT "orders"."region_code" IN (SELECT"#),
+            "expected negated subquery in {sql_not}"
         );
-        assert_select_only(&sql_not_seg).unwrap();
+        assert_select_only(&sql_not).unwrap();
 
-        // 2. Caller ad-hoc subqueries in WHERE or SELECT are still rejected
-        let err_where = compile_semantic_sql(
-            &docs,
-            "SELECT region_code, revenue FROM sales WHERE region_code IN (SELECT region_code FROM sales)",
-            Some("finance"),
-        )
-        .unwrap_err();
-        assert!(
-            err_where.to_string().contains("subqueries are not allowed"),
-            "expected ad-hoc WHERE subquery rejection, got: {err_where}"
-        );
-
-        let err_select = compile_semantic_sql(
+        let sql_scalar = compile_semantic_sql(
             &docs,
             "SELECT region_code, (SELECT MAX(sale_amount) FROM sales) AS mx FROM sales GROUP BY region_code",
             Some("finance"),
         )
-        .unwrap_err();
-        assert!(
-            err_select.to_string().contains("subqueries are not allowed"),
-            "expected ad-hoc SELECT subquery rejection, got: {err_select}"
-        );
+        .unwrap();
+        assert!(sql_scalar.to_ascii_uppercase().contains("SELECT"), "{sql_scalar}");
+        assert_select_only(&sql_scalar).unwrap();
+    }
+
+    #[test]
+    fn compiles_cte_and_derived_from() {
+        let docs = example_docs();
+        let cte_sql = compile_semantic_sql(
+            &docs,
+            "WITH t AS (SELECT region_code, SUM(sale_amount) AS s FROM sales GROUP BY region_code)              SELECT region_code FROM t WHERE s > 100",
+            Some("finance"),
+        )
+        .unwrap();
+        assert!(cte_sql.to_ascii_uppercase().contains("WITH"), "{cte_sql}");
+        assert_select_only(&cte_sql).unwrap();
+
+        let derived = compile_semantic_sql(
+            &docs,
+            "SELECT region_code FROM (SELECT region_code, SUM(sale_amount) AS s FROM sales GROUP BY region_code) t WHERE s > 100",
+            Some("finance"),
+        )
+        .unwrap();
+        assert!(derived.contains("SELECT"), "{derived}");
+        assert_select_only(&derived).unwrap();
     }
 
     #[test]
     fn compiles_window_functions_in_grouped_and_ungrouped_modes() {
         let docs = example_docs();
 
-        // 1. Grouped mode with window over named metric + cube dimension in PARTITION BY
         let sql_named_win = compile_semantic_sql(
             &docs,
-            "SELECT region_code, revenue, RANK() OVER (PARTITION BY region_code ORDER BY revenue DESC) AS rnk \
-             FROM sales GROUP BY region_code",
+            "SELECT region_code, SUM(sale_amount) AS revenue,              RANK() OVER (PARTITION BY region_code ORDER BY SUM(sale_amount) DESC) AS rnk              FROM sales GROUP BY region_code",
             Some("finance"),
         )
         .unwrap();
         assert!(
-            sql_named_win.contains(r#"RANK() OVER (PARTITION BY "orders"."region_code" ORDER BY (sum("orders"."sale_amount")) DESC)"#),
-            "unexpected named metric window SQL: {sql_named_win}"
+            sql_named_win.contains("RANK() OVER"),
+            "unexpected window SQL: {sql_named_win}"
         );
         assert_select_only(&sql_named_win).unwrap();
 
-        // 2. Grouped mode with window over ad-hoc aggregate (share of total)
         let sql_adhoc_win = compile_semantic_sql(
             &docs,
-            "SELECT region_code, SUM(sale_amount) / SUM(SUM(sale_amount)) OVER () AS share \
-             FROM sales GROUP BY region_code",
+            "SELECT region_code, SUM(sale_amount) / SUM(SUM(sale_amount)) OVER () AS share              FROM sales GROUP BY region_code",
             Some("finance"),
         )
         .unwrap();
@@ -809,11 +767,9 @@
         );
         assert_select_only(&sql_adhoc_win).unwrap();
 
-        // 3. Ungrouped mode with ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...)
         let sql_ungrouped_win = compile_semantic_sql(
             &docs,
-            "SELECT region_code, sale_amount, ROW_NUMBER() OVER (PARTITION BY region_code ORDER BY sale_amount DESC) AS rn \
-             FROM sales",
+            "SELECT region_code, sale_amount, ROW_NUMBER() OVER (PARTITION BY region_code ORDER BY sale_amount DESC) AS rn              FROM sales",
             Some("finance"),
         )
         .unwrap();
@@ -825,7 +781,6 @@
         );
         assert_select_only(&sql_ungrouped_win).unwrap();
 
-        // 4. Window function in GROUP BY is rejected
         let err_gb = compile_semantic_sql(
             &docs,
             "SELECT ROW_NUMBER() OVER (ORDER BY region_code) AS rn, SUM(sale_amount) FROM sales GROUP BY 1",

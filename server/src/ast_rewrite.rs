@@ -10,11 +10,12 @@ use sqlparser::parser::Parser;
 use crate::error::AppError;
 
 /// Rewrite any `Query` subqueries inside `expr` using `compile_fn`.
-/// If `compile_fn` returns `Some(compiled_select_sql)`, the subquery AST is replaced with the compiled query;
-/// otherwise the subquery is left untouched (e.g., already physical SQL).
+///
+/// `compile_fn` returns `Ok(Some(sql))` to replace, `Ok(None)` to leave untouched
+/// (literal / no cube), or `Err` to fail closed (D26).
 pub fn rewrite_subqueries<F>(expr: &str, mut compile_fn: F) -> Result<String, AppError>
 where
-    F: FnMut(&str) -> Option<String>,
+    F: FnMut(&str) -> Result<Option<String>, AppError>,
 {
     let lower = expr.to_ascii_lowercase();
     if !lower.contains("select") {
@@ -38,31 +39,59 @@ where
     let mut v = SubqueryRewriter {
         compile_fn: &mut compile_fn,
         depth: 0,
+        error: None,
     };
     let _ = target_expr.visit(&mut v);
+    if let Some(err) = v.error {
+        return Err(err);
+    }
     Ok(strip_outer_parens(&target_expr.to_string()))
 }
 
 struct SubqueryRewriter<'a, F> {
     compile_fn: &'a mut F,
     depth: usize,
+    error: Option<AppError>,
 }
 
 impl<F> VisitorMut for SubqueryRewriter<'_, F>
 where
-    F: FnMut(&str) -> Option<String>,
+    F: FnMut(&str) -> Result<Option<String>, AppError>,
 {
     type Break = ();
 
     fn pre_visit_query(&mut self, query: &mut Query) -> ControlFlow<Self::Break> {
+        if self.error.is_some() {
+            return ControlFlow::Break(());
+        }
         if self.depth == 0 {
             let sub_sql = query.to_string();
-            if let Some(compiled) = (self.compile_fn)(&sub_sql) {
-                let dialect = GenericDialect {};
-                if let Ok(mut stmts) = Parser::parse_sql(&dialect, &compiled) {
-                    if let Some(sqlparser::ast::Statement::Query(new_q)) = stmts.pop() {
-                        *query = *new_q;
+            match (self.compile_fn)(&sub_sql) {
+                Ok(Some(compiled)) => {
+                    let dialect = GenericDialect {};
+                    match Parser::parse_sql(&dialect, &compiled) {
+                        Ok(mut stmts) => {
+                            if let Some(sqlparser::ast::Statement::Query(new_q)) = stmts.pop() {
+                                *query = *new_q;
+                            } else {
+                                self.error = Some(AppError::Validation(
+                                    "subquery compile did not return a SELECT".into(),
+                                ));
+                                return ControlFlow::Break(());
+                            }
+                        }
+                        Err(e) => {
+                            self.error = Some(AppError::Validation(format!(
+                                "compiled subquery parse failed: {e}"
+                            )));
+                            return ControlFlow::Break(());
+                        }
                     }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    self.error = Some(e);
+                    return ControlFlow::Break(());
                 }
             }
         }

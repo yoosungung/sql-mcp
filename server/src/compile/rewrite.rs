@@ -310,21 +310,85 @@ pub(crate) fn cube_member_to_physical_map(
     Ok(map)
 }
 
-pub(crate) fn expand_semantic_subqueries(
+pub fn expand_semantic_subqueries(
     expr: &str,
     docs: &[Value],
     role: Option<&str>,
     binds: Option<&HashMap<String, String>>,
 ) -> Result<String, AppError> {
+    use std::cell::Cell;
+    thread_local! {
+        static DEPTH: Cell<usize> = const { Cell::new(0) };
+    }
     crate::ast_rewrite::rewrite_subqueries(expr, |sub_sql| {
-        crate::pipeline::compile_semantic_sql_with_binds(
-            docs,
-            sub_sql,
-            role,
-            binds,
-            DialectProfile::Postgres,
-        )
-        .ok()
+        // Only compile subqueries whose top-level FROM is a known cube table.
+        // Already-physical SQL (derived FROM, warehouse tables) must not re-enter compile (D26).
+        if !top_level_from_is_known_cube(sub_sql, docs) {
+            return Ok(None);
+        }
+        // Drop parent ephemeral __adhoc_* metrics so nested compile cannot re-expand them.
+        let clean_docs: Vec<Value> = docs
+            .iter()
+            .filter(|d| {
+                let is_adhoc = d.get("kind").and_then(|v| v.as_str()) == Some("metric")
+                    && d.get("name")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|n| n.starts_with("__adhoc_"));
+                !is_adhoc
+            })
+            .cloned()
+            .collect();
+        DEPTH.with(|d| {
+            let depth = d.get();
+            if depth >= 32 {
+                return Err(AppError::Validation(
+                    "semantic subquery nesting too deep".into(),
+                ));
+            }
+            d.set(depth + 1);
+            let compiled = crate::pipeline::compile_semantic_sql_with_binds(
+                &clean_docs,
+                sub_sql,
+                role,
+                binds,
+                DialectProfile::Postgres,
+            );
+            d.set(d.get().saturating_sub(1));
+            compiled.map(Some)
+        })
+    })
+}
+
+fn top_level_from_is_known_cube(sql: &str, docs: &[Value]) -> bool {
+    use sqlparser::ast::{SetExpr, TableFactor};
+    let Ok(q) = crate::pipeline::parse_query(sql) else {
+        return false;
+    };
+    let select = match q.body.as_ref() {
+        SetExpr::Select(s) => s,
+        SetExpr::Query(inner) => match inner.body.as_ref() {
+            SetExpr::Select(s) => s,
+            _ => return false,
+        },
+        _ => return false,
+    };
+    let Some(tw) = select.from.first() else {
+        return false;
+    };
+    // Joined cube SELECTs are still semantic.
+    let mut tables = vec![&tw.relation];
+    for j in &tw.joins {
+        tables.push(&j.relation);
+    }
+    tables.iter().any(|rel| match rel {
+        TableFactor::Table { name, .. } if name.0.len() == 1 => {
+            let n = name.0[0].to_string();
+            docs.iter().any(|d| {
+                d.get("kind").and_then(|v| v.as_str()) == Some("cube")
+                    && d.get("name").and_then(|v| v.as_str()) == Some(n.as_str())
+            })
+        }
+        _ => false,
     })
 }
 

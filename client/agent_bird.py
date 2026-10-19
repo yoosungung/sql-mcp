@@ -91,16 +91,16 @@ Workflow:
 
 Query language (important):
 - Output must be SQL SELECT text only — never MDX, DAX, LookML, GraphQL, or JSON query objects.
-- Cube / dimension / fact / metric / segment are schema member names used as SQL identifiers, not an OLAP DSL.
-- Example shape: SELECT metric_or_dim FROM cube_name WHERE segment_or_filter GROUP BY dim
+- Cube / dimension / fact are schema member names used as SQL identifiers. describe_table.examples (metric/segment) are SQL snippets to copy — not column names.
+- Example shape: SELECT SUM(fact) AS revenue, dim FROM cube_name WHERE status_code = 'PAID' GROUP BY dim
 
 SQL surface rules:
-- FROM/JOIN use cube names only (never physical table names or T1/T2 aliases). Qualify joined members as `cube.member`.
+- FROM/JOIN use cube names. `cube.physical` and `AS alias` are accepted (first identifier is the cube). WITH/subquery over cubes is allowed. Qualify joined members as `cube.member`.
 - Never use `SELECT *`.
-- Grouped: named metrics and/or `SUM`/`COUNT`/`AVG`/`MIN`/`MAX`, with `GROUP BY` / `HAVING` as needed.
+- Grouped: `SUM`/`COUNT`/`AVG`/`MIN`/`MAX` (and expressions), with `GROUP BY` / `HAVING` as needed.
 - Ungrouped: SELECT dimensions/facts without `GROUP BY`/`HAVING` (`SELECT DISTINCT` when joining cubes without aggregation).
-- Allowed expressions: `+ - * /`, `date_trunc('year'|'month'|'day'|'hour', col)`, `YEAR`/`MONTH`/`DAY`, `CURRENT_DATE`/`CURRENT_TIMESTAMP`/`NOW()`, `DATEDIFF(end, start)` (days), `EXTRACT(YEAR|MONTH|DAY|HOUR FROM col)`, `DIVIDE(num, den)`. For ratios prefer `DIVIDE` or `x * 1.0 / y`.
-- Forbidden: CTE/subquery/window functions; Postgres-only extras (`::`, `ILIKE`, `FILTER (WHERE …)`).
+- Allowed: read-only SELECT including subquery, WITH/CTE, window functions, UNION/EXCEPT/INTERSECT; `+ - * /`, `date_trunc('year'|'month'|'day'|'hour', col)`, `YEAR(` / `MONTH(` / `DAY(`, `CURRENT_DATE`/`CURRENT_TIMESTAMP`/`NOW()`, `DATEDIFF(end, start)` (days), `EXTRACT(YEAR|MONTH|DAY|HOUR FROM col)`. For ratios prefer `x * 1.0 / y` (emit makes `/` 0-safe; `DIVIDE` is a compatible alias).
+- Forbidden: INSERT/UPDATE/DELETE/DDL; Postgres-only extras (`::`, `ILIKE`, `FILTER (WHERE …)`).
 - Unqualified member names in GROUP BY (do not write `cube.col` after GROUP BY — `CUBE` is a SQL keyword).
 - Follow Evidence filter literals exactly (use `sample_column` if unsure; escape single quotes as `''`).
 - On validation/parse error, fix the SQL instead of retrying the same query.
