@@ -127,6 +127,7 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 - [x] Postgres·SQLite·MySQL·Oracle 골든 테스트(quote · MySQL adapt · `LIMIT`/`FETCH`)
 - [x] `date_trunc` rewrite (`year`/`month`/`day`/`hour`) · `emit_physical_sql`
 - [x] 실행 bind rewrite **비채택**(ad-hoc OLAP)
+- [x] `/` emit = `DIVIDE`와 동일(실수 승격 + `NULLIF(den, 0)`); `DIVIDE`는 호환 별칭 · 비율은 표준 산술 연산자 권장
 
 ### M5 — 컴파일러 완결성 · 전 계층 보안(RBAC) · 카탈로그/엔진 하드닝
 
