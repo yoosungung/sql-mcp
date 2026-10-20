@@ -164,15 +164,6 @@ fn compile_query_with_ctes(
     Ok(format!("{with_prefix}{body}"))
 }
 
-pub(crate) fn compile_set_expr(
-    docs: &[Value],
-    expr: &SetExpr,
-    role: Option<&str>,
-    binds: Option<&HashMap<String, String>>,
-) -> Result<String, AppError> {
-    compile_set_expr_ctx(docs, expr, &HashSet::new(), role, binds)
-}
-
 fn compile_set_expr_ctx(
     docs: &[Value],
     expr: &SetExpr,
@@ -211,16 +202,6 @@ fn compile_set_expr_ctx(
             "semantic SQL must be SELECT or set operation of SELECTs".into(),
         )),
     }
-}
-
-pub(crate) fn compile_select(
-    docs: &[Value],
-    select: &Select,
-    query: Option<&Query>,
-    role: Option<&str>,
-    binds: Option<&HashMap<String, String>>,
-) -> Result<String, AppError> {
-    compile_select_ctx(docs, select, query, &HashSet::new(), role, binds)
 }
 
 fn compile_select_ctx(
@@ -512,13 +493,6 @@ fn collect_cubes_from_query(
     collect_cubes_from_set_expr_ctx(query.body.as_ref(), out, &cte_names)
 }
 
-pub(crate) fn collect_cubes_from_set_expr(
-    expr: &SetExpr,
-    out: &mut Vec<String>,
-) -> Result<(), AppError> {
-    collect_cubes_from_set_expr_ctx(expr, out, &HashSet::new())
-}
-
 fn collect_cubes_from_set_expr_ctx(
     expr: &SetExpr,
     out: &mut Vec<String>,
@@ -578,10 +552,6 @@ pub(crate) fn push_cube_unique(out: &mut Vec<String>, name: &str) {
     if !out.iter().any(|x| x == name) {
         out.push(name.to_string());
     }
-}
-
-pub(crate) fn relation_cube_name(rel: &TableFactor) -> Result<String, AppError> {
-    Ok(relation_alias_cube(rel)?.1)
 }
 
 /// First identifier of a FROM name. `cube`, `cube.physical`, and `db.schema.tbl`

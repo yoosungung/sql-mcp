@@ -814,32 +814,6 @@ pub(crate) fn split_and_conjuncts<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
     }
 }
 
-pub(crate) fn match_segment_ident(
-    expr: &Expr,
-    seg_map: &HashMap<String, &Value>,
-    only_alias: Option<&str>,
-    cube_name: &str,
-) -> Option<String> {
-    match expr {
-        Expr::Identifier(id) if seg_map.contains_key(&id.value) => Some(id.value.clone()),
-        Expr::CompoundIdentifier(parts) if parts.len() == 2 => {
-            let q = &parts[0].value;
-            let n = &parts[1].value;
-            let ok_qual = match only_alias {
-                Some(a) => q == a || q == cube_name,
-                None => q == cube_name,
-            };
-            if ok_qual && seg_map.contains_key(n) {
-                Some(n.clone())
-            } else {
-                None
-            }
-        }
-        Expr::Nested(inner) => match_segment_ident(inner, seg_map, only_alias, cube_name),
-        _ => None,
-    }
-}
-
 pub(crate) fn expr_belongs_to_cube(
     expr: &Expr,
     docs: &[Value],
