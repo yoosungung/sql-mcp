@@ -1,0 +1,126 @@
+# Rolling GitHub Release `current` after CI on master (linux / windows / macos).
+name: CD
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cd-current
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'master')
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - id: sha
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: sql-mcp-x86_64-unknown-linux-gnu
+          - os: windows-latest
+            artifact: sql-mcp-x86_64-pc-windows-msvc.exe
+          - os: macos-latest
+            artifact: sql-mcp-aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.94.0"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cd-${{ matrix.os }}
+      - uses: ilammy/setup-nasm@v1
+        if: runner.os == 'Windows'
+      - name: Release build
+        run: cargo build -p sql-mcp --release --locked
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          BIN=target/release/sql-mcp
+          strip "$BIN" || true
+          cp "$BIN" "dist/${{ matrix.artifact }}"
+          (cd dist && shasum -a 256 "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256")
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/release/sql-mcp.exe "dist/${{ matrix.artifact }}"
+          $h = (Get-FileHash "dist/${{ matrix.artifact }}" -Algorithm SHA256).Hash.ToLower()
+          $line = "$h  ${{ matrix.artifact }}`n"
+          [System.IO.File]::WriteAllText("$pwd/dist/${{ matrix.artifact }}.sha256", $line)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: [gate, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish GitHub Release current
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ needs.gate.outputs.sha }}
+        run: |
+          set -euo pipefail
+          ls -la dist
+          NOTES="$(mktemp)"
+          {
+            echo "Rolling **current** build from \`${SHA}\`."
+            echo
+            echo "| file | SHA-256 |"
+            echo "|------|---------|"
+            for s in dist/*.sha256; do
+              echo "| \`$(awk '{print $2}' "$s")\` | \`$(awk '{print $1}' "$s")\` |"
+            done
+          } > "$NOTES"
+          gh release view current >/dev/null 2>&1 && gh release delete current --yes --cleanup-tag
+          gh release create current dist/* \
+            --target "$SHA" \
+            --title current \
+            --notes-file "$NOTES" \
+            --prerelease \
+            --latest

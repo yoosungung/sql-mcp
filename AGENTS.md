@@ -16,6 +16,8 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
 | `ROADMAP.md` | 수행 계획(마일스톤·순서·미결정 항목) | 루트 |
 | `<comp>/DESIGN.md` | 컴포넌트 *내부* 설계 + `## Commands` (빌드/실행/테스트) | `server/` (M1+), `semantic/`, `client/`. Frontend/`api/`는 범위 취소 |
 | `deploy/SETUP.md` | 배포 런북 | `deploy/` |
+| `.github/workflows/ci.yml` | CI: PR/push `cargo test -p sql-mcp --locked` | `.github/workflows/` |
+| `.github/workflows/cd.yml` | CD: master CI 성공 후 linux/windows/macos release → GitHub Release `current` | `.github/workflows/` |
 | `deploy/k8s/base/` | Kustomize 베이스 | `deploy/k8s/base/` |
 | `target_db/README.md` | BIRD Mini-Dev SQLite 로컬 타깃 + Q-SQL(`bird_qa/`) · meta JSON · `semantic-map.md` 생성 | `target_db/` |
 | `client/DESIGN.md` · `client/README.md` | LangChain v1 `create_agent` + sql-mcp 예제 (BIRD 질문) | `client/` |
@@ -30,7 +32,7 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
 - **README.md vs ARCHITECTURE.md / DESIGN.md.** README는 **인간 사용자**(MCP 설치·메타·DW 질의)용이다. 기여자 온보딩은 이 파일. 계약·내부 설계는 README에 복사하지 않고 [ARCHITECTURE.md](ARCHITECTURE.md)·`<comp>/DESIGN.md`로 **링크만** 한다. 
 - **배포 가능한 패키지·실행 하네스**에는 README를 둘 수 있다 — 해당 디렉터리 **로컬 사용법만**.
 - 파일이 새로 생기거나 용도가 바뀌면 위 표를 즉시 갱신한다.
-- 배포 런북은 `deploy/SETUP.md`, Kustomize 베이스는 `deploy/k8s/base/`, PR/push CI는 `.github/workflows/ci.yml`. 빈 stub을 만들지 않는다.
+- 배포 런북은 `deploy/SETUP.md`, Kustomize 베이스는 `deploy/k8s/base/`, CI는 `.github/workflows/ci.yml`, CD는 `.github/workflows/cd.yml` (Release `current`). 빈 stub을 만들지 않는다.
  
 ## 2. 수행 방법 (How we work in this repo)
  

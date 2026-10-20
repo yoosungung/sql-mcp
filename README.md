@@ -26,6 +26,17 @@ Release에서 OS에 맞는 `sql-mcp` **바이너리** 또는 **컨테이너 이�
 
 ### 바이너리
 
+[Release `current`](https://github.com/yoosungung/sql-mcp/releases/tag/current)에서 OS에 맞는 파일을 받습니다 (`master`마다 갱신).
+
+```bash
+# macOS Apple Silicon
+curl -L -o sql-mcp \
+  https://github.com/yoosungung/sql-mcp/releases/download/current/sql-mcp-aarch64-apple-darwin
+# Linux x86_64: sql-mcp-x86_64-unknown-linux-gnu
+# Windows x86_64: sql-mcp-x86_64-pc-windows-msvc.exe
+chmod +x sql-mcp
+```
+
 1. 받은 파일을 실행 가능한 위치에 둡니다 (예: `~/bin/sql-mcp`).
 2. 실행 권한을 줍니다: `chmod +x ~/bin/sql-mcp`
 3. 같은 폴더(또는 원하는 경로)에 `config.toml`을 만듭니다.

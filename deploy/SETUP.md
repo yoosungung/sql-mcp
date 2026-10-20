@@ -8,7 +8,21 @@
 - 시맨틱 DB 경로 쓰기 가능
 - 타깃 Postgres DSN은 환경 변수로만 주입 (`url_env`)
 
+## GitHub Release `current`
+
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)이 PR/`master`에서 테스트를 돌리고, 성공한 `master` 푸시에 한해 [`.github/workflows/cd.yml`](../.github/workflows/cd.yml)이 Linux·Windows·macOS **release** 바이너리를 빌드한 뒤 태그 [`current`](https://github.com/yoosungung/sql-mcp/releases/tag/current) Release를 교체한다(`workflow_dispatch`로 CD만 재실행 가능).
+
+| 파일 | 러너 |
+|------|------|
+| `sql-mcp-x86_64-unknown-linux-gnu` | `ubuntu-latest` |
+| `sql-mcp-x86_64-pc-windows-msvc.exe` | `windows-latest` |
+| `sql-mcp-aarch64-apple-darwin` | `macos-latest` (Apple Silicon) |
+
+각 파일에 `.sha256`이 붙는다. 시맨틱 버전 태그(`v0.1.0` 등)는 이 워크플로가 만들지 않는다.
+
 ## 바이너리
+
+로컬:
 
 ```text
 cargo build -p sql-mcp --release

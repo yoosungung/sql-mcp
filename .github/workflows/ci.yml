@@ -1,9 +1,14 @@
-name: ci
+name: CI
 
 on:
   push:
     branches: [master]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -18,4 +23,4 @@ jobs:
           toolchain: "1.94.0"
       - uses: Swatinem/rust-cache@v2
       - name: test
-        run: cargo test -p sql-mcp
+        run: cargo test -p sql-mcp --locked
