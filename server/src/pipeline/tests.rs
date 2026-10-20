@@ -792,3 +792,60 @@
             "expected window function in GROUP BY rejection, got: {err_gb}"
         );
     }
+
+    #[test]
+    fn rewrites_literal_existence_projection_and_keeps_star_forbidden() {
+        let docs = example_docs();
+
+        for q in [
+            "SELECT 1 FROM sales",
+            "SELECT true FROM sales",
+            "SELECT TRUE FROM sales",
+            "SELECT 1 AS x FROM sales",
+        ] {
+            let sql = compile_semantic_sql(&docs, q, Some("finance")).unwrap_or_else(|e| {
+                panic!("expected {q} to compile, got: {e}");
+            });
+            // Prefer dim mapped to leaf table pk (customer_id); else dimensions[0] (order_date).
+            assert!(
+                sql.contains("customer_id") || sql.contains("order_date"),
+                "expected existence dim projection in {q} => {sql}"
+            );
+            assert_select_only(&sql).unwrap();
+        }
+
+        let exists_sql = compile_semantic_sql(
+            &docs,
+            "SELECT region_code FROM sales WHERE EXISTS (SELECT 1 FROM sales WHERE sale_amount > 1000)",
+            Some("finance"),
+        )
+        .unwrap();
+        assert!(
+            exists_sql.to_ascii_uppercase().contains("EXISTS"),
+            "{exists_sql}"
+        );
+        assert_select_only(&exists_sql).unwrap();
+
+        let err_star = compile_semantic_sql(&docs, "SELECT * FROM sales", Some("finance")).unwrap_err();
+        assert!(
+            err_star.to_string().contains("SELECT *"),
+            "expected SELECT * rejection, got: {err_star}"
+        );
+    }
+
+    #[test]
+    fn compiles_ungrouped_scalar_avg_subquery_where_q1457_shape() {
+        let docs = example_docs();
+        let sql = compile_semantic_sql(
+            &docs,
+            "SELECT region_code, customer_id FROM sales WHERE sale_amount > (SELECT AVG(sale_amount) FROM sales)",
+            Some("finance"),
+        )
+        .unwrap();
+        assert!(
+            sql.to_ascii_uppercase().contains("AVG")
+                && sql.contains(r#""orders"."sale_amount""#),
+            "unexpected q1457-shaped SQL: {sql}"
+        );
+        assert_select_only(&sql).unwrap();
+    }

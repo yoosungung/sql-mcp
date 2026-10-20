@@ -101,7 +101,8 @@ Query language (important):
 SQL surface rules:
 - Every SELECT statement must explicitly specify the FROM clause with the cube name (e.g. `FROM student_club`).
 - FROM/JOIN use cube names. `cube.physical` and `AS alias` are accepted (first identifier is the cube). WITH/subquery over cubes is allowed. Qualify joined members as `cube.member`.
-- Never use `SELECT *`.
+- Never use `SELECT *` (semantic cubes have no all-columns surface).
+- `SELECT 1` / `SELECT true` (literal-only) is rewritten by the server to a key dimension; prefer projecting real dimensions/facts when answering questions.
 - Grouped: `SUM`/`COUNT`/`AVG`/`MIN`/`MAX` (and expressions), with `GROUP BY` / `HAVING` as needed.
 - Ungrouped: SELECT dimensions/facts without `GROUP BY`/`HAVING` (`SELECT DISTINCT` when joining cubes without aggregation).
 - Allowed: read-only SELECT including subquery, WITH/CTE, window functions, UNION/EXCEPT/INTERSECT; `+ - * /`, `date_trunc('year'|'month'|'day'|'hour', col)`, `YEAR(` / `MONTH(` / `DAY(`, `CURRENT_DATE`/`CURRENT_TIMESTAMP`/`NOW()`, `DATEDIFF(end, start)` (days), `EXTRACT(YEAR|MONTH|DAY|HOUR FROM col)`. For ratios prefer `x * 1.0 / y` (emit makes `/` 0-safe; `DIVIDE` is a compatible alias).

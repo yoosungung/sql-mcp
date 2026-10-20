@@ -53,6 +53,12 @@ def test_system_prompt_requires_explicit_from() -> None:
     assert "must" in s or "explicit" in s or "every select" in s
 
 
+def test_system_prompt_bans_star_allows_literal_rewrite() -> None:
+    s = SYSTEM.lower()
+    assert "select *" in s
+    assert "select 1" in s or "literal" in s
+
+
 def test_user_prompt_includes_evidence_and_db() -> None:
     q = BirdQuestion(
         question_id=1,

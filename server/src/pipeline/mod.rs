@@ -4,6 +4,7 @@
 //! D26: read-only ANSI SELECT (subquery / CTE / derived FROM / window / set ops).
 
 mod clauses;
+mod existence;
 mod join;
 
 #[cfg(test)]
@@ -32,6 +33,7 @@ use clauses::{
     extract_having_for_cube, extract_limit, extract_offset, extract_order_by,
     extract_where_for_cube, materialize_adhoc_metrics,
 };
+use existence::rewrite_literal_existence_projection;
 use join::compile_cube_join;
 
 /// Compile semantic SQL to physical SELECT. `role` applies table permission_filters.
@@ -413,6 +415,9 @@ pub(crate) fn compile_single_cube(
     role: Option<&str>,
     binds: Option<&HashMap<String, String>>,
 ) -> Result<String, AppError> {
+    let mut select = select.clone();
+    rewrite_literal_existence_projection(docs, &mut select)?;
+    let select = &select;
     let distinct = select.distinct.is_some();
     let (cube_alias, cube_name) = relation_alias_cube(&select.from[0].relation)?;
     let classified =

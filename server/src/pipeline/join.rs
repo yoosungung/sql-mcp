@@ -19,6 +19,7 @@ use super::clauses::{
     extract_limit, extract_offset, extract_order_by, extract_where_for_cube,
     materialize_adhoc_metrics, member_on_cube, resolve_member_side, ClassifiedProjection,
 };
+use super::existence::rewrite_literal_existence_projection;
 use super::{find_doc, relation_alias_cube};
 
 pub(crate) fn compile_cube_join(
@@ -28,6 +29,9 @@ pub(crate) fn compile_cube_join(
     role: Option<&str>,
     binds: Option<&HashMap<String, String>>,
 ) -> Result<String, AppError> {
+    let mut select = select.clone();
+    rewrite_literal_existence_projection(docs, &mut select)?;
+    let select = &select;
     let distinct = select.distinct.is_some();
     let tw = &select.from[0];
     let mut sides: Vec<(String, String)> = Vec::new(); // (alias, cube_name)
