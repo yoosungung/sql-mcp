@@ -118,9 +118,9 @@ jobs:
             done
           } > "$NOTES"
           gh release view current >/dev/null 2>&1 && gh release delete current --yes --cleanup-tag
+          # --latest cannot be combined with --prerelease (GitHub API 422).
           gh release create current dist/* \
             --target "$SHA" \
             --title current \
             --notes-file "$NOTES" \
-            --prerelease \
             --latest
