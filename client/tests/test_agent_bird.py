@@ -59,6 +59,14 @@ def test_system_prompt_bans_star_allows_literal_rewrite() -> None:
     assert "select 1" in s or "literal" in s
 
 
+def test_system_prompt_requires_sample_column_for_where_literals() -> None:
+    """WHERE 필터 리터럴은 sample_column으로 실제 값을 확인해야 한다."""
+    s = SYSTEM.lower()
+    assert "sample_column" in s
+    assert "where" in s
+    assert "empty" in s or "row_count" in s or "0 row" in s
+
+
 def test_user_prompt_includes_evidence_and_db() -> None:
     q = BirdQuestion(
         question_id=1,

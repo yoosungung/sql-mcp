@@ -87,7 +87,14 @@ list_databases, list_tables, describe_table, search_columns, sample_column, exec
 
 Workflow:
 1. Call list_tables(database=db_id), then describe_table / search_columns to inspect cubes and members.
-2. Run execute_sql with a SQL SELECT string, read the `rows` in the result, then return the final answer.
+2. Before any WHERE equality/IN filter on a code/status/type/name-like dimension, call sample_column on that member and copy a value that actually appears (exact spelling and case).
+3. Run execute_sql with a SQL SELECT string, read the `rows` in the result, then return the final answer.
+
+WHERE filter values (mandatory):
+- Do not invent filter literals from the question wording alone when a dimension may store coded values.
+- Prefer Evidence literals, but verify them with sample_column on the same member you filter — match casing and exact tokens from samples (e.g. 'Game' vs 'game').
+- Use the cube member name from describe_table/search_columns (e.g. `type`), not a guessed rename (e.g. `event_type`) unless that member exists.
+- If execute_sql returns 0 rows, do NOT conclude the answer is empty until you have sampled every WHERE filter column and confirmed the literals exist; then relax one filter at a time or fix the member/literal and re-run.
 
 Final answer (mandatory):
 - DO NOT return SQL queries in your final response.
@@ -108,7 +115,7 @@ SQL surface rules:
 - Allowed: read-only SELECT including subquery, WITH/CTE, window functions, UNION/EXCEPT/INTERSECT; `+ - * /`, `date_trunc('year'|'month'|'day'|'hour', col)`, `YEAR(` / `MONTH(` / `DAY(`, `CURRENT_DATE`/`CURRENT_TIMESTAMP`/`NOW()`, `DATEDIFF(end, start)` (days), `EXTRACT(YEAR|MONTH|DAY|HOUR FROM col)`. For ratios prefer `x * 1.0 / y` (emit makes `/` 0-safe; `DIVIDE` is a compatible alias).
 - Forbidden: INSERT/UPDATE/DELETE/DDL; Postgres-only extras (`::`, `ILIKE`, `FILTER (WHERE …)`).
 - Unqualified member names in GROUP BY (do not write `cube.col` after GROUP BY — `CUBE` is a SQL keyword).
-- Follow Evidence filter literals exactly (use `sample_column` if unsure; escape single quotes as `''`).
+- Escape single quotes in string literals as `''`.
 - On validation/parse error, fix the SQL instead of retrying the same query.
 """
 
