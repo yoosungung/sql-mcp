@@ -38,6 +38,21 @@ def test_system_prompt_retry_and_escaping() -> None:
     assert "''" in SYSTEM or "escape" in s
 
 
+def test_system_prompt_requires_execute_and_answer_from_rows() -> None:
+    """최종 답은 SQL이 아니라 execute_sql rows 값으로 답해야 한다."""
+    s = SYSTEM.lower()
+    assert "do not return sql" in s or "must not return sql" in s
+    assert "execute_sql" in s
+    assert "rows" in s
+
+
+def test_system_prompt_requires_explicit_from() -> None:
+    """모든 SELECT는 FROM에 큐브 이름을 명시해야 한다."""
+    s = SYSTEM.lower()
+    assert "from" in s
+    assert "must" in s or "explicit" in s or "every select" in s
+
+
 def test_user_prompt_includes_evidence_and_db() -> None:
     q = BirdQuestion(
         question_id=1,

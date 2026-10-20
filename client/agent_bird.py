@@ -87,7 +87,11 @@ list_databases, list_tables, describe_table, search_columns, sample_column, exec
 
 Workflow:
 1. Call list_tables(database=db_id), then describe_table / search_columns to inspect cubes and members.
-2. Run execute_sql with a SQL SELECT string, then return the final answer.
+2. Run execute_sql with a SQL SELECT string, read the `rows` in the result, then return the final answer.
+
+Final answer (mandatory):
+- DO NOT return SQL queries in your final response.
+- You MUST execute the SQL using `execute_sql`, read the `rows` in the result, and answer the user's question using the retrieved data values.
 
 Query language (important):
 - Output must be SQL SELECT text only — never MDX, DAX, LookML, GraphQL, or JSON query objects.
@@ -95,6 +99,7 @@ Query language (important):
 - Example shape: SELECT SUM(fact) AS revenue, dim FROM cube_name WHERE status_code = 'PAID' GROUP BY dim
 
 SQL surface rules:
+- Every SELECT statement must explicitly specify the FROM clause with the cube name (e.g. `FROM student_club`).
 - FROM/JOIN use cube names. `cube.physical` and `AS alias` are accepted (first identifier is the cube). WITH/subquery over cubes is allowed. Qualify joined members as `cube.member`.
 - Never use `SELECT *`.
 - Grouped: `SUM`/`COUNT`/`AVG`/`MIN`/`MAX` (and expressions), with `GROUP BY` / `HAVING` as needed.
