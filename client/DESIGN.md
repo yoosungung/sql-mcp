@@ -5,7 +5,7 @@ BIRD Mini-Dev **질문-SQL**을 넣고, LangChain v1 `create_agent()` + `MCPAdap
 ## 범위
 
 - Q-SQL 로더: `bird_qa.py` ← `target_db/bird_qa/mini_dev_sqlite.json` (`fetch_bird.sh`가 zip에서 추출)
-- 에이전트: `agent_bird.py` — **HTTP만** (sql-mcp 기동은 client 밖). `SYSTEM`은 출력을 **SQL SELECT 텍스트**(MDX/DAX/JSON 금지)로 고정하고, cube/dimension/fact/metric/segment는 SQL 식별자로만 쓰게 함. 최종 답은 SQL이 아니라 `execute_sql`의 `rows` 값으로 답하고, 모든 SELECT는 `FROM`에 큐브 이름을 명시. WHERE 코드성 필터는 `sample_column`으로 리터럴·대소문자 검증 · 0 rows 시 필터 재점검. `SELECT *` 금지 · 리터럴-only(`SELECT 1`/`true`)는 서버 D27 rewrite. D23·읽기 ANSI·`GROUP BY` 비한정·이스케이프·재시도 규칙 포함
+- 에이전트: `agent_bird.py` — **HTTP만** (sql-mcp 기동은 client 밖). `SYSTEM`은 출력을 **SQL SELECT 텍스트**(MDX/DAX/JSON 금지)로 고정하고, cube/dimension/fact/metric/segment는 SQL 식별자로만 쓰게 함. 최종 답은 SQL이 아니라 `execute_sql`의 `rows` 값으로 답하고, 모든 SELECT는 `FROM`에 큐브 이름을 명시. WHERE 코드성 필터는 `sample_column`으로 리터럴·대소문자 검증 · 0 rows 시 필터 재점검. `SELECT *` 금지 · 리터럴-only(`SELECT 1`/`true`)는 서버 D27 rewrite. D23·읽기 ANSI·`GROUP BY` 비한정·이스케이프·재시도 규칙 포함. **Max Retries:** 공백 정규화한 동일 SQL의 `execute_sql` 검증/실행 실패(`code`·parse·ToolMessage error; 0 rows는 제외)가 **3회**(최초 1 + 재시도 2)면 `IdenticalSqlFailureMiddleware`가 `jump_to=end`로 루프를 즉시 종료한다(Q1457형 18회 반복 방지)
 - 평가 스냅샷: `bird_eval.py` + `run_eval.py` → `client/eval/eval.json`
 - EX 채점: `bird_eval.score_eval_doc` — 마지막 성공 `execute_sql` rows vs `gold_rows` (unordered set). 실패는 `dw_agent` / `sql_mcp_code` / `semantic_layer`로 분류 → `client/eval/score_report.json`
 

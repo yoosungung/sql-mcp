@@ -25,9 +25,14 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 from langchain.agents import create_agent
+from langchain.agents.middleware import AgentMiddleware, hook_config
 from langchain.mcp import MCPAdapter
+from langchain_core.messages import AIMessage
 
 from bird_qa import SMALL_DBS, default_qa_path, load_questions, pick_question
+
+# 동일 execute_sql 검증/실행 실패 한도: 최초 1 + 재시도 2 (Q1457 18회 방지).
+MAX_IDENTICAL_SQL_FAILURES = 3
 
 def _clip(text: str, limit: int) -> str:
     if limit <= 0 or len(text) <= limit:
@@ -116,8 +121,154 @@ SQL surface rules:
 - Forbidden: INSERT/UPDATE/DELETE/DDL; Postgres-only extras (`::`, `ILIKE`, `FILTER (WHERE …)`).
 - Unqualified member names in GROUP BY (do not write `cube.col` after GROUP BY — `CUBE` is a SQL keyword).
 - Escape single quotes in string literals as `''`.
-- On validation/parse error, fix the SQL instead of retrying the same query.
+- On validation/parse error, fix the SQL instead of retrying the same query. The runtime stops the query if the same failing SQL is submitted 3 times.
 """
+
+
+def sql_fingerprint(sql: str) -> str:
+    """공백을 접어 동일 SQL 여부를 비교한다."""
+    return " ".join(str(sql).split()).strip()
+
+
+def _result_dict(result: Any) -> dict[str, Any] | None:
+    if result is None:
+        return None
+    if isinstance(result, dict):
+        return result
+    text: str | None = None
+    if isinstance(result, list) and result and isinstance(result[0], dict) and "text" in result[0]:
+        text = str(result[0]["text"])
+    elif isinstance(result, str):
+        text = result
+    else:
+        return None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return {"raw": text}
+    if isinstance(parsed, dict):
+        return parsed
+    if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict) and "text" in parsed[0]:
+        return _result_dict(str(parsed[0]["text"]))
+    return {"raw": text}
+
+
+def is_execute_sql_failure(result: Any, *, status: str | None = None) -> bool:
+    """execute_sql 검증/실행 실패. 0 rows는 성공 실행이며 재시도 한도에 넣지 않는다."""
+    if status == "error":
+        return True
+    body = _result_dict(result)
+    if not isinstance(body, dict):
+        text = str(result).lower() if result is not None else ""
+        return any(tok in text for tok in ("error", "validation", "parse"))
+    if body.get("code"):
+        return True
+    if "rows" in body:
+        return False
+    if body.get("dry_run") is True:
+        return False
+    raw = body.get("raw")
+    if isinstance(raw, str) and any(tok in raw.lower() for tok in ("error", "validation", "parse")):
+        return True
+    return "message" in body and "rows" not in body
+
+
+def execute_sql_attempts_from_messages(
+    messages: list[Any],
+) -> list[tuple[str, Any, str | None]]:
+    """완료된 execute_sql (sql, result, status) 목록."""
+    pending: dict[str, str] = {}
+    out: list[tuple[str, Any, str | None]] = []
+    for msg in messages:
+        for tc in getattr(msg, "tool_calls", None) or []:
+            if isinstance(tc, dict):
+                tid, name, args = tc.get("id"), tc.get("name"), tc.get("args") or {}
+            else:
+                tid = getattr(tc, "id", None)
+                name = getattr(tc, "name", None)
+                args = getattr(tc, "args", None) or {}
+            if name != "execute_sql" or not tid:
+                continue
+            sql = args.get("sql") if isinstance(args, dict) else None
+            if sql:
+                pending[str(tid)] = str(sql)
+        name = getattr(msg, "name", None)
+        tid = getattr(msg, "tool_call_id", None)
+        if name == "execute_sql" and tid and str(tid) in pending:
+            sql = pending.pop(str(tid))
+            status = getattr(msg, "status", None)
+            out.append((sql, getattr(msg, "content", None), status if isinstance(status, str) else None))
+    return out
+
+
+def should_stop_for_identical_sql_failures(
+    attempts: list[tuple[str, Any, str | None]],
+    *,
+    max_failures: int = MAX_IDENTICAL_SQL_FAILURES,
+) -> str | None:
+    """한도에 도달한 SQL fingerprint를 반환. 아니면 None."""
+    counts: dict[str, int] = {}
+    for sql, result, status in attempts:
+        if not is_execute_sql_failure(result, status=status):
+            continue
+        fp = sql_fingerprint(sql)
+        if not fp:
+            continue
+        counts[fp] = counts.get(fp, 0) + 1
+        if counts[fp] >= max_failures:
+            return fp
+    return None
+
+
+def identical_sql_failure_stop_message(*, max_failures: int) -> str:
+    return (
+        f"Stopped: execute_sql validation/execution failed {max_failures} times "
+        "with the same SQL. Aborting instead of retrying."
+    )
+
+
+class IdenticalSqlFailureMiddleware(AgentMiddleware):
+    """동일 SQL 검증 실패가 max_failures회면 에이전트 루프를 즉시 종료한다."""
+
+    def __init__(self, *, max_failures: int = MAX_IDENTICAL_SQL_FAILURES) -> None:
+        super().__init__()
+        if max_failures < 1:
+            raise ValueError("max_failures must be >= 1")
+        self.max_failures = max_failures
+
+    def _stop_update(self, state: dict[str, Any]) -> dict[str, Any] | None:
+        attempts = execute_sql_attempts_from_messages(state.get("messages") or [])
+        if should_stop_for_identical_sql_failures(attempts, max_failures=self.max_failures) is None:
+            return None
+        return {
+            "jump_to": "end",
+            "messages": [
+                AIMessage(content=identical_sql_failure_stop_message(max_failures=self.max_failures))
+            ],
+        }
+
+    @hook_config(can_jump_to=["end"])
+    def before_model(self, state: dict[str, Any], runtime: Any) -> dict[str, Any] | None:  # noqa: ARG002
+        return self._stop_update(state)
+
+    @hook_config(can_jump_to=["end"])
+    async def abefore_model(self, state: dict[str, Any], runtime: Any) -> dict[str, Any] | None:
+        return self.before_model(state, runtime)
+
+
+def bird_agent_middleware(
+    *, max_failures: int = MAX_IDENTICAL_SQL_FAILURES
+) -> list[IdenticalSqlFailureMiddleware]:
+    return [IdenticalSqlFailureMiddleware(max_failures=max_failures)]
+
+
+def create_bird_agent(model: str, tools: list[Any], *, max_failures: int = MAX_IDENTICAL_SQL_FAILURES):
+    return create_agent(
+        model,
+        tools,
+        system_prompt=SYSTEM,
+        middleware=bird_agent_middleware(max_failures=max_failures),
+    )
 
 
 def user_prompt(q) -> str:
@@ -174,7 +325,7 @@ async def invoke_bird_agent(
             + ", ".join(getattr(t, "name", str(t)) for t in tools),
             file=sys.stderr,
         )
-        agent = create_agent(model, tools, system_prompt=SYSTEM)
+        agent = create_bird_agent(model, tools)
         result = await agent.ainvoke(
             {"messages": [{"role": "user", "content": user_prompt(q)}]}
         )
