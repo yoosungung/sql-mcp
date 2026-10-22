@@ -8,10 +8,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from generate_meta import (
+    ROOT,
     apply_name_priority,
     collect_join_edges,
     cube_and_metric_from_view,
+    default_group_by,
     infer_table_id_fks,
+    load_semantic_plan,
+    parse_semantic_plan,
+    rewrite_divide,
     spanning_joins,
     views_from_tables,
 )
@@ -27,6 +32,28 @@ def _table(name: str, cols: list[str], pk: list[str], fk: list[dict] | None = No
         "pk": pk,
         "fk": fk or [],
     }
+
+
+def test_default_group_by_is_grain_not_allowlist() -> None:
+    dims = [
+        {"name": "id", "type": "string", "column": "id"},
+        {"name": "OpenDate", "type": "date", "column": "OpenDate"},
+        {"name": "LastUpdate", "type": "date", "column": "LastUpdate"},
+        {"name": "Academic_Year", "type": "date", "column": "Academic_Year"},
+        {"name": "School_Code", "type": "code", "column": "School_Code"},
+        {"name": "District_Type", "type": "code", "column": "District_Type"},
+        {"name": "Street", "type": "string", "column": "Street"},
+    ]
+    gb = default_group_by(dims)
+    assert gb[0] == "Academic_Year"
+    assert "School_Code" in gb and "District_Type" in gb
+    assert "id" not in gb and "Street" not in gb and "LastUpdate" not in gb
+    assert len(gb) < len(dims)
+
+
+def test_rewrite_divide_keeps_nested_commas() -> None:
+    src = "DIVIDE(SUM(IIF(status = 'A', amount, 0)) * 100, SUM(amount))"
+    assert rewrite_divide(src) == "(SUM(IIF(status = 'A', amount, 0)) * 100) / (SUM(amount))"
 
 
 def test_no_pk_to_pk_inference_for_superhero_style() -> None:
@@ -453,6 +480,183 @@ def test_match_player_lineup_excluded_and_player_cube_split() -> None:
     assert tables["Player_table"]["table"] == "Player"
     assert any(c["name"] == "player" for c in cubes)
     assert {c["name"].lower() for c in cubes}.isdisjoint({t.lower() for t in tables})
+
+
+def test_parse_semantic_plan_hubs() -> None:
+    text = """
+hubs:
+  - table: results
+    cube: f1_race_results
+    dimensions:
+      - races
+      - drivers
+  - table: event
+    cube: club_event
+    dimensions: []
+"""
+    plan = parse_semantic_plan(text)
+    assert [h["table"] for h in plan["hubs"]] == ["results", "event"]
+    assert plan["hubs"][0]["cube"] == "f1_race_results"
+    assert plan["hubs"][0]["dimensions"] == ["races", "drivers"]
+    assert plan["hubs"][1]["dimensions"] == []
+
+
+def test_load_semantic_plan_hub_counts() -> None:
+    expected = {
+        "formula_1": 7,
+        "toxicology": 4,
+        "california_schools": 2,
+        "student_club": 6,
+        "thrombosis_prediction": 3,
+        "superhero": 3,
+    }
+    for db_id, n in expected.items():
+        plan = load_semantic_plan(ROOT / db_id)
+        assert plan is not None, db_id
+        assert len(plan["hubs"]) == n, db_id
+        assert all(h["table"] and h["cube"] for h in plan["hubs"])
+        assert not any(h["cube"].endswith("_all") for h in plan["hubs"])
+
+
+def test_hub_plan_splits_sibling_facts_and_skips_db_all() -> None:
+    tables = {
+        "races": _table(
+            "races",
+            ["raceId", "year", "circuitId"],
+            ["raceId"],
+            fk=[
+                {
+                    "columns": ["circuitId"],
+                    "references": {"table": "circuits", "columns": ["circuitId"]},
+                }
+            ],
+        ),
+        "circuits": _table("circuits", ["circuitId", "name"], ["circuitId"]),
+        "results": _table(
+            "results",
+            ["resultId", "raceId", "time"],
+            ["resultId"],
+            fk=[
+                {
+                    "columns": ["raceId"],
+                    "references": {"table": "races", "columns": ["raceId"]},
+                }
+            ],
+        ),
+        "lapTimes": _table(
+            "lapTimes",
+            ["raceId", "lap", "milliseconds"],
+            ["raceId", "lap"],
+            fk=[
+                {
+                    "columns": ["raceId"],
+                    "references": {"table": "races", "columns": ["raceId"]},
+                }
+            ],
+        ),
+    }
+    views = views_from_tables(tables, "formula_1")
+    assert len(views) == 1
+    assert views[0]["name"] == "formula_1_all"
+    assert {s["table"] for s in views[0]["sources"]} == {
+        "races",
+        "circuits",
+        "results",
+        "lapTimes",
+    }
+
+    plan = {
+        "hubs": [
+            {
+                "table": "results",
+                "cube": "f1_race_results",
+                "dimensions": ["races", "circuits"],
+            },
+            {
+                "table": "lapTimes",
+                "cube": "f1_lap_times",
+                "dimensions": ["races"],
+            },
+        ]
+    }
+    views = views_from_tables(tables, "formula_1", plan=plan)
+    by = {v["name"]: v for v in views}
+    assert "formula_1_all" not in by
+    assert set(by) == {"f1_race_results", "f1_lap_times"}
+    res_src = {s["table"] for s in by["f1_race_results"]["sources"]}
+    assert res_src == {"results", "races", "circuits"}
+    assert "lapTimes" not in res_src
+    lap_src = {s["table"] for s in by["f1_lap_times"]["sources"]}
+    assert lap_src == {"lapTimes", "races"}
+    assert "circuits" not in lap_src and "results" not in lap_src
+
+
+def test_hub_plan_single_table_and_bridge_reuse() -> None:
+    tables = {
+        "molecule": _table("molecule", ["molecule_id", "label"], ["molecule_id"]),
+        "atom": _table(
+            "atom",
+            ["atom_id", "molecule_id"],
+            ["atom_id"],
+            fk=[
+                {
+                    "columns": ["molecule_id"],
+                    "references": {"table": "molecule", "columns": ["molecule_id"]},
+                }
+            ],
+        ),
+        "bond": _table(
+            "bond",
+            ["bond_id", "molecule_id"],
+            ["bond_id"],
+            fk=[
+                {
+                    "columns": ["molecule_id"],
+                    "references": {"table": "molecule", "columns": ["molecule_id"]},
+                }
+            ],
+        ),
+        "connected": _table(
+            "connected",
+            ["atom_id", "bond_id"],
+            [],
+            fk=[
+                {
+                    "columns": ["atom_id"],
+                    "references": {"table": "atom", "columns": ["atom_id"]},
+                },
+                {
+                    "columns": ["bond_id"],
+                    "references": {"table": "bond", "columns": ["bond_id"]},
+                },
+            ],
+        ),
+        "event": _table("event", ["event_id", "event_name"], ["event_id"]),
+    }
+    plan = {
+        "hubs": [
+            {"table": "molecule", "cube": "tox_molecule", "dimensions": []},
+            {"table": "atom", "cube": "tox_atom", "dimensions": ["molecule"]},
+            {"table": "bond", "cube": "tox_bond", "dimensions": ["molecule"]},
+            {
+                "table": "connected",
+                "cube": "tox_connected",
+                "dimensions": ["atom", "bond"],
+            },
+            {"table": "event", "cube": "club_event", "dimensions": []},
+        ]
+    }
+    views = views_from_tables(tables, "toxicology", plan=plan)
+    by = {v["name"]: v for v in views}
+    assert by["tox_molecule"]["joins"] == []
+    assert {s["table"] for s in by["tox_molecule"]["sources"]} == {"molecule"}
+    assert {s["table"] for s in by["tox_atom"]["sources"]} == {"atom", "molecule"}
+    assert "bond" not in {s["table"] for s in by["tox_atom"]["sources"]}
+    conn_src = {s["table"] for s in by["tox_connected"]["sources"]}
+    assert conn_src == {"connected", "atom", "bond"}
+    assert "molecule" not in conn_src
+    assert by["club_event"]["joins"] == []
+    assert {s["table"] for s in by["club_event"]["sources"]} == {"event"}
 
 
 if __name__ == "__main__":

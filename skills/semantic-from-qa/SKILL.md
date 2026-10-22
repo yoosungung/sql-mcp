@@ -5,7 +5,7 @@ description: >-
   questions, domain knowledge (definitions, formulas, glossaries), and optional
   reference SQL. Use when improving an existing semantic layer with Q&A pairs or
   business knowledge—not for authoring table/view from scratch, MCP register, or
-  execution-accuracy eval.
+  execution-accuracy eval (use semantic-from-eval).
 ---
 
 # Semantic refine · from Q&A / knowledge
@@ -17,7 +17,7 @@ description: >-
 문서 형태: [../semantic-cube-metric-segment/contract.md](../semantic-cube-metric-segment/contract.md).  
 마이닝 규칙 상세: [methodology.md](methodology.md).
 
-**MCP 등록·실행 정확도 eval은 이 스킬 밖.** 등록은 요청 시에만 `semantic-register`.
+**MCP 등록은 이 스킬 밖**(요청 시 `semantic-register`). 실행 정확도 eval·그레인 분할의 **반복 루프**는 `semantic-from-eval`.
 
 ## Inputs
 
@@ -60,6 +60,6 @@ Progress:
 - table/view를 이 스킬에서 새로 만들지 않는다(제안만).
 - 참고 SQL·벤치 gold 전체 문장을 metric/segment/`expression`에 그대로 넣지 않는다.
 - 다중 문장 · 쓰기 SQL을 시맨틱 식에 넣지 않는다.
-- 실행 결과 비교·EX/Soft-F1 등 **eval 하네스**를 여기서 돌리거나 설계하지 않는다.
+- 실행 결과 비교·EX/Soft-F1 등 **eval 하네스**를 여기서 돌리거나 설계하지 않는다(`semantic-from-eval`).
 - 특정 벤치 경로·스키마·DB 목록을 전제로 두지 않는다.
 - 사용자 요청 전 `metadata_*` 등록 금지.

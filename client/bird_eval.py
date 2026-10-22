@@ -9,11 +9,34 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from bird_qa import BirdQuestion, repo_root
 
 FailureBucket = Literal["dw_agent", "sql_mcp_code", "semantic_layer"]
+EvalSqlCause = Literal["agent가 실패", "잘못된 시멘틱 정의", "sql-mcp 버그", "기타"]
+
+CAUSE_FROM_BUCKET: dict[FailureBucket, EvalSqlCause] = {
+    "dw_agent": "agent가 실패",
+    "semantic_layer": "잘못된 시멘틱 정의",
+    "sql_mcp_code": "sql-mcp 버그",
+}
+EVAL_SQL_CAUSES: tuple[EvalSqlCause, ...] = (
+    "agent가 실패",
+    "잘못된 시멘틱 정의",
+    "sql-mcp 버그",
+    "기타",
+)
+_UNKNOWN_IDENT_RE = re.compile(
+    r"unknown identifier(?: in expression)?:\s*([A-Za-z_][\w$]*)",
+    re.I,
+)
+_FROM_TABLE_RE = re.compile(
+    r"\b(?:from|join)\s+(?!\()"
+    r"(?:(?:\"[^\"]+\"|`[^`]+`|[A-Za-z_][\w$]*)\s*\.\s*)?"
+    r"(?:\"([^\"]+)\"|`([^`]+)`|([A-Za-z_][\w$]*))",
+    re.I,
+)
 
 
 @dataclass
@@ -213,6 +236,146 @@ def build_eval_doc(
 def write_eval_json(doc: dict[str, Any], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def parse_dry_run_result(result: Any) -> tuple[str | None, str | None]:
+    """execute_sql(dry_run=true) 응답 → (compiled physical SQL, error)."""
+    body = unwrap_tool_result(result)
+    if not isinstance(body, dict):
+        if result is None:
+            return None, "empty dry_run result"
+        return None, str(result)
+    if body.get("dry_run") is True and isinstance(body.get("sql"), str) and body["sql"]:
+        return str(body["sql"]), None
+    if body.get("code") or "message" in body:
+        return None, str(body.get("message") or body.get("code") or body)
+    raw = body.get("raw")
+    if isinstance(raw, str) and raw:
+        return None, raw
+    return None, json.dumps(body, ensure_ascii=False)
+
+
+def build_eval_sql_doc(
+    eval_doc: dict[str, Any],
+    *,
+    dry_run: Callable[[str, str], tuple[str | None, str | None]] | None = None,
+) -> dict[str, Any]:
+    """EX FAIL 문항만: question/evidence/gold_sql/agent_sql + dry_run agent_db_sql."""
+    items_out: list[dict[str, Any]] = []
+    for it in eval_doc.get("items") or []:
+        if not isinstance(it, dict):
+            continue
+        scored = score_eval_item(it)
+        if scored.get("ex"):
+            continue
+        agent_sql = scored.get("last_sql") if isinstance(scored.get("last_sql"), str) else None
+        agent_db_sql: str | None = None
+        agent_db_sql_error: str | None = None
+        db_id = it.get("db_id") if isinstance(it.get("db_id"), str) else None
+        if dry_run is not None and agent_sql and db_id:
+            agent_db_sql, agent_db_sql_error = dry_run(db_id, agent_sql)
+        elif dry_run is not None and not agent_sql:
+            agent_db_sql_error = "no agent_sql"
+        row: dict[str, Any] = {
+            "question_id": it.get("question_id"),
+            "db_id": it.get("db_id"),
+            "question": it.get("question"),
+            "evidence": it.get("evidence"),
+            "gold_sql": it.get("gold_sql"),
+            "agent_sql": agent_sql,
+            "agent_db_sql": agent_db_sql,
+        }
+        if agent_db_sql_error:
+            row["agent_db_sql_error"] = agent_db_sql_error
+        items_out.append(row)
+    meta = dict(eval_doc.get("meta") or {})
+    meta["item_count"] = len(items_out)
+    meta["source"] = "ex_fail"
+    return annotate_eval_sql_causes({"meta": meta, "items": items_out})
+
+
+def _sql_from_tables(sql: str) -> set[str]:
+    """FROM/JOIN 물리·논리 테이블 이름 (스키마·alias 제외, 소문자)."""
+    names: set[str] = set()
+    for m in _FROM_TABLE_RE.finditer(sql or ""):
+        name = m.group(1) or m.group(2) or m.group(3)
+        if not name:
+            continue
+        key = name.strip().strip('"').strip("`").lower()
+        if key and key not in {"select", "main"}:
+            names.add(key)
+    return names
+
+
+def classify_eval_sql_item(row: dict[str, Any]) -> tuple[EvalSqlCause, str]:
+    """EX FAIL 1건 → (cause 한글 라벨, reason). gold vs 컴파일 물리 SQL·dry_run 오류 기준."""
+    err = row.get("agent_db_sql_error") if isinstance(row.get("agent_db_sql_error"), str) else None
+    agent_sql = row.get("agent_sql") if isinstance(row.get("agent_sql"), str) else None
+    gold_sql = row.get("gold_sql") if isinstance(row.get("gold_sql"), str) else None
+    compiled = row.get("agent_db_sql") if isinstance(row.get("agent_db_sql"), str) else None
+
+    if err and err.strip():
+        if err.strip() == "no agent_sql" or not agent_sql:
+            return "agent가 실패", "성공한 execute_sql 없음(도구/재시도 실패)"
+        ranked = _rank_errors([err], (agent_sql or "").upper())
+        if ranked:
+            bucket, reason = ranked[0]
+            return CAUSE_FROM_BUCKET[bucket], reason
+        ident_m = _UNKNOWN_IDENT_RE.search(err)
+        if ident_m:
+            ident = ident_m.group(1)
+            if gold_sql and ident.lower() in gold_sql.lower():
+                return "잘못된 시멘틱 정의", f"gold 식별자 {ident}가 시맨틱에 미등록"
+            return "agent가 실패", f"시맨틱에 없는 식별자 {ident}"
+        if "not found" in err.lower() and "cube" in err.lower():
+            return "agent가 실패", "존재하지 않는 큐브 이름"
+        if "sql parse" in err.lower() or "sql parser" in err.lower():
+            return "agent가 실패", "시맨틱 SQL 구문/괄호 오류"
+        return "기타", err
+
+    if compiled:
+        extra = _sql_from_tables(compiled) - _sql_from_tables(gold_sql or "")
+        extra -= {"main"}
+        if extra:
+            shown = ", ".join(sorted(extra))
+            return "잘못된 시멘틱 정의", f"컴파일된 물리 SQL이 gold에 없는 테이블을 조인: {shown}"
+        return "agent가 실패", "컴파일은 됐으나 gold와 로직/필터/프로젝션 불일치"
+
+    if agent_sql:
+        return "agent가 실패", "컴파일 SQL 없음"
+    return "기타", "미분류 EX 실패"
+
+
+def annotate_eval_sql_causes(doc: dict[str, Any]) -> dict[str, Any]:
+    """eval_sql.json items에 cause/cause_reason을 db_id 바로 뒤에 붙인다."""
+    counts: Counter[str] = Counter()
+    items_out: list[dict[str, Any]] = []
+    for row in doc.get("items") or []:
+        if not isinstance(row, dict):
+            continue
+        cause, reason = classify_eval_sql_item(row)
+        ordered: dict[str, Any] = {}
+        inserted = False
+        for k, v in row.items():
+            if k in {"cause", "cause_reason"}:
+                continue
+            ordered[k] = v
+            if k == "db_id":
+                ordered["cause"] = cause
+                ordered["cause_reason"] = reason
+                inserted = True
+        if not inserted:
+            ordered["cause"] = cause
+            ordered["cause_reason"] = reason
+        counts[cause] += 1
+        items_out.append(ordered)
+    meta = dict(doc.get("meta") or {})
+    meta["cause_counts"] = {c: counts.get(c, 0) for c in EVAL_SQL_CAUSES}
+    return {**doc, "meta": meta, "items": items_out}
+
+
+def write_eval_sql_json(doc: dict[str, Any], path: Path) -> None:
+    write_eval_json(doc, path)
 
 
 def unwrap_tool_result(result: Any) -> dict[str, Any] | None:
@@ -643,3 +806,221 @@ def score_eval_doc(doc: dict[str, Any]) -> dict[str, Any]:
         "by_difficulty": by_diff,
         "items": scored,
     }
+
+
+EVAL_MD_ROW_PREVIEW = 40
+EVAL_MD_FINAL_MAX = 400
+
+
+def _md_cell(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).replace("|", "\\|").replace("\n", " ")
+
+
+def _sql_fence(sql: str | None) -> str:
+    if not sql:
+        return "—"
+    return f"```sql\n{sql}\n```"
+
+
+def _tool_summary(agent: dict[str, Any] | None) -> str:
+    if not isinstance(agent, dict):
+        return "—"
+    names = [
+        str(tc.get("name"))
+        for tc in (agent.get("tool_calls") or [])
+        if isinstance(tc, dict) and tc.get("name")
+    ]
+    if not names:
+        return "—"
+    return f"{len(names)}: " + ", ".join(names)
+
+
+def _last_execute_columns(agent: dict[str, Any] | None) -> list[str] | None:
+    if not isinstance(agent, dict):
+        return None
+    last: list[str] | None = None
+    for tc in agent.get("tool_calls") or []:
+        if not isinstance(tc, dict) or tc.get("name") != "execute_sql":
+            continue
+        body = unwrap_tool_result(tc.get("result"))
+        if isinstance(body, dict) and "rows" in body and "code" not in body:
+            cols = body.get("columns")
+            if isinstance(cols, list) and all(isinstance(c, str) for c in cols):
+                last = list(cols)
+    return last
+
+
+def _row_key_set(rows: list[Any] | None) -> set[Any] | None:
+    if not isinstance(rows, list):
+        return None
+    keys: list[Any] = []
+    for r in rows:
+        keys.append(tuple(r) if isinstance(r, list) else (r,))
+    try:
+        return set(keys)
+    except TypeError:
+        return set(map(repr, keys))
+
+
+def _row_diff_line(gold_rows: Any, pred_rows: Any) -> str:
+    g = _row_key_set(gold_rows if isinstance(gold_rows, list) else None)
+    p = _row_key_set(pred_rows if isinstance(pred_rows, list) else None)
+    gn = len(gold_rows) if isinstance(gold_rows, list) else "—"
+    pn = len(pred_rows) if isinstance(pred_rows, list) else "—"
+    if g is None or p is None:
+        return f"- **row set**: gold={gn} · agent={pn}"
+    both = len(g & p)
+    return (
+        f"- **row set**: gold={gn} · agent={pn} · "
+        f"both={both} only_gold={len(g - p)} only_agent={len(p - g)}"
+    )
+
+
+def _rows_table(
+    rows: Any,
+    *,
+    headers: list[str] | None = None,
+    limit: int = EVAL_MD_ROW_PREVIEW,
+) -> str:
+    if not isinstance(rows, list):
+        return "_없음_"
+    if not rows:
+        return "_empty_"
+    shown = rows[:limit]
+    width = 1
+    for r in shown:
+        if isinstance(r, list):
+            width = max(width, len(r))
+    hdrs = headers if headers and len(headers) == width else [f"c{i + 1}" for i in range(width)]
+    lines = [
+        "| " + " | ".join(_md_cell(h) for h in hdrs) + " |",
+        "| " + " | ".join("---" for _ in hdrs) + " |",
+    ]
+    for r in shown:
+        cells = list(r) if isinstance(r, list) else [r]
+        if len(cells) < width:
+            cells.extend([""] * (width - len(cells)))
+        lines.append("| " + " | ".join(_md_cell(c) for c in cells[:width]) + " |")
+    extra = len(rows) - len(shown)
+    if extra > 0:
+        lines.append("")
+        lines.append(f"… +{extra} rows")
+    return "\n".join(lines)
+
+
+def render_eval_md(
+    eval_doc: dict[str, Any],
+    score_doc: dict[str, Any] | None = None,
+) -> str:
+    """eval.json + 채점 → 문항별 Markdown (요약은 eval_report.md)."""
+    scored = score_doc or score_eval_doc(eval_doc)
+    scored_items = scored.get("items") or []
+    by_qid = {s.get("question_id"): s for s in scored_items if isinstance(s, dict)}
+    meta = scored.get("meta") or eval_doc.get("meta") or {}
+    items = [it for it in (eval_doc.get("items") or []) if isinstance(it, dict)]
+    n = int(meta.get("item_count") or len(items))
+    ex_n = int(meta.get("ex_correct") or 0)
+    acc = meta.get("ex_accuracy")
+    acc_s = f"{acc}%" if acc is not None else "—"
+    lines = [
+        "# BIRD Mini-Dev Eval (문항별)",
+        "",
+        "요약은 [eval_report.md](eval_report.md). 문항마다 **Gold SQL / Gold rows**와 **Agent SQL / Agent rows**를 붙여 비교한다.",
+        "",
+        f"- **일시**: `{meta.get('created_at') or '—'}` · scored `{meta.get('scored_at') or '—'}`",
+        f"- **모델**: `{meta.get('model') or '—'}` · MCP `{meta.get('mcp_url') or '—'}`",
+        f"- **EX**: {ex_n}/{n} ({acc_s})",
+        "",
+        "## Index",
+        "",
+        "| qid | db_id | EX | reason |",
+        "|-----|-------|----|--------|",
+    ]
+    for it in items:
+        qid = it.get("question_id")
+        s = by_qid.get(qid) or score_eval_item(it)
+        ex_ok = bool(s.get("ex"))
+        mark = "PASS" if ex_ok else "FAIL"
+        reason = s.get("failure_reason") or ""
+        lines.append(
+            f"| [{qid}](#q{qid}) | {_md_cell(it.get('db_id'))} | {mark} | "
+            f"{_md_cell(reason)} |"
+        )
+    lines += ["", "## 문항"]
+    last_db: str | None = None
+    for it in items:
+        qid = it.get("question_id")
+        db = str(it.get("db_id") or "")
+        s = by_qid.get(qid) or score_eval_item(it)
+        if db != last_db:
+            lines += ["", f"## {db}"]
+            last_db = db
+        ex_ok = bool(s.get("ex"))
+        mark = "PASS" if ex_ok else "FAIL"
+        agent = it.get("agent") if isinstance(it.get("agent"), dict) else None
+        final = str((agent or {}).get("final") or "")
+        if len(final) > EVAL_MD_FINAL_MAX:
+            final = final[:EVAL_MD_FINAL_MAX] + "…"
+        gold_rows = it.get("gold_rows")
+        pred_rows = s.get("pred_rows")
+        gold_n = len(gold_rows) if isinstance(gold_rows, list) else "—"
+        pred_n = s.get("pred_row_count")
+        if pred_n is None:
+            pred_n = len(pred_rows) if isinstance(pred_rows, list) else "—"
+        agent_cols = _last_execute_columns(agent)
+        lines += [
+            "",
+            f"### Q{qid}",
+            "",
+            f"- **db**: `{db}` · **EX**: **{mark}**",
+        ]
+        if not ex_ok and s.get("failure_reason"):
+            lines.append(f"- **reason**: {s.get('failure_reason')}")
+        if "Stopped: execute_sql" in final:
+            lines.append("- **max_retries**: 동일 SQL 검증 실패 3회 중단")
+        lines += [
+            f"- **tools**: {_tool_summary(agent)}",
+            _row_diff_line(gold_rows, pred_rows),
+            f"- **question**: {it.get('question') or '—'}",
+            f"- **evidence**: {it.get('evidence') or '—'}",
+            "",
+            "#### Gold SQL",
+            "",
+            _sql_fence(it.get("gold_sql") if isinstance(it.get("gold_sql"), str) else None),
+            "",
+            f"#### Gold rows ({gold_n})",
+            "",
+            _rows_table(gold_rows),
+            "",
+            "#### Agent SQL",
+            "",
+            _sql_fence(s.get("last_sql") if isinstance(s.get("last_sql"), str) else None),
+        ]
+        compiled = s.get("compiled_sql")
+        if isinstance(compiled, str) and compiled:
+            lines += ["", "#### compiled_sql", "", _sql_fence(compiled)]
+        err = s.get("last_error")
+        if err:
+            lines += ["", f"- **last_error**: {err}"]
+        lines += [
+            "",
+            f"#### Agent rows ({pred_n})",
+            "",
+            _rows_table(pred_rows, headers=agent_cols),
+            "",
+            f"- **final**: {final or '—'}",
+        ]
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def write_eval_md(
+    eval_doc: dict[str, Any],
+    path: Path,
+    *,
+    score_doc: dict[str, Any] | None = None,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_eval_md(eval_doc, score_doc), encoding="utf-8")

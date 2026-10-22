@@ -42,6 +42,7 @@ cd client && source .venv/bin/activate
 python run_eval.py --db superhero --limit 3 --skip-agent          # gold만
 python run_eval.py --url http://127.0.0.1:8090/mcp --concurrency 8  # 전체, 병렬 8
 # → client/eval/eval.json
+# 채점·문항별 md · EX FAIL SQL: DESIGN.md Commands (`write_eval_md` · `write_eval_sql.py`)
 ```
 
 Cursor/VS Code: `Debug BIRD: sql-mcp + agent`(compound) 또는 서버(`:8090`) 기동 후 `Debug client agent (BIRD HTTP)`.

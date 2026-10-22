@@ -48,20 +48,20 @@
 ### Join 뷰 설계 및 프루닝 규칙 (`combine: "join"`)
 
 1. **직접 FK 간선(사이클 포함) 전수 보존:**
-   - 단일 BFS 스패닝 트리만 남기고 사이클을 닫는 유효 FK 간선(`budget ↔ event`, `results ↔ drivers`, `connected ↔ bond` 등)을 버리지 않는다.
+   - 단일 BFS 스패닝 트리만 남기고 사이클을 닫는 유효 FK 간선(예: `orders ↔ customer`, `order_lines ↔ products`)을 버리지 않는다.
    - 서버 컴파일러(Step 4)가 질의된 컬럼의 필수 테이블 집합($T_{req}$) 간 **최단 경로(Steiner)**만 선택하고 사이클 없는 스패닝 트리 `JOIN`만 방출하므로, `view.joins`에는 테이블 쌍별 유효 FK 간선을 모두 넣어야 불필요한 허브 테이블 경유(Fan/Chasm Trap)가 발생하지 않는다.
    - 모든 조인이 `inner`이면 질의에 쓰이지 않은 `sources[0]`(루트 테이블)도 자동 프루닝된다.
 2. **가짜 PK↔PK 조인 추론 금지 · `{table}_id`→`{table}.id` · 다중 FK 우선순위:**
-   - 서로 다른 엔티티의 단일 PK 컬럼명이 우연히 같다고(`superhero.id = superpower.id`) 직접 조인하지 않는다(M:N 연결 테이블 `hero_power` 경유 필수).
+   - 서로 다른 엔티티의 단일 PK 컬럼명이 우연히 같다고(`product.id`와 `warehouse.id`) 직접 조인하지 않는다. M:N은 연결 테이블(예: `stock(product_id, warehouse_id)`) 경유.
    - 물리/선언 FK가 없어도 컬럼 `{table}_id` 또는 `{Table}Id`가 있으면 논리 테이블 `{table}`(없으면 `{table}s`)의 `id`/`Id`와 조인한다. 예: `orders.customer_id → customer.id`, `comments.PostId → posts.Id`. 자식 테이블 자신의 PK이거나 부모에 `id` 컬럼이 없으면 적용하지 않는다.
-   - SQLite `PRAGMA foreign_key_list`는 선언 역순(`fid=0`이 마지막 FK)으로 반환하므로, 반드시 테이블 컬럼 선언 순서를 기준으로 정렬한다.
-   - 동일 테이블 쌍에 대체 키 FK가 여럿이면 **참조 부모 PK 여부 → 물리 컬럼명 일치(`atom_id = atom_id`) → 더 짧은 대표 키(`player_api_id` < `player_fifa_api_id`) → 컬럼 선언 순서**로 대표 간선을 선택한다.
+   - 카탈로그 FK 목록 순서는 방언마다 다를 수 있다(역순·미지정). **테이블 컬럼 선언 순서**로 정렬한 뒤 쓴다.
+   - 동일 테이블 쌍에 대체 키 FK가 여럿이면 **참조 부모 PK 여부 → 물리 컬럼명 일치(`customer_id = customer_id`) → 더 짧은 대표 키(`customer_id` < `customer_legacy_id`) → 컬럼 선언 순서**로 대표 간선을 선택한다.
 3. **Role-Playing 소규모 룩업 테이블 분리:**
-   - 한 자식 테이블이 룩업의 동일 키를 2~3개 역할 FK로 참조하면(예: `eye/hair/skin_colour_id`→`colour.id`, `home/away_team_api_id`→`Team.team_api_id`), **클론 table 문서를 만들지 말고** view `sources`에 동일 `table` + 서로 다른 `alias`로 이중 조인한다(예: `{ kind:"table", table:"Team" }` · `{ kind:"table", table:"Team", alias:"away_team" }`).
-   - 역할별 컬럼은 alias 접두로 노출되며, 질의에서 참조한 역할 조인만 프루닝으로 남긴다. 동일 부모 FK가 4개 초과(라인업 슬롯 등)면 조인하지 않고 ID dimension만 둔다.
+   - 한 자식 테이블이 룩업의 동일 키를 2~3개 역할 FK로 참조하면(예: `ship_to_address_id`/`bill_to_address_id`→`address.id`), **클론 table 문서를 만들지 말고** view `sources`에 동일 `table` + 서로 다른 `alias`로 이중 조인한다(예: `{ kind:"table", table:"address" }` · `{ kind:"table", table:"address", alias:"bill_to" }`).
+   - 역할별 컬럼은 alias 접두로 노출되며, 질의에서 참조한 역할 조인만 프루닝으로 남긴다. 동일 부모 FK가 4개 초과(슬롯 배열 등)면 조인하지 않고 ID dimension만 둔다.
 4. **조인 키 동치류(Equivalence Class) 다중 매핑:**
-   - `on` 조건으로 묶인 조인 키 동치류에서 물리 컬럼명이 같으면(`CDSCode`, `driverId`, `molecule_id`) 하나의 view 컬럼으로 묶고, 모든 참여 테이블의 `{ source, column }`을 `mappings`에 넣는다(PK 테이블 우선).
-   - 조인 양끝의 물리 컬럼명이 다르면(`event.event_id = budget.link_to_event`, `zip_code.zip_code = member.zip`), 오른쪽 PK 컬럼을 흡수해 없애지 말고 **양쪽 이름을 모두 view 컬럼으로 노출**하되(단, 비-루트 테이블의 범용 `"id"` 컬럼은 제외), 각 view 컬럼의 `mappings`에 자신의 테이블을 첫 번째(`mappings[0]`)로 두고 동치류의 상대 테이블 매핑을 뒤에 추가한다. 그래야 컴파일러가 어느 쪽 테이블만 단독 질의하더라도 불필요한 조인 없이 포함된 테이블의 컬럼으로 안전하게 바인딩한다.
+   - `on` 조건으로 묶인 조인 키 동치류에서 물리 컬럼명이 같으면(`customer_id`, `order_id`) 하나의 view 컬럼으로 묶고, 모든 참여 테이블의 `{ source, column }`을 `mappings`에 넣는다(PK 테이블 우선).
+   - 조인 양끝의 물리 컬럼명이 다르면(`orders.order_id = shipments.ref_order`, `customer.postal_code = region.zip`), 오른쪽 PK 컬럼을 흡수해 없애지 말고 **양쪽 이름을 모두 view 컬럼으로 노출**하되(단, 비-루트 테이블의 범용 `"id"` 컬럼은 제외), 각 view 컬럼의 `mappings`에 자신의 테이블을 첫 번째(`mappings[0]`)로 두고 동치류의 상대 테이블 매핑을 뒤에 추가한다. 그래야 컴파일러가 어느 쪽 테이블만 단독 질의하더라도 불필요한 조인 없이 포함된 테이블의 컬럼으로 안전하게 바인딩한다.
 
 ## Quick checks
 

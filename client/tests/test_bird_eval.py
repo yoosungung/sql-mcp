@@ -11,16 +11,23 @@ import pytest
 
 from bird_eval import (
     AgentRun,
+    annotate_eval_sql_causes,
     build_eval_doc,
+    build_eval_sql_doc,
+    classify_eval_sql_item,
     classify_failure,
     item_from_question,
     last_successful_rows,
+    parse_dry_run_result,
+    render_eval_md,
     rows_match_ex,
     score_eval_item,
     serialize_messages,
     tool_calls_from_messages,
     unwrap_tool_result,
     write_eval_json,
+    write_eval_md,
+    write_eval_sql_json,
     run_gold_sql,
 )
 from bird_qa import BirdQuestion
@@ -360,3 +367,301 @@ def test_classify_failure_divide_case_parse_is_agent() -> None:
         ),
     )
     assert bucket == "dw_agent"
+
+
+def _eval_doc_two_items() -> dict:
+    fail = item_from_question(
+        _q(
+            question_id=1312,
+            db_id="student_club",
+            question="What's Angela Sanders's major?",
+            evidence="major refers to major_name.",
+            sql="SELECT major_name FROM member WHERE first_name = 'Angela'",
+            difficulty="simple",
+        ),
+        gold_rows=[["Business"]],
+        agent=AgentRun(
+            final="not found",
+            tool_calls=[
+                {
+                    "name": "execute_sql",
+                    "args": {
+                        "sql": (
+                            "SELECT major_name FROM student_club "
+                            "WHERE first_name = 'Angela Sanders'"
+                        )
+                    },
+                    "result": {"columns": ["major_name"], "rows": [], "row_count": 0},
+                }
+            ],
+            elapsed_ms=1200,
+            model="ollama:gemma4:e2b",
+        ),
+    )
+    ok = item_from_question(
+        _q(
+            question_id=1317,
+            db_id="student_club",
+            question="How many medium shirts?",
+            evidence="count",
+            sql="SELECT COUNT(*) FROM event WHERE t_shirt_size = 'Medium'",
+            difficulty="moderate",
+        ),
+        gold_rows=[[7]],
+        agent=AgentRun(
+            final="7",
+            tool_calls=[
+                {
+                    "name": "execute_sql",
+                    "args": {"sql": "SELECT count(*) FROM student_club WHERE t_shirt_size = 'Medium'"},
+                    "result": {"columns": ["count(*)"], "rows": [[7]], "row_count": 1},
+                }
+            ],
+            elapsed_ms=800,
+        ),
+    )
+    return build_eval_doc([fail, ok], model="ollama:gemma4:e2b")
+
+
+def test_render_eval_md_index_and_question_sections() -> None:
+    md = render_eval_md(_eval_doc_two_items())
+    assert "# BIRD Mini-Dev Eval (문항별)" in md
+    assert "| [1312](#q1312) |" in md and "FAIL" in md
+    assert "| [1317](#q1317) |" in md and "PASS" in md
+    assert "### Q1312" in md
+    assert "What's Angela Sanders's major?" in md
+    assert "major refers to major_name." in md
+    assert "#### Gold SQL" in md
+    assert "#### Agent SQL" in md
+    assert "SELECT major_name FROM member WHERE first_name = 'Angela'" in md
+    assert "SELECT major_name FROM student_club WHERE first_name = 'Angela Sanders'" in md
+    assert "#### Gold rows" in md
+    assert "#### Agent rows" in md
+    assert "| Business |" in md
+    assert "_empty_" in md
+    assert "only_gold=1" in md
+    assert "| difficulty |" not in md
+    assert "| bucket |" not in md
+    assert "**difficulty**" not in md
+    assert "**bucket**" not in md
+    assert "**elapsed**" not in md
+    assert "dw_agent" not in md
+    assert "필터/조인으로 결과 공집합" in md
+    assert "### Q1317" in md
+    assert "How many medium shirts?" in md
+    assert "[eval_report.md](eval_report.md)" in md
+
+
+def test_render_eval_md_truncates_long_row_lists() -> None:
+    rows = [[i] for i in range(45)]
+    it = item_from_question(
+        _q(question_id=99, sql="SELECT n FROM t"),
+        gold_rows=rows,
+        agent=AgentRun(
+            final="many",
+            tool_calls=[
+                {
+                    "name": "execute_sql",
+                    "args": {"sql": "SELECT n FROM superhero"},
+                    "result": {"columns": ["n"], "rows": rows, "row_count": 45},
+                }
+            ],
+        ),
+    )
+    md = render_eval_md(build_eval_doc([it], model="x"))
+    assert "#### Gold rows (45)" in md
+    assert "#### Agent rows (45)" in md
+    assert "| n |" in md
+    assert "| 0 |" in md
+    assert "| 39 |" in md
+    assert "… +5 rows" in md
+    assert "| 44 |" not in md
+
+
+def test_write_eval_md_writes_utf8(tmp_path: Path) -> None:
+    out = tmp_path / "eval.md"
+    write_eval_md(_eval_doc_two_items(), out)
+    text = out.read_text(encoding="utf-8")
+    assert text.startswith("# BIRD Mini-Dev Eval (문항별)")
+    assert "Q1312" in text
+
+
+def test_parse_dry_run_result_sql_and_error() -> None:
+    sql, err = parse_dry_run_result({"sql": "SELECT 1 FROM member", "dry_run": True})
+    assert sql == "SELECT 1 FROM member"
+    assert err is None
+    sql, err = parse_dry_run_result({"code": "invalid_sql", "message": "unknown dimension"})
+    assert sql is None
+    assert err and "unknown dimension" in err
+
+
+def test_build_eval_sql_doc_fail_only_with_dry_run() -> None:
+    calls: list[tuple[str, str]] = []
+
+    def dry_run(database: str, sql: str) -> tuple[str | None, str | None]:
+        calls.append((database, sql))
+        return "SELECT T2.major_name FROM member AS T1", None
+
+    doc = build_eval_sql_doc(_eval_doc_two_items(), dry_run=dry_run)
+    assert doc["meta"]["item_count"] == 1
+    assert doc["meta"]["source"] == "ex_fail"
+    assert len(doc["items"]) == 1
+    row = doc["items"][0]
+    assert row["question_id"] == 1312
+    assert row["db_id"] == "student_club"
+    assert row["question"] == "What's Angela Sanders's major?"
+    assert row["evidence"] == "major refers to major_name."
+    assert row["gold_sql"] == "SELECT major_name FROM member WHERE first_name = 'Angela'"
+    assert "Angela Sanders" in row["agent_sql"]
+    assert row["agent_db_sql"] == "SELECT T2.major_name FROM member AS T1"
+    assert "agent_db_sql_error" not in row
+    assert row["cause"] == "agent가 실패"
+    assert calls == [
+        (
+            "student_club",
+            "SELECT major_name FROM student_club WHERE first_name = 'Angela Sanders'",
+        )
+    ]
+
+
+def test_build_eval_sql_doc_records_dry_run_error() -> None:
+    def dry_run(database: str, sql: str) -> tuple[str | None, str | None]:
+        return None, "unknown dimension first_name"
+
+    row = build_eval_sql_doc(_eval_doc_two_items(), dry_run=dry_run)["items"][0]
+    assert row["agent_db_sql"] is None
+    assert row["agent_db_sql_error"] == "unknown dimension first_name"
+    assert row["cause"] == "잘못된 시멘틱 정의"
+
+
+def test_write_eval_sql_json_roundtrip(tmp_path: Path) -> None:
+    out = tmp_path / "eval_sql.json"
+    write_eval_sql_json(build_eval_sql_doc(_eval_doc_two_items()), out)
+    loaded = json.loads(out.read_text(encoding="utf-8"))
+    assert loaded["items"][0]["question_id"] == 1312
+    assert loaded["items"][0]["agent_db_sql"] is None
+    assert loaded["items"][0]["cause"] == "agent가 실패"
+
+
+def test_classify_eval_sql_same_tables_is_agent() -> None:
+    cause, reason = classify_eval_sql_item(
+        {
+            "gold_sql": (
+                "SELECT T2.major_name FROM member AS T1 "
+                "INNER JOIN major AS T2 ON T1.link_to_major = T2.major_id "
+                "WHERE T1.first_name = 'Angela'"
+            ),
+            "agent_sql": (
+                "SELECT major_name FROM student_club "
+                "WHERE first_name = 'Angela Sanders'"
+            ),
+            "agent_db_sql": (
+                'SELECT major.major_name FROM member '
+                "INNER JOIN major ON member.link_to_major = major.major_id "
+                "WHERE member.first_name = 'Angela Sanders'"
+            ),
+        }
+    )
+    assert cause == "agent가 실패"
+    assert "로직" in reason or "필터" in reason
+
+
+def test_classify_eval_sql_extra_compiled_tables_is_semantic() -> None:
+    cause, reason = classify_eval_sql_item(
+        {
+            "gold_sql": (
+                "SELECT T1.event_name FROM event AS T1 "
+                "INNER JOIN attendance AS T2 ON T1.event_id = T2.link_to_event "
+                "GROUP BY T1.event_id HAVING COUNT(T2.link_to_event) > 20"
+            ),
+            "agent_sql": (
+                "SELECT event_name FROM student_club "
+                "GROUP BY event_name HAVING COUNT(event_id) > 20 AND source != 'Fundraising'"
+            ),
+            "agent_db_sql": (
+                "SELECT event.event_name FROM member "
+                "INNER JOIN attendance ON member.member_id = attendance.link_to_member "
+                "INNER JOIN income ON member.member_id = income.link_to_member "
+                "INNER JOIN event ON attendance.link_to_event = event.event_id"
+            ),
+        }
+    )
+    assert cause == "잘못된 시멘틱 정의"
+    assert "JOIN" in reason or "조인" in reason or "테이블" in reason
+
+
+def test_classify_eval_sql_error_paths() -> None:
+    cause, _ = classify_eval_sql_item(
+        {"gold_sql": "SELECT 1", "agent_sql": None, "agent_db_sql_error": "no agent_sql"}
+    )
+    assert cause == "agent가 실패"
+    cause, _ = classify_eval_sql_item(
+        {
+            "gold_sql": "SELECT Date FROM Laboratory",
+            "agent_sql": "SELECT SUBTRACT(year(First_Date), year(Birthday)) FROM c",
+            "agent_db_sql_error": "validation failed: function not allowed in metric expr: SUBTRACT",
+        }
+    )
+    assert cause == "agent가 실패"
+    cause, reason = classify_eval_sql_item(
+        {
+            "gold_sql": "SELECT CASE WHEN x=1 THEN 1 ELSE 0 END FROM t",
+            "agent_sql": "SELECT CASE WHEN x=1 THEN 1 ELSE 0 END FROM c",
+            "agent_db_sql_error": "sql parse error: sql parser error: Expected: ), found: WHEN",
+        }
+    )
+    assert cause == "sql-mcp 버그"
+    assert "CASE" in reason
+    cause, _ = classify_eval_sql_item(
+        {
+            "gold_sql": "SELECT Birthday FROM Patient",
+            "agent_sql": "SELECT YEAR(BIRTHDAY) FROM c",
+            "agent_db_sql_error": "validation failed: unknown identifier in expression: BIRTHDAY",
+        }
+    )
+    assert cause == "잘못된 시멘틱 정의"
+    cause, _ = classify_eval_sql_item(
+        {
+            "gold_sql": "SELECT name FROM colour",
+            "agent_sql": "SELECT color FROM superhero",
+            "agent_db_sql_error": "validation failed: unknown identifier in expression: color",
+        }
+    )
+    assert cause == "agent가 실패"
+    cause, _ = classify_eval_sql_item(
+        {
+            "gold_sql": "SELECT 1",
+            "agent_sql": "SELECT 1 FROM c",
+            "agent_db_sql_error": "boom panic in compiler",
+        }
+    )
+    assert cause == "sql-mcp 버그"
+
+
+def test_annotate_eval_sql_causes_counts_and_field_order() -> None:
+    doc = annotate_eval_sql_causes(
+        {
+            "meta": {"item_count": 1},
+            "items": [
+                {
+                    "question_id": 1,
+                    "db_id": "student_club",
+                    "question": "q",
+                    "gold_sql": "SELECT n FROM t",
+                    "agent_sql": None,
+                    "agent_db_sql": None,
+                    "agent_db_sql_error": "no agent_sql",
+                }
+            ],
+        }
+    )
+    row = doc["items"][0]
+    keys = list(row)
+    assert keys[keys.index("db_id") + 1] == "cause"
+    assert row["cause"] == "agent가 실패"
+    assert doc["meta"]["cause_counts"] == {
+        "agent가 실패": 1,
+        "잘못된 시멘틱 정의": 0,
+        "sql-mcp 버그": 0,
+        "기타": 0,
+    }

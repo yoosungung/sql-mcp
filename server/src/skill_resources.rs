@@ -87,6 +87,7 @@ mod tests {
             .iter()
             .any(|u| u.ends_with("semantic-cube-metric-segment/SKILL.md")));
         assert!(uris.iter().any(|u| u.ends_with("semantic-from-qa/SKILL.md")));
+        assert!(uris.iter().any(|u| u.ends_with("semantic-from-eval/SKILL.md")));
     }
 
     #[test]

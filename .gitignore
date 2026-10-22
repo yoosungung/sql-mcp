@@ -4,9 +4,12 @@ __pycache__/
 /target/
 /data/
 **/*.db
-target_db/
+target_db/**
+!target_db/**/
 !target_db/**/*.sh
 !target_db/**/*.py
 !target_db/README.md
+!target_db/env.bird.example
 client/.venv/
 client/eval/
+.DS_Store

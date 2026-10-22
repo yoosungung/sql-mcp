@@ -51,10 +51,10 @@
 
 ## Grain 분기
 
-컴파일러는 `combine: "join"` 뷰에서 질의가 참조한 테이블들($T_{req}$)만 최단 경로(Steiner)로 연결하고 미사용 테이블(루트 포함)을 자동 프루닝한다. 따라서 `view.joins`에 직접 FK 간선(사이클 포함)과 조인 키 동치류 다중 매핑이 올바르게 구성되어 있다면 단일 `*_all` view/cube로도 대부분의 다중 테이블 질의를 팬아웃 없이 처리할 수 있다. 다만 다음이면 view 보강 또는 별도 view/cube 분리를 제안한다:
+컴파일러는 `combine: "join"` 뷰에서 질의가 참조한 테이블들($T_{req}$)만 최단 경로(Steiner)로 연결하고 미사용 테이블(루트 포함)을 자동 프루닝한다. 직접 FK와 조인 키 동치류가 맞으면 prune이 동작한다. **형제 팩트가 한 뷰에 있으면** 에이전트가 그 cube만 FROM 해도 팬/캐즘이 남는다 — eval로 드러나면 [semantic-from-eval](../semantic-from-eval/methodology.md)에서 허브 분할. 그 전에 다음이면 view 보강 또는 별도 view/cube 분리를 제안한다:
 
 - `view.joins`에 직접 FK 간선이 빠져 우회 조인(Chasm/Fan Trap)이 발생하는 경우 → `view.joins`에 누락된 FK 간선 및 조인 키 양방향 매핑 보강 제안
-- 동일 소규모 룩업 테이블을 여러 역할 FK(`eye_colour_id`, `hair_colour_id` 등)로 참조해 동시 필터링이 막히는 경우 → 역할별 룩업 `table` 문서 분리 제안
+- 동일 소규모 룩업 테이블을 여러 역할 FK(`ship_to_address_id`, `bill_to_address_id` 등)로 참조해 동시 필터링이 막히는 경우 → 역할별 룩업 `table` 문서 분리 제안
 - 사전 집계 요약 테이블(`summary: true`)과 원천 상세 테이블을 함께 라우팅해야 하는 경우 → `combine: "select"`(`prefer: "summary"`) 뷰 구조 제안
 
 → view/table 수정이나 신규 생성이 필요하면 짧게 제안하고 `semantic-table-view` / `semantic-cube-metric-segment`로 넘긴다.
@@ -66,4 +66,4 @@
 - [ ] 식별자가 대상 cube의 dim/fact/view 컬럼 규칙과 맞음
 - [ ] `aggregation=group` metric의 `group_by`가 기본으로 쓸 리포트 축만 담음(차원 전부 나열하지 않음)
 - [ ] 질문 건수 ≫ 신규 metric/segment 건수 (과적합 아님)
-- [ ] eval·실행 비교를 이 산출의 완료 조건으로 쓰지 않음
+- [ ] eval·실행 비교를 이 산출의 완료 조건으로 쓰지 않음 (`semantic-from-eval`)

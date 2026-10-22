@@ -2,6 +2,7 @@
 """target_db/{db}/*.sqlite → meta/{name}.json (table|view|cube|metric 골격).
 
 물리 카탈로그는 sqlite에서 직접 읽고, MCP는 쓰지 않는다.
+`semantic_plan.yaml`이 있으면 허브(팩트)마다 view+cube 하나(`{db}_all` 없음).
 cube/metric은 view당 휴리스틱 초안(코딩 에이전트가 다듬을 수 있음).
 """
 
@@ -339,6 +340,130 @@ def _view_alias_to_catalog(view: dict) -> dict[str, str]:
     return out
 
 
+def _is_row_identifier(name: str) -> bool:
+    n = name.lower()
+    return n in {"id", "uuid", "guid", "code"} or n.endswith("id") or n.endswith("_uuid")
+
+
+def _date_rank(name: str) -> tuple[int, str]:
+    n = name.lower()
+    if n in {"date", "order_date"} or "year" in n:
+        return (0, n)
+    if any(x in n for x in ("update", "close", "access", "birth", "creat", "last")):
+        return (3, n)
+    if n.endswith("date"):
+        return (1, n)
+    return (2, n)
+
+
+def default_group_by(dimensions: list[dict]) -> list[str]:
+    """D24: default grain only, not an allowlist of every dimension.
+
+    One event date (if any) plus non-identifier ``code`` dimensions.
+    When there is no code dimension, add one short categorical label.
+    """
+    dated: list[dict] = []
+    codes: list[str] = []
+    labels: list[str] = []
+    skip_label = (
+        "description",
+        "text",
+        "name",
+        "url",
+        "email",
+        "phone",
+        "body",
+        "note",
+        "comment",
+        "street",
+        "address",
+        "about",
+        "title",
+    )
+    for dim in dimensions:
+        col = dim.get("column")
+        if not isinstance(col, str) or not col:
+            continue
+        label = str(dim.get("name") or col)
+        if _is_row_identifier(label) or _is_row_identifier(col):
+            continue
+        typ = dim.get("type")
+        if typ in {"date", "datetime", "time"}:
+            dated.append(dim)
+        elif typ == "code":
+            codes.append(col)
+        elif not any(tok in label.lower() for tok in skip_label):
+            labels.append(col)
+
+    out: list[str] = []
+    if dated:
+        best = min(dated, key=lambda d: _date_rank(str(d.get("name") or d["column"])))
+        out.append(best["column"])
+    out.extend(codes)
+    if not codes and labels:
+        out.append(labels[0])
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for col in out:
+        if col not in seen:
+            seen.add(col)
+            uniq.append(col)
+    if uniq:
+        return uniq[:4]
+    for dim in dimensions:
+        col = dim.get("column")
+        if isinstance(col, str) and col:
+            return [col]
+    return []
+
+
+def rewrite_divide(expr: str) -> str:
+    """Prefer ``(a) / (b)`` over the ``DIVIDE(a, b)`` alias."""
+    key = "DIVIDE("
+    out: list[str] = []
+    i = 0
+    while True:
+        j = expr.find(key, i)
+        if j < 0:
+            out.append(expr[i:])
+            break
+        out.append(expr[i:j])
+        args, end = _split_call_args(expr, j + len(key))
+        if len(args) == 2:
+            left = rewrite_divide(args[0])
+            right = rewrite_divide(args[1])
+            out.append(f"({left}) / ({right})")
+        else:
+            out.append(expr[j:end])
+        i = end
+    return "".join(out)
+
+
+def _split_call_args(expr: str, i: int) -> tuple[list[str], int]:
+    args: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    while i < len(expr):
+        ch = expr[i]
+        if ch == "(":
+            depth += 1
+            buf.append(ch)
+        elif ch == ")":
+            if depth == 0:
+                args.append("".join(buf).strip())
+                return args, i + 1
+            depth -= 1
+            buf.append(ch)
+        elif ch == "," and depth == 0:
+            args.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+        i += 1
+    args.append("".join(buf).strip())
+    return args, i
+
+
 def cube_and_metric_from_view(
     view: dict, tables: dict[str, dict], priority_taken: set[str], target: str
 ) -> tuple[dict, dict | None]:
@@ -410,7 +535,7 @@ def cube_and_metric_from_view(
     metric_name = alloc_name(
         f"{cube_name}_count", priority_taken | member_names, "metric"
     )
-    group_cols = [d["column"] for d in dimensions if d.get("column")]
+    group_cols = default_group_by(dimensions)
     if metric_name not in member_names and group_cols:
         amount_facts = [
             f for f in facts if f.get("type") == "amount" and f.get("column")
@@ -757,8 +882,12 @@ def connected_components(
 def spanning_joins(
     comp: list[str],
     edges: list[tuple[str, str, list[tuple[str, str]]]],
+    root: str | None = None,
 ) -> tuple[str, list[tuple[str, str, list[tuple[str, str]]]]]:
-    """root + join steps (left, right, on[(left_col, right_col)]) including cycle-closing FK edges."""
+    """root + join steps (left, right, on[(left_col, right_col)]) including cycle-closing FK edges.
+
+    Default root is max degree. Pass ``root`` to pin a fact hub.
+    """
     comp_set = set(comp)
     adj: dict[str, list[tuple[str, str, str, list[tuple[str, str]]]]] = {
         n: [] for n in comp
@@ -776,8 +905,9 @@ def spanning_joins(
         adj[child].append((parent, child, parent, on))
         adj[parent].append((child, child, parent, on))
 
-    # hub = max degree
-    root = max(comp, key=lambda n: (len(adj[n]), n))
+    # hub = max degree unless a fact hub is pinned
+    if root not in adj:
+        root = max(comp, key=lambda n: (len(adj[n]), n))
     visited = {root}
     discovery_order = [root]
     tree_steps: list[tuple[str, str, list[tuple[str, str]]]] = []
@@ -1045,12 +1175,150 @@ def expand_role_playing_lookups(tables: dict[str, dict]) -> dict[str, dict]:
     return role_nodes
 
 
+def parse_semantic_plan(text: str) -> dict:
+    """Minimal YAML: ``hubs`` list with ``table`` / ``cube`` / ``dimensions``."""
+    hubs: list[dict] = []
+    current: dict | None = None
+    in_dims = False
+    for raw in text.splitlines():
+        if "#" in raw:
+            raw = raw[: raw.index("#")]
+        if not raw.strip():
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        s = raw.strip()
+        if indent == 0 and s.rstrip(":") == "hubs":
+            continue
+        if s.startswith("- ") and indent <= 2:
+            if current:
+                hubs.append(current)
+            current = {"table": "", "cube": "", "dimensions": []}
+            in_dims = False
+            rest = s[2:].strip()
+            if rest.rstrip(":") == "dimensions":
+                in_dims = True
+            elif ":" in rest:
+                k, v = rest.split(":", 1)
+                key = k.strip()
+                if key == "dimensions":
+                    inline = v.strip()
+                    if inline.startswith("["):
+                        current["dimensions"] = [
+                            x.strip().strip("\"'")
+                            for x in inline.strip("[]").split(",")
+                            if x.strip()
+                        ]
+                    else:
+                        in_dims = True
+                else:
+                    current[key] = v.strip().strip("\"'")
+            continue
+        if current is None:
+            continue
+        if s.rstrip(":").strip() == "dimensions" or s.startswith("dimensions:"):
+            in_dims = True
+            inline = s.split(":", 1)[1].strip() if ":" in s else ""
+            if inline.startswith("["):
+                current["dimensions"] = [
+                    x.strip().strip("\"'")
+                    for x in inline.strip("[]").split(",")
+                    if x.strip()
+                ]
+                in_dims = False
+            continue
+        if in_dims and s.startswith("- "):
+            current["dimensions"].append(s[2:].strip().strip("\"'"))
+            continue
+        if ":" in s and not s.startswith("- "):
+            in_dims = False
+            k, v = s.split(":", 1)
+            current[k.strip()] = v.strip().strip("\"'")
+    if current:
+        hubs.append(current)
+    return {"hubs": hubs}
+
+
+def load_semantic_plan(db_dir: Path) -> dict | None:
+    path = db_dir / "semantic_plan.yaml"
+    if not path.is_file():
+        return None
+    plan = parse_semantic_plan(path.read_text(encoding="utf-8"))
+    hubs = [
+        h
+        for h in plan.get("hubs") or []
+        if h.get("table") and h.get("cube")
+    ]
+    return {"hubs": hubs} if hubs else None
+
+
+def views_from_hubs(
+    tables: dict[str, dict],
+    db_id: str,
+    role_nodes: dict[str, dict],
+    hubs: list[dict],
+) -> list[dict]:
+    """One view+cube per planned fact hub. Sibling hubs are not auto-joined."""
+    edges = collect_join_edges(tables, role_nodes)
+    graph = {**tables, **role_nodes}
+    graph_names = list(tables) + list(role_nodes)
+    views: list[dict] = []
+    used_names: set[str] = set()
+
+    def catalog_of(vertex: str) -> str:
+        if vertex in role_nodes:
+            return role_nodes[vertex].get("catalog") or vertex
+        return vertex
+
+    for spec in hubs:
+        hub = resolve_table_name(tables, spec["table"])
+        if hub is None:
+            continue
+        allowed_tables = {hub}
+        for dim in spec.get("dimensions") or []:
+            resolved = resolve_table_name(tables, dim)
+            if resolved:
+                allowed_tables.add(resolved)
+        allowed_vertices = {
+            n
+            for n in graph_names
+            if n in allowed_tables or catalog_of(n) in allowed_tables
+        }
+        if hub not in allowed_vertices:
+            allowed_vertices.add(hub)
+        hub_edges = [
+            e
+            for e in edges
+            if e[0] in allowed_vertices and e[1] in allowed_vertices
+        ]
+        comp = [n for n in graph_names if n in allowed_vertices]
+        if hub not in comp:
+            continue
+        _root, steps = spanning_joins(comp, hub_edges, root=hub)
+        view_name = spec["cube"]
+        if view_name in used_names:
+            view_name = f"{view_name}_{hub}"
+        base = view_name
+        n = 2
+        while view_name in used_names:
+            view_name = f"{base}_{n}"
+            n += 1
+        used_names.add(view_name)
+        views.append(
+            build_component_view(graph, hub, steps, view_name, role_nodes)
+        )
+    return views
+
+
 def views_from_tables(
     tables: dict[str, dict],
     db_id: str,
     role_nodes: dict[str, dict] | None = None,
+    plan: dict | None = None,
 ) -> list[dict]:
     role_nodes = role_nodes or {}
+    hubs = (plan or {}).get("hubs") if plan else None
+    if hubs:
+        return views_from_hubs(tables, db_id, role_nodes, hubs)
     edges = collect_join_edges(tables, role_nodes)
     graph_names = list(tables) + list(role_nodes)
     comps = connected_components(graph_names, edges)
@@ -1144,7 +1412,8 @@ def main() -> None:
 
         infer_table_id_fks(tables)
         role_nodes = expand_role_playing_lookups(tables)
-        views = views_from_tables(tables, db_id, role_nodes)
+        plan = load_semantic_plan(sqlite_path.parent)
+        views = views_from_tables(tables, db_id, role_nodes, plan=plan)
         priority_taken: set[str] = set()
         cubes: list[dict] = []
         metrics: list[dict] = []

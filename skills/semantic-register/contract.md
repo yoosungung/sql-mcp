@@ -49,7 +49,7 @@ segments/{name}.json
 ## DW vs coding agent
 
 - 코딩 에이전트: `metadata_*` + schema Resource.
-- DW 에이전트: 메타 CRUD를 주지 않는다. 테이블=cube, 컬럼=dimension/fact/metric.
+- DW 에이전트: 메타 CRUD를 주지 않는다. 테이블=cube, 컬럼=dimension/fact. metric/segment는 `describe_table.examples`만(D26).
 
 ## Quick checks
 

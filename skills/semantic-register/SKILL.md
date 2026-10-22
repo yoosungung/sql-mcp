@@ -10,7 +10,7 @@ description: >-
 
 # Semantic register · validate
 
-초안 작성은 `semantic-table-view` / `semantic-cube-metric-segment` / (Q&A·지식 보강) `semantic-from-qa`. 이 스킬은 **검증 + CRUD**만. 초안만 파일로 두는 단계에서는 호출하지 않는다.
+초안 작성은 `semantic-table-view` / `semantic-cube-metric-segment` / (Q&A) `semantic-from-qa` / (eval) `semantic-from-eval`. 이 스킬은 **검증 + CRUD**만. 초안만 파일로 두는 단계에서는 호출하지 않는다.
 
 규칙: [contract.md](contract.md). Schema: [document.schema.json](document.schema.json).
 
@@ -54,9 +54,7 @@ Progress:
 
 `metadata_get(kind, name)`. 검색 인덱스는 서버가 CRUD 성공 후 재구축한다.
 
-로컬 `target_db/<db>/meta/`를 고쳤다면 다이어그램 투영을 갱신한다:
-
-`python3 ./target_db/generate_semantic_map.py <db_id>` → `meta/semantic-map.md`
+프로젝트가 시맨틱 JSON의 다이어그램 투영을 갖고 있으면 초안 디렉터리만 갱신한다. 특정 생성 스크립트 경로는 전제가 아니다.
 
 ## Do not
 

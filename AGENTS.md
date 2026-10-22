@@ -19,11 +19,12 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
 | `.github/workflows/ci.yml` | CI: PR/push `cargo test -p sql-mcp --locked` | `.github/workflows/` |
 | `.github/workflows/cd.yml` | CD: master CI 성공 후 linux/windows/macos release → GitHub Release `current` | `.github/workflows/` |
 | `deploy/k8s/base/` | Kustomize 베이스 | `deploy/k8s/base/` |
-| `target_db/README.md` | BIRD Mini-Dev SQLite 로컬 타깃 + Q-SQL(`bird_qa/`) · meta JSON · `semantic-map.md` 생성 | `target_db/` |
+| `target_db/README.md` | BIRD Mini-Dev SQLite 로컬 타깃 + Q-SQL(`bird_qa/`) · meta JSON · `semantic_plan.yaml` 허브 · `semantic-map.md` 생성 | `target_db/` |
 | `client/DESIGN.md` · `client/README.md` | LangChain v1 `create_agent` + sql-mcp 예제 (BIRD 질문) | `client/` |
+| `client/docs/eval_report.md` · `client/docs/eval.md` | BIRD eval **요약** / **문항별**(Gold SQL·rows vs Agent SQL·rows) | `client/docs/` |
 | `server/spec.md` | 시맨틱 SQL 6단계 컴파일·타입별 `meta_*` 상세 | `server/` |
-| `skills/` | 코딩 에이전트용 Agent Skills 정본: `semantic-table-view` → `semantic-cube-metric-segment` → (`semantic-from-qa`) → `semantic-register`. MCP Resource(`https://sql-mcp.local/skills/…`). Cursor는 `.cursor/skills` → `../skills` | `skills/` |
-| `docs/change_sementic.md` | BIRD eval 기반 **시맨틱 메타 수정 계획**(검토용 초안; 구현 전 합의) | `docs/` |
+| `skills/` | 코딩 에이전트용 Agent Skills 정본: `semantic-table-view` → `semantic-cube-metric-segment` → (`semantic-from-qa` \| `semantic-from-eval`) → `semantic-register`. MCP Resource(`https://sql-mcp.local/skills/…`). Cursor는 `.cursor/skills` → `../skills` | `skills/` |
+| `client/docs/change_semantic.md` | BIRD eval 기반 시맨틱 메타 수정 계획(결정됨; `generate_meta`+`semantic_plan.yaml`+`enrich_meta_from_qa`) | `client/docs/` |
 
 #### 규칙:
 
