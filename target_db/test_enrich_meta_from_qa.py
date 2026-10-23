@@ -11,7 +11,10 @@ import pytest
 from enrich_meta_from_qa import (
     DOMAIN_SPECS,
     QA_PATH,
+    _CONFUSION_FORCE,
     add_expression_dim,
+    add_expression_fact,
+    apply_cube_description,
     apply_member_descriptions,
     build_docs,
     evidence_mentions,
@@ -19,6 +22,7 @@ from enrich_meta_from_qa import (
     list_cubes,
     make_metric,
     make_segment,
+    prune_stale_metric_segment,
 )
 
 NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -59,6 +63,27 @@ def _cube_for_item(db_id: str, item: dict, cubes: dict[str, dict]) -> dict:
     raise AssertionError(f"{db_id}: spec item {item['name']} needs cube")
 
 
+def test_apply_cube_description_overwrites() -> None:
+    cube = {"name": "c", "description": "old JOIN Copy"}
+    assert apply_cube_description(cube, "Copy: SELECT id FROM c. Ungrouped cube JOIN is rejected.")
+    assert "JOIN Copy" not in cube["description"]
+    assert not apply_cube_description(cube, cube["description"])
+
+
+def test_apply_member_descriptions_overwrite_named() -> None:
+    cube = {
+        "dimensions": [{"name": "position", "description": "stale"}],
+        "facts": [{"name": "points", "description": ""}],
+    }
+    assert apply_member_descriptions(
+        cube,
+        {"position": "championship standing", "points": "race points"},
+        overwrite_names={"position"},
+    )
+    assert cube["dimensions"][0]["description"] == "championship standing"
+    assert cube["facts"][0]["description"] == "race points"
+
+
 def test_apply_member_descriptions_fills_empty_only() -> None:
     cube = {
         "name": "c",
@@ -87,6 +112,69 @@ def test_add_expression_dim_skips_existing() -> None:
     assert cube["dimensions"][-1]["expression"] == "EXTRACT(YEAR FROM Birthday)"
     assert "column" not in cube["dimensions"][-1]
     assert not add_expression_dim(cube, spec)
+
+
+def test_add_expression_fact_non_additive_skips_existing() -> None:
+    cube = {
+        "dimensions": [{"name": "id", "column": "id"}],
+        "facts": [],
+    }
+    spec = {
+        "name": "eligible_frpm_rate_k12",
+        "expression": "(FRPM_Count_K_12) / (Enrollment_K_12)",
+        "type": "quantity",
+        "additive": False,
+        "description": "row rate",
+    }
+    assert add_expression_fact(cube, spec)
+    fact = cube["facts"][-1]
+    assert fact["additive"] is False
+    assert "column" not in fact
+    assert not add_expression_fact(cube, spec)
+
+
+def test_prune_stale_metric_segment(tmp_path, monkeypatch) -> None:
+    import enrich_meta_from_qa as em
+
+    monkeypatch.setattr(em, "ROOT", tmp_path)
+    db = "california_schools"
+    meta = tmp_path / db / "meta"
+    meta.mkdir(parents=True)
+    (meta / "eligible_frpm_rate_k12.json").write_text(
+        json.dumps({"kind": "metric", "name": "eligible_frpm_rate_k12"}),
+        encoding="utf-8",
+    )
+    (meta / "k12_frpm_eligible_share.json").write_text(
+        json.dumps({"kind": "metric", "name": "k12_frpm_eligible_share"}),
+        encoding="utf-8",
+    )
+    (meta / "schools_frpm_count.json").write_text(
+        json.dumps({"kind": "metric", "name": "schools_frpm_count"}),
+        encoding="utf-8",
+    )
+    (meta / "schools_frpm.json").write_text(
+        json.dumps({"kind": "cube", "name": "schools_frpm"}),
+        encoding="utf-8",
+    )
+    n = prune_stale_metric_segment(db)
+    assert n == 1
+    assert not (meta / "eligible_frpm_rate_k12.json").exists()
+    assert (meta / "k12_frpm_eligible_share.json").exists()
+    assert (meta / "schools_frpm_count.json").exists()
+    assert (meta / "schools_frpm.json").exists()
+
+
+def test_d28_promotions_do_not_collide_with_metrics() -> None:
+    ca = DOMAIN_SPECS["california_schools"]
+    fact_names = {f["name"] for f in ca["expression_facts"]}
+    metric_names = {m["name"] for m in ca["metrics"]}
+    assert fact_names.isdisjoint(metric_names)
+    assert "eligible_frpm_rate_k12" in fact_names
+    assert "k12_frpm_eligible_share" in metric_names
+    throm = DOMAIN_SPECS["thrombosis_prediction"]["expression_dims"]
+    assert any(d["name"] == "age_years" for d in throm)
+    tox = DOMAIN_SPECS["toxicology"]["expression_dims"]
+    assert any(d["name"] == "is_carcinogenic" for d in tox)
 
 
 def test_names_and_shapes_valid():
@@ -156,6 +244,11 @@ def test_hub_specs_name_their_cube():
             assert dim.get("cube")
             if cubes:
                 assert dim["cube"] in cubes
+        for fact in spec.get("expression_facts") or []:
+            assert fact.get("cube")
+            if cubes:
+                assert fact["cube"] in cubes
+            assert fact.get("additive") is False
 
 
 def test_build_docs_writes_only_metric_segment():
@@ -177,6 +270,165 @@ def test_build_docs_writes_only_metric_segment():
         assert docs
         assert all(d["kind"] in ("metric", "segment") for d in docs)
         assert len({(d["kind"], d["name"]) for d in docs}) == len(docs)
+
+
+def test_round2_cube_descriptions_copy_from_own_cube():
+    """list_tables 라우팅: 각 허브 큐브 description에 Copy SELECT FROM 자신."""
+    split = {
+        "formula_1",
+        "toxicology",
+        "california_schools",
+        "student_club",
+        "thrombosis_prediction",
+        "superhero",
+    }
+    for db_id in split:
+        descs = DOMAIN_SPECS[db_id].get("cube_descriptions") or {}
+        assert descs, db_id
+        for cube, text in descs.items():
+            assert f"FROM {cube}" in text, f"{db_id}.{cube} missing FROM {cube}"
+            assert "Copy:" in text, f"{db_id}.{cube} missing Copy:"
+
+
+def test_round2_f1_standings_not_results():
+    d = DOMAIN_SPECS["formula_1"]["cube_descriptions"]
+    assert "f1_driver_standings" in d["f1_race_results"]
+    assert "f1_race_results" in d["f1_driver_standings"]
+    assert "f1_constructor_standings" in d["f1_constructor_results"]
+    assert "f1_qualifying" in d["f1_race_results"]
+    mets = {m["name"]: m for m in DOMAIN_SPECS["formula_1"]["metrics"]}
+    assert "FROM f1_driver_standings" in mets["driver_standing_points"]["description"]
+    assert mets["driver_standing_points"]["cube"] == "f1_driver_standings"
+    assert "FROM f1_constructor_standings" in mets["constructor_standing_points"]["description"]
+
+
+def test_round2_ident_routing():
+    lab = DOMAIN_SPECS["thrombosis_prediction"]["descriptions"]["throm_laboratory"]
+    assert "T_CHO" in lab
+    assert "CHO" in lab["T_CHO"]
+    exam = DOMAIN_SPECS["thrombosis_prediction"]["descriptions"]["throm_examination"]
+    assert "KCT" in exam
+    ev = DOMAIN_SPECS["student_club"]["cube_descriptions"]["club_event"]
+    assert "club_expense" in ev and "cost" in ev
+    mem = DOMAIN_SPECS["student_club"]["cube_descriptions"]["club_member"]
+    assert "club_income" in mem and "amount" in mem
+    tox = DOMAIN_SPECS["toxicology"]["cube_descriptions"]
+    assert "tox_atom" in tox["tox_connected"]
+    assert "Never" in tox["tox_connected"] or "never" in tox["tox_connected"]
+
+
+def test_round3_no_join_recipe_in_cube_descriptions():
+    """§10 P0: cube description에 JOIN … ON / GROUP BY Copy 없음."""
+    split = {
+        "formula_1",
+        "toxicology",
+        "california_schools",
+        "student_club",
+        "thrombosis_prediction",
+        "superhero",
+    }
+    join_on = re.compile(r"\bJOIN\s+\w+\s+ON\b", re.I)
+    for db_id in split:
+        for cube, text in (DOMAIN_SPECS[db_id].get("cube_descriptions") or {}).items():
+            assert join_on.search(text) is None, f"{db_id}.{cube} JOIN ON recipe"
+            assert "GROUP BY" not in text, f"{db_id}.{cube} GROUP BY recipe"
+            assert "Grouped JOIN Copy" not in text, f"{db_id}.{cube}"
+    ca = DOMAIN_SPECS["california_schools"]["cube_descriptions"]
+    assert "schools_sat" in ca["schools_frpm"]
+    assert "Ungrouped cube JOIN is rejected" in ca["schools_frpm"]
+    assert "Ungrouped cube JOIN is rejected" in ca["schools_sat"]
+    lab = DOMAIN_SPECS["thrombosis_prediction"]["cube_descriptions"]["throm_laboratory"]
+    assert "throm_examination" in lab
+    assert "Ungrouped cube JOIN is rejected" in lab
+
+
+def test_round3_f1_homonym_search_text():
+    """championship/standings는 standings 큐브 멤버, race results는 한 레이스."""
+    d = DOMAIN_SPECS["formula_1"]["descriptions"]
+    race = d["f1_race_results"]
+    drv = d["f1_driver_standings"]
+    con = d["f1_constructor_standings"]
+    cres = d["f1_constructor_results"]
+    assert "this race" in race["position"].lower() or "finishing" in race["position"].lower()
+    assert "f1_driver_standings" in race["position"]
+    assert "championship" not in race["position"].lower()
+    assert "cumulative" not in race["position"].lower()
+    assert "this race" in race["points"].lower()
+    assert "championship" not in race["points"].lower()
+    assert "cumulative" not in race["points"].lower()
+    for standing in (drv, con):
+        for name in ("position", "points", "wins"):
+            text = standing[name].lower()
+            assert "championship" in text or "standings" in text or "cumulative" in text, name
+    assert "standings" in cres["points"].lower()
+    ca_mets = {m["name"]: m["description"] for m in DOMAIN_SPECS["california_schools"]["metrics"]}
+    assert "JOIN schools_sat" in ca_mets["sat_excellence_share"]
+    assert "GROUP BY" in ca_mets["sat_excellence_share"]
+    throm_mets = {
+        m["name"]: m["description"]
+        for m in DOMAIN_SPECS["thrombosis_prediction"]["metrics"]
+    }
+    assert "JOIN throm_examination" in throm_mets["avg_acl_igm"]
+    assert "GROUP BY" in throm_mets["avg_acl_igm"]
+
+
+def test_round4_logic_filter_confusion_text():
+    """§10 P0 잔여: execute-OK 로직/필터 혼동 쌍 (빈 칸 + GPT≠GLU 등 overwrite)."""
+    ca = DOMAIN_SPECS["california_schools"]["descriptions"]
+    ca_all = {**(ca.get("_all") or {}), **(ca.get("schools_frpm") or {}), **(ca.get("schools_sat") or {})}
+    assert "Phone" in ca_all and "phone" in ca_all["Phone"].lower()
+    assert "AvgScrWrite" in ca["schools_sat"]
+    assert "Locally funded" in ca_all["FundingType"]
+    assert "Merged" in ca_all["StatusType"]
+    assert "Academic_Year" in ca["schools_frpm"]
+    assert "YEAR" in ca["schools_frpm"]["Academic_Year"]
+    assert "SSS" in ca_all["EdOpsCode"]
+    f1 = DOMAIN_SPECS["formula_1"]["descriptions"]
+    race = {**(f1.get("_all") or {}), **(f1.get("f1_race_results") or {})}
+    assert "seasons_url" in race["url"]
+    assert "url" in race["seasons_url"]
+    assert "fastestLapSpeed" in race
+    assert "f1_lap_times" in race["fastestLapSpeed"]
+    assert "youngest" in race["dob"].lower() and "DESC" in race["dob"]
+    assert "circuits_name" in f1["_all"]["circuitRef"]
+    assert "statusId" in race and "2" in race["statusId"]
+    lab = DOMAIN_SPECS["thrombosis_prediction"]["descriptions"]["throm_laboratory"]
+    exam = DOMAIN_SPECS["thrombosis_prediction"]["descriptions"]["throm_examination"]
+    patient = DOMAIN_SPECS["thrombosis_prediction"]["descriptions"]["throm_patient"]
+    assert "GLU" in lab["GPT"] and ">=" in lab["GPT"]
+    assert "GPT" in lab["GLU"]
+    assert ">= 250" in lab["CPK"]
+    assert "negative" in lab["SM"] and "ANA_Pattern" in lab["SM"]
+    assert "2000" in lab["IGG"]
+    assert "CRP" in lab and "'+'" in lab["CRP"]
+    assert "ANA_Pattern" in exam and "SM" in exam["ANA_Pattern"]
+    assert "APS" in patient["Diagnosis"]
+    sh = DOMAIN_SPECS["superhero"]["descriptions"]["_all"]
+    assert "skin_colour" in sh["colour"]
+    assert "colour" in sh["skin_colour"]
+    club = DOMAIN_SPECS["student_club"]["descriptions"]["club_expense"]
+    assert "category" in club and "Food" in club["category"]
+    segs = {s["name"]: s for s in DOMAIN_SPECS["thrombosis_prediction"]["segments"]}
+    assert segs["diagnosis_aps"]["filter"] == "Diagnosis = 'APS'"
+    assert segs["diagnosis_aps"]["cube"] == "throm_patient"
+    ca_segs = {s["name"]: s for s in DOMAIN_SPECS["california_schools"]["segments"]}
+    assert ca_segs["merged_schools"]["filter"] == "StatusType = 'Merged'"
+    assert ca_segs["locally_funded"]["filter"] == "FundingType = 'Locally funded'"
+
+
+def test_round4_confusion_force_overwrites():
+    assert {"GPT", "GLU", "CPK", "colour", "skin_colour", "circuitRef", "EdOpsCode", "Diagnosis"} <= _CONFUSION_FORCE
+    cube = {
+        "dimensions": [
+            {"name": "GPT", "description": "stale GPT"},
+            {"name": "colour", "description": "stale colour"},
+        ],
+        "facts": [],
+    }
+    texts = {"GPT": "ALT GPT not GLU", "colour": "eye not skin_colour"}
+    assert apply_member_descriptions(cube, texts, overwrite_names=_CONFUSION_FORCE)
+    assert cube["dimensions"][0]["description"] == "ALT GPT not GLU"
+    assert cube["dimensions"][1]["description"] == "eye not skin_colour"
 
 
 def test_evidence_signal_present_for_key_cohorts():

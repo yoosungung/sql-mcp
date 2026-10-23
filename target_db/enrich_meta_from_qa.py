@@ -55,19 +55,37 @@ def write_cube(db_id: str, cube: dict) -> None:
     )
 
 
-def apply_member_descriptions(cube: dict, descriptions: dict[str, str]) -> bool:
-    """Fill empty dim/fact descriptions. Never overwrite non-empty."""
+def apply_member_descriptions(
+    cube: dict,
+    descriptions: dict[str, str],
+    overwrite_names: set[str] | None = None,
+) -> bool:
+    """Fill empty dim/fact descriptions. `overwrite_names`는 비어 있지 않아도 덮어쓴다."""
+    force = overwrite_names or set()
     changed = False
     for member in (cube.get("dimensions") or []) + (cube.get("facts") or []):
         name = member.get("name")
         text = descriptions.get(name)
         if not text:
             continue
-        if (member.get("description") or "").strip():
+        current = (member.get("description") or "").strip()
+        if current and name not in force:
+            continue
+        if current == text:
             continue
         member["description"] = text
         changed = True
     return changed
+
+
+def apply_cube_description(cube: dict, text: str | None) -> bool:
+    """큐브 description은 spec 정본 — 비어 있지 않아도 덮어쓴다(R3 JOIN 철회)."""
+    if not text:
+        return False
+    if (cube.get("description") or "") == text:
+        return False
+    cube["description"] = text
+    return True
 
 
 def add_expression_dim(cube: dict, spec: dict) -> bool:
@@ -90,8 +108,42 @@ def add_expression_dim(cube: dict, spec: dict) -> bool:
     return True
 
 
+def add_expression_fact(cube: dict, spec: dict) -> bool:
+    """Append a scalar expression fact if the name is free (D28)."""
+    name = spec["name"]
+    existing = {m["name"] for m in (cube.get("dimensions") or [])}
+    existing |= {m["name"] for m in (cube.get("facts") or [])}
+    if name in existing:
+        return False
+    fact = {
+        "name": name,
+        "description": spec.get("description") or "",
+        "type": spec.get("type") or "quantity",
+        "expression": spec["expression"],
+        "encryption": False,
+        "role": "all",
+    }
+    if spec.get("additive") is False:
+        fact["additive"] = False
+    cube.setdefault("facts", []).append(fact)
+    return True
+
+
+_HOMONYM_FORCE = {"position", "points", "wins"}
+_CONFUSION_FORCE = {
+    "GPT",
+    "GLU",
+    "CPK",
+    "colour",
+    "skin_colour",
+    "circuitRef",
+    "EdOpsCode",
+    "Diagnosis",
+}
+
+
 def apply_knowledge(db_id: str) -> int:
-    """Patch cube description / dim-fact text / expression dims. Does not overwrite."""
+    """Patch cube description (overwrite) / dim-fact text / expression dims and facts."""
     spec = DOMAIN_SPECS.get(db_id) or {}
     cubes = list_cubes(db_id)
     if not cubes:
@@ -100,6 +152,7 @@ def apply_knowledge(db_id: str) -> int:
     shared = desc_by_cube.get("_all") or {}
     cube_descs: dict[str, str] = spec.get("cube_descriptions") or {}
     expr_dims: list[dict] = spec.get("expression_dims") or []
+    expr_facts: list[dict] = spec.get("expression_facts") or []
     n = 0
     for cname, cube in cubes.items():
         changed = False
@@ -107,9 +160,14 @@ def apply_knowledge(db_id: str) -> int:
         merged.update(desc_by_cube.get(cname) or {})
         if apply_member_descriptions(cube, merged):
             changed = True
-        cdesc = cube_descs.get(cname)
-        if cdesc and not (cube.get("description") or "").strip():
-            cube["description"] = cdesc
+        force = _HOMONYM_FORCE | _CONFUSION_FORCE
+        if apply_member_descriptions(
+            cube,
+            {k: merged[k] for k in force if k in merged},
+            overwrite_names=force,
+        ):
+            changed = True
+        if apply_cube_description(cube, cube_descs.get(cname)):
             changed = True
         for dim in expr_dims:
             if dim.get("cube") not in (None, cname):
@@ -117,6 +175,13 @@ def apply_knowledge(db_id: str) -> int:
             if dim.get("cube") is None and len(cubes) > 1:
                 continue
             if add_expression_dim(cube, dim):
+                changed = True
+        for fact in expr_facts:
+            if fact.get("cube") not in (None, cname):
+                continue
+            if fact.get("cube") is None and len(cubes) > 1:
+                continue
+            if add_expression_fact(cube, fact):
                 changed = True
         if changed:
             write_cube(db_id, cube)
@@ -296,17 +361,18 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
     "superhero": {
         "cube_descriptions": {
             "superhero": (
-                "One row per superhero. Eye colour is `colour` (not `color`); "
-                "hair/skin are `hair_colour` / `skin_colour`. "
-                "Attributes and powers are other cubes."
+                "One row per superhero. Copy: SELECT superhero_name, colour, gender FROM superhero. "
+                "Never FROM superhero for Intelligence/Strength scores (use hero_attribute) or power lists (hero_power). "
+                "Eye colour is `colour` (not `color`); hair/skin are `hair_colour` / `skin_colour`."
             ),
             "hero_attribute": (
-                "One row per hero-attribute. Dumbest/strongest = MIN/MAX(attribute_value) "
+                "One row per hero-attribute. Copy: SELECT superhero_name, attribute_name, attribute_value FROM hero_attribute. "
+                "Dumbest/strongest = MIN/MAX(attribute_value) "
                 "filtered by attribute_name (Intelligence, Strength, Durability, Speed; match case)."
             ),
             "hero_power": (
-                "One row per hero-power. Filter power_name (e.g. Agility); "
-                "do not join hero_attribute in this cube."
+                "One row per hero-power. Copy: SELECT superhero_name, power_name FROM hero_power. "
+                "Filter power_name (e.g. Agility); do not join hero_attribute in this cube."
             ),
         },
         "descriptions": {
@@ -317,9 +383,15 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
                 "alignment": "Alignment label. Bad = self-interest / villainous.",
                 "gender": "Gender label (Female / Male).",
                 "race": "Race label; human is lowercase 'human'.",
-                "colour": "Eye colour (join on eye_colour_id). Not hair or skin. Never a column named color.",
+                "colour": (
+                    "Eye colour (join on eye_colour_id). Blue eyes = colour = 'Blue'. "
+                    "Never a column named color. Blue skin is skin_colour, not this."
+                ),
                 "hair_colour": "Hair colour (join on hair_colour_id). Not eye/skin.",
-                "skin_colour": "Skin colour (join on skin_colour_id). Not eye/hair.",
+                "skin_colour": (
+                    "Skin colour (join on skin_colour_id). Blue skin = skin_colour = 'Blue'. "
+                    "Not eye colour (`colour`) and not hair_colour."
+                ),
                 "height_cm": "Height in centimetres.",
                 "weight_kg": "Weight in kilograms.",
             },
@@ -428,11 +500,23 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
     },
     "toxicology": {
         "cube_descriptions": {
-            "tox_molecule": "One row per molecule. Use for label ('+' carcinogenic / '-' non-carcinogenic) only.",
-            "tox_atom": "One row per atom. Element codes are lowercase ('c','o','h','f','cl'). Molecule label is available; do not join bond.",
-            "tox_bond": "One row per bond. bond_type '-' single, '=' double, '#' triple. Molecule label available; do not join atom/connected.",
+            "tox_molecule": (
+                "One row per molecule. Copy: SELECT molecule_id, label FROM tox_molecule. "
+                "Use for label ('+' carcinogenic / '-' non-carcinogenic) only."
+            ),
+            "tox_atom": (
+                "One row per atom. Copy: SELECT atom_id, element FROM tox_atom. "
+                "Never FROM tox_connected for atom-only counts. "
+                "Element codes are lowercase ('c','o','h','f','cl'). Molecule label is available; do not join bond."
+            ),
+            "tox_bond": (
+                "One row per bond. Copy: SELECT bond_id, bond_type FROM tox_bond. "
+                "Never FROM tox_connected for bond-only counts. "
+                "bond_type '-' single, '=' double, '#' triple. Molecule label available; do not join atom/connected."
+            ),
             "tox_connected": (
-                "One row per atom-bond connection. Use atom_id + atom_id2 + bond_id to bridge atoms and bonds. "
+                "One row per atom-bond connection. Copy: SELECT atom_id, atom_id2, bond_id FROM tox_connected. "
+                "Never FROM tox_connected for atom-only or bond-only (use tox_atom / tox_bond). "
                 "Not a molecule-grain cube."
             ),
         },
@@ -447,6 +531,18 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
                 "molecule_id": "Molecule identifier.",
             },
         },
+        "expression_dims": [
+            {
+                "cube": "tox_molecule",
+                "name": "is_carcinogenic",
+                "type": "code",
+                "expression": "IIF(label = '+', 1, 0)",
+                "description": (
+                    "1 if label = '+' (carcinogenic), else 0. "
+                    "Use WHERE is_carcinogenic = 1; segment carcinogenic is examples only."
+                ),
+            },
+        ],
         "segments": [
             {
                 "name": "carcinogenic",
@@ -529,15 +625,19 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
     "thrombosis_prediction": {
         "cube_descriptions": {
             "throm_patient": (
-                "One row per patient. Birthday identifier is Birthday (not BIRTHDAY). "
-                "Age = DATEDIFF or EXTRACT(YEAR FROM …) - birth_year. Laboratory and examination are other cubes."
+                "One row per patient. Copy: SELECT ID, Birthday, SEX FROM throm_patient. "
+                "Identifier is Birthday (not birthday / BIRTHDAY). "
+                "Age = DATEDIFF or EXTRACT(YEAR FROM …) - birth_year. "
+                "Laboratory (T_CHO, GLU, PLT) is throm_laboratory; KCT/Symptoms/Thrombosis is throm_examination."
             ),
             "throm_laboratory": (
-                "One lab draw per patient-date. Do not join Examination. "
+                "One lab draw per patient-date. Copy: SELECT ID, T_CHO, GLU, PLT FROM throm_laboratory. "
+                "KCT/Symptoms/Thrombosis are throm_examination. Ungrouped cube JOIN is rejected. "
                 "Abnormal platelets: PLT<=100 OR PLT>=400; abnormal IGM: IGM<=40 OR IGM>=400; high GPT: GPT>=60."
             ),
             "throm_examination": (
-                "One examination per patient. Thrombosis: 2=severe, 1=most serious. "
+                "One examination per patient. Copy: SELECT ID, KCT, Symptoms, Thrombosis FROM throm_examination. "
+                "KCT/RVVT/LAC live here (not laboratory). Thrombosis: 2=severe, 1=most serious. "
                 "Diagnosis on this cube is examination diagnosis; patient diagnosis is Patient_Diagnosis."
             ),
         },
@@ -554,23 +654,68 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
                 "ID": "Patient identifier (joins Laboratory/Examination).",
             },
             "throm_patient": {
-                "Diagnosis": "Patient-level diagnosis (e.g. SLE, SJS).",
+                "Diagnosis": (
+                    "Patient-level diagnosis (SLE, SJS, APS). "
+                    "APS diagnosis is Diagnosis on throm_patient, not throm_examination."
+                ),
             },
             "throm_laboratory": {
-                "Diagnosis": "Patient diagnosis on the lab cube.",
+                "Diagnosis": (
+                    "Patient diagnosis on the lab cube. APS is throm_patient.Diagnosis, "
+                    "not a laboratory marker."
+                ),
                 "Date": "Laboratory date. Filter year with EXTRACT(YEAR FROM Date) or lab_year.",
                 "PLT": "Platelets. Abnormal: PLT<=100 OR PLT>=400. Normal: 100-400. Low: PLT<100. High: PLT>=400.",
                 "IGM": "IgM. Abnormal: IGM<=40 OR IGM>=400.",
-                "GPT": "ALT/GPT. Beyond normal range: GPT>=60. GPT>30 is a looser threshold.",
+                "GPT": (
+                    "ALT glutamic pyruvic transaminase (GPT). Beyond normal: GPT >= 60. "
+                    "Never GLU (glucose)."
+                ),
                 "LDH": "LDH. Beyond normal: LDH>500.",
+                "T_CHO": (
+                    "Total cholesterol (physical T-CHO). Identifier is T_CHO, never CHO. "
+                    "High cholesterol: T_CHO >= 250; within normal: T_CHO < 250."
+                ),
+                "GLU": "Blood glucose (GLU). Not GPT/ALT. Beyond normal: GLU >= 180.",
+                "CPK": "Creatinine phosphokinase. Beyond normal: CPK >= 250.",
+                "SM": (
+                    "Anti-SM. Normal: SM IN ('negative','0') meaning '-' and '+-'. "
+                    "SM='1' means '+'. Not ANA_Pattern."
+                ),
+                "RNP": (
+                    "Anti-ribonuclear protein. Normal: RNP IN ('negative','0'). "
+                    "Not ANA_Pattern."
+                ),
+                "SC170": (
+                    "Anti-Scl-70. Normal: SC170 IN ('negative','0'). Not ANA_Pattern."
+                ),
+                "CRP": "C-reactive protein. Abnormal: CRP = '+'.",
+                "IGG": "IgG. Higher than normal: IGG >= 2000.",
+                "IGA": "IgA immunoglobulin.",
+                "UA": "Uric acid. Male high: UA > 8; female high: UA > 6.5.",
+                "TG": "Triglycerides. High: TG > 200.",
+                "T_BIL": "Total bilirubin.",
+                "CENTROMEA": "Centromere antibody A. Distinct from ANA_Pattern.",
+                "GOT": "AST/GOT. Distinct from GPT (ALT).",
             },
             "throm_examination": {
                 "Thrombosis": "Thrombosis code: 2=severe, 1=most serious, 0=none.",
-                "Diagnosis": "Examination diagnosis (not Patient_Diagnosis).",
+                "Diagnosis": (
+                    "Examination diagnosis (not Patient_Diagnosis). "
+                    "APS is Patient.Diagnosis on throm_patient."
+                ),
+                "ANA_Pattern": (
+                    "ANA pattern (e.g. 'S'). Distinct from anti-SM / RNP / SC170 laboratory markers."
+                ),
+                "ANA": "ANA marker. Distinct from ANA_Pattern.",
+                "aCL_IgG": "Anti-Cardiolipin IgG. IgM is aCL_IgM.",
                 "Patient_Diagnosis": "Patient-level diagnosis copied from Patient.",
                 "Examination_Date": "Examination date. Identifier uses underscore (not 'Examination Date').",
                 "aCL_IgM": "Anti-Cardiolipin antibody IgM.",
-                "Symptoms": "Symptoms text; observed means Symptoms IS NOT NULL.",
+                "Symptoms": "Symptoms text; observed means Symptoms IS NOT NULL. Not a laboratory column.",
+                "KCT": "KCT coagulation marker. Positive = '+'. Lives on throm_examination, not throm_laboratory.",
+                "RVVT": "RVVT coagulation marker. Positive = '+'. Pair with KCT/LAC.",
+                "LAC": "LAC coagulation marker. Positive = '+'. Pair with KCT/RVVT.",
             },
         },
         "expression_dims": [
@@ -582,11 +727,28 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
                 "description": "Year of Birthday. Use for YEAR(Birthday) filters (not BIRTHDAY).",
             },
             {
+                "cube": "throm_patient",
+                "name": "age_years",
+                "type": "code",
+                "expression": "EXTRACT(YEAR FROM CURRENT_DATE) - EXTRACT(YEAR FROM Birthday)",
+                "description": (
+                    "Patient age in years. Use age_years instead of YEAR(Birthday) nested EXTRACT. "
+                    "Age at first visit: EXTRACT(YEAR FROM First_Date) - birth_year."
+                ),
+            },
+            {
                 "cube": "throm_laboratory",
                 "name": "birth_year",
                 "type": "date",
                 "expression": "EXTRACT(YEAR FROM Birthday)",
                 "description": "Year of Birthday. Age ≈ EXTRACT(YEAR FROM CURRENT_DATE) - birth_year.",
+            },
+            {
+                "cube": "throm_laboratory",
+                "name": "age_years",
+                "type": "code",
+                "expression": "EXTRACT(YEAR FROM CURRENT_DATE) - EXTRACT(YEAR FROM Birthday)",
+                "description": "Patient age in years (CURRENT_DATE year minus birth year).",
             },
             {
                 "cube": "throm_laboratory",
@@ -601,6 +763,13 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
                 "type": "date",
                 "expression": "EXTRACT(YEAR FROM Birthday)",
                 "description": "Year of Birthday.",
+            },
+            {
+                "cube": "throm_examination",
+                "name": "age_years",
+                "type": "code",
+                "expression": "EXTRACT(YEAR FROM CURRENT_DATE) - EXTRACT(YEAR FROM Birthday)",
+                "description": "Patient age in years (CURRENT_DATE year minus birth year).",
             },
             {
                 "cube": "throm_examination",
@@ -639,6 +808,12 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
                 "name": "diagnosis_sle",
                 "description": "SLE diagnosed patients (Diagnosis = 'SLE').",
                 "filter": "Diagnosis = 'SLE'",
+                "cube": "throm_patient",
+            },
+            {
+                "name": "diagnosis_aps",
+                "description": "APS diagnosis (Diagnosis = 'APS') on the patient.",
+                "filter": "Diagnosis = 'APS'",
                 "cube": "throm_patient",
             },
             {
@@ -681,7 +856,12 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
             },
             {
                 "name": "avg_acl_igm",
-                "description": "Average anti-Cardiolipin antibody IgM (AVG(aCL_IgM)).",
+                "description": (
+                    "Average anti-Cardiolipin antibody IgM (AVG(aCL_IgM)). "
+                    "Lab+KCT grouped: SELECT throm_laboratory.ID FROM throm_laboratory "
+                    "JOIN throm_examination ON throm_laboratory.ID = throm_examination.ID "
+                    "GROUP BY throm_laboratory.ID."
+                ),
                 "expression": "AVG(aCL_IgM)",
                 "cube": "throm_examination",
             },
@@ -690,13 +870,14 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
     "california_schools": {
         "cube_descriptions": {
             "schools_frpm": (
-                "One FRPM row joined to schools. Meal/enrollment rates are metrics "
-                "(eligible_free_rate_k12, eligible_frpm_rate_k12) — not columns. "
-                "SAT scores are the schools_sat cube; join cubes for FRPM+SAT."
+                "One FRPM row with school attributes. Copy: SELECT CDSCode, Enrollment_K_12 FROM schools_frpm. "
+                "SAT-only questions: FROM schools_sat. Ungrouped cube JOIN is rejected. "
+                "Row rates are facts eligible_frpm_rate_k12 / eligible_free_rate_k12 (not additive)."
             ),
             "schools_sat": (
-                "One SAT score row joined to schools. Excellence rate = NumGE1500/NumTstTakr (metric). "
-                "Address is Street, City, State, Zip (four columns). FRPM is schools_frpm."
+                "One SAT score row with school attributes. Copy: SELECT cds, NumTstTakr, NumGE1500 FROM schools_sat. "
+                "FRPM-only questions: FROM schools_frpm. Ungrouped cube JOIN is rejected. "
+                "Row excellence_rate is a non-additive fact. Address is Street, City, State, Zip (four columns)."
             ),
         },
         "descriptions": {
@@ -708,20 +889,71 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
                 "DOC": "District ownership code: 31=State Special Schools, 52=Elementary School District, 54=Unified School District.",
                 "SOC": "School ownership code; 62=Intermediate/Middle Schools.",
                 "Magnet": "Magnet program: 1=offers magnet (K-8 questions use Magnet=1). Not a meal column.",
-                "EdOpsCode": "Educational option code (with EdOpsName).",
+                "EdOpsCode": (
+                    "Educational option code (with EdOpsName). "
+                    "State Special School = EdOpsCode = 'SSS'."
+                ),
+                "Phone": "Communication number / phone (schools.Phone).",
+                "FundingType": (
+                    "School funding type. Locally funded = FundingType = 'Locally funded'. "
+                    "Distinct from Charter_Funding_Type."
+                ),
+                "StatusType": "School status: 'Merged', 'Active', 'Closed'.",
+                "ClosedDate": (
+                    "School close date. Closed before year Y: EXTRACT(YEAR FROM ClosedDate) < Y."
+                ),
+                "AdmFName1": "Administrator first name (AdmFName1).",
                 "Virtual": "Virtual status; exclusively virtual = 'F'.",
                 "OpenDate": "School open date. Open year is open_year (EXTRACT).",
                 "County": "County name from schools (not County_Name from FRPM).",
                 "School": "School name from schools (not School_Name from FRPM).",
             },
             "schools_frpm": {
-                "Enrollment_K_12": "K-12 enrollment. Do not guess rate columns; use metrics.",
-                "Free_Meal_Count_K_12": "Free meal count K-12. Eligible free rate is the metric eligible_free_rate_k12.",
-                "FRPM_Count_K_12": "FRPM count K-12. Eligible FRPM rate is the metric eligible_frpm_rate_k12.",
+                "Academic_Year": (
+                    "FRPM academic year string (e.g. 2014-2015). "
+                    "Filter the stored range; do not YEAR(Academic_Year)."
+                ),
+                "Charter_Funding_Type": (
+                    "Charter funding type. Non-charter 'locally funded' uses FundingType, not this."
+                ),
+                "School_Name": "FRPM school name. Prefer School from schools when listing school names.",
+                "Enrollment_Ages_5_17": (
+                    "Enrollment ages 5-17. K-12 vs 15-17 difference is "
+                    "Enrollment_K_12 - Enrollment_Ages_5_17."
+                ),
+                "Percent_Eligible_Free_K_12": (
+                    "Stored K-12 free eligible percent. Prefer fact eligible_free_rate_k12 * 100 "
+                    "(not additive)."
+                ),
+                "Percent_Eligible_FRPM_K_12": (
+                    "Stored K-12 FRPM eligible percent. Prefer fact eligible_frpm_rate_k12 * 100 "
+                    "(not additive)."
+                ),
+                "Enrollment_K_12": (
+                    "K-12 enrollment. Row rates are facts eligible_frpm_rate_k12 / "
+                    "eligible_free_rate_k12 (not additive). Grouped share is metric "
+                    "k12_frpm_eligible_share / k12_free_eligible_share."
+                ),
+                "Free_Meal_Count_K_12": (
+                    "Free meal count K-12. Row eligible free rate is fact eligible_free_rate_k12 "
+                    "(not additive; do not SUM)."
+                ),
+                "FRPM_Count_K_12": (
+                    "FRPM count K-12. Row eligible FRPM rate is fact eligible_frpm_rate_k12 "
+                    "(not additive; do not SUM)."
+                ),
                 "NSLP_Provision_Status": "NSLP provision; Multiple Provision Types is this literal.",
             },
             "schools_sat": {
-                "NumGE1500": "Count of testers with SAT >= 1500. Excellence rate metric uses this / NumTstTakr.",
+                "AvgScrWrite": (
+                    "Average SAT writing score. SAT writing questions FROM schools_sat "
+                    "(not schools_frpm Enrollment)."
+                ),
+                "AvgScrRead": "Average SAT reading score. SAT-only: FROM schools_sat.",
+                "NumGE1500": (
+                    "Count of testers with SAT >= 1500. Row excellence_rate = NumGE1500 / NumTstTakr "
+                    "(not additive). Grouped share is metric sat_excellence_share."
+                ),
                 "NumTstTakr": "Number of SAT test takers. Excellence rate denominator.",
                 "AvgScrMath": "Average SAT math score.",
                 "sname": "SAT file school name; prefer School from schools when joining.",
@@ -742,6 +974,48 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
                 "expression": "EXTRACT(YEAR FROM OpenDate)",
                 "description": "Year the school opened (from OpenDate).",
             },
+            {
+                "cube": "schools_sat",
+                "name": "is_exclusively_virtual",
+                "type": "code",
+                "expression": "IIF(Virtual = 'F', 1, 0)",
+                "description": "1 if exclusively virtual (Virtual = 'F'), else 0. Use WHERE is_exclusively_virtual = 1.",
+            },
+        ],
+        "expression_facts": [
+            {
+                "cube": "schools_frpm",
+                "name": "eligible_frpm_rate_k12",
+                "type": "quantity",
+                "additive": False,
+                "expression": "(FRPM_Count_K_12) / (Enrollment_K_12)",
+                "description": (
+                    "Row K-12 FRPM eligible rate. Not additive — do not SUM/AVG. "
+                    "ORDER BY / SELECT / MAX / MIN ok. Grouped share is metric k12_frpm_eligible_share."
+                ),
+            },
+            {
+                "cube": "schools_frpm",
+                "name": "eligible_free_rate_k12",
+                "type": "quantity",
+                "additive": False,
+                "expression": "(Free_Meal_Count_K_12) / (Enrollment_K_12)",
+                "description": (
+                    "Row K-12 free-meal eligible rate. Not additive — do not SUM/AVG. "
+                    "Grouped share is metric k12_free_eligible_share."
+                ),
+            },
+            {
+                "cube": "schools_sat",
+                "name": "excellence_rate",
+                "type": "quantity",
+                "additive": False,
+                "expression": "(NumGE1500) / (NumTstTakr)",
+                "description": (
+                    "Row SAT excellence rate (NumGE1500 / NumTstTakr). Not additive. "
+                    "Grouped share is metric sat_excellence_share."
+                ),
+            },
         ],
         "segments": [
             {
@@ -756,19 +1030,37 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
                 "filter": "Magnet = 1",
                 "cube": "schools_frpm",
             },
+            {
+                "name": "merged_schools",
+                "description": "Merged schools (StatusType = 'Merged').",
+                "filter": "StatusType = 'Merged'",
+                "cube": "schools_frpm",
+            },
+            {
+                "name": "locally_funded",
+                "description": "Locally funded schools (FundingType = 'Locally funded').",
+                "filter": "FundingType = 'Locally funded'",
+                "cube": "schools_frpm",
+            },
         ],
         "metrics": [
             {
-                "name": "excellence_rate",
-                "description": "Excellence rate = NumGE1500 / NumTstTakr. Not a table column.",
+                "name": "sat_excellence_share",
+                "description": (
+                    "Grouped SAT excellence share = SUM(NumGE1500)/SUM(NumTstTakr). "
+                    "Row rate is fact excellence_rate (not additive). "
+                    "FRPM+SAT grouped: SELECT schools_frpm.CDSCode FROM schools_frpm "
+                    "JOIN schools_sat ON schools_frpm.CDSCode = schools_sat.cds "
+                    "GROUP BY schools_frpm.CDSCode."
+                ),
                 "expression": "(SUM(NumGE1500)) / (SUM(NumTstTakr))",
                 "cube": "schools_sat",
             },
             {
-                "name": "eligible_free_rate_k12",
+                "name": "k12_free_eligible_share",
                 "description": (
-                    "Eligible free rate for K-12 = "
-                    "Free_Meal_Count_K_12 / Enrollment_K_12. Not a column."
+                    "Grouped K-12 free-meal share = SUM(Free_Meal_Count_K_12)/SUM(Enrollment_K_12). "
+                    "Row rate is fact eligible_free_rate_k12 (not additive)."
                 ),
                 "expression": (
                     "(SUM(Free_Meal_Count_K_12)) / (SUM(Enrollment_K_12))"
@@ -776,10 +1068,10 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
                 "cube": "schools_frpm",
             },
             {
-                "name": "eligible_frpm_rate_k12",
+                "name": "k12_frpm_eligible_share",
                 "description": (
-                    "Eligible free or reduced price meal rate for K-12 = "
-                    "FRPM_Count_K_12 / Enrollment_K_12. Not a column."
+                    "Grouped K-12 FRPM share = SUM(FRPM_Count_K_12)/SUM(Enrollment_K_12). "
+                    "Row rate is fact eligible_frpm_rate_k12 (not additive)."
                 ),
                 "expression": "(SUM(FRPM_Count_K_12)) / (SUM(Enrollment_K_12))",
                 "cube": "schools_frpm",
@@ -979,35 +1271,55 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
     "formula_1": {
         "cube_descriptions": {
             "f1_race_results": (
-                "One row per driver race result. Finishing `time` IS NOT NULL means classified finish. "
-                "Not lap times, qualifying, or standings. Full driver name = forename AND surname (two filters)."
+                "One row per driver race result. Copy: SELECT resultId, forename, surname, position FROM f1_race_results. "
+                "Never FROM this cube for qualifying (f1_qualifying), lap times (f1_lap_times), "
+                "or f1_driver_standings / f1_constructor_standings. Finished means time IS NOT NULL. "
+                "Full driver name = forename AND surname (two filters). Ungrouped cube JOIN is rejected."
             ),
             "f1_qualifying": (
-                "One qualifying row. q1/q2/q3 are session times; Q3 like 0:0M:SS means q3 LIKE 'M:SS%'. "
+                "One qualifying row. Copy: SELECT forename, surname, q3 FROM f1_qualifying. "
+                "Never FROM f1_race_results. q1/q2/q3 are session times; Q3 like 0:0M:SS means q3 LIKE 'M:SS%'. "
                 "circuits_name vs circuitRef vs location vs (lat,lng) are different fields."
             ),
             "f1_lap_times": (
-                "One row per lap. `time` is lap clock; milliseconds is duration. "
-                "LIKE 'M:SS%' matches lap clock strings. Not race results."
+                "One row per lap. Copy: SELECT lap, milliseconds FROM f1_lap_times. Never FROM f1_race_results. "
+                "`time` is lap clock; milliseconds is duration. LIKE 'M:SS%' matches lap clock strings."
             ),
-            "f1_pit_stops": "One row per pit stop. duration/milliseconds are stop length; `time` is clock.",
+            "f1_pit_stops": (
+                "One row per pit stop. Copy: SELECT stop, milliseconds FROM f1_pit_stops. "
+                "duration/milliseconds are stop length; `time` is clock."
+            ),
             "f1_driver_standings": (
-                "Driver standing after a race (race grain, cumulative). "
-                "Season final = filter to that season's last raceId. Not constructorResults."
+                "Driver championship standings after a race (cumulative rank). "
+                "Copy: SELECT forename, surname, points, position FROM f1_driver_standings. Never FROM f1_race_results. "
+                "Season final = filter to that season's last raceId. Search: championship, standings, cumulative, Hamilton not first."
             ),
             "f1_constructor_standings": (
-                "Constructor standing after a race (race grain, cumulative). "
-                "Season final = last raceId of the year. Not constructorResults."
+                "Constructor championship standings after a race (cumulative rank). "
+                "Copy: SELECT constructors_name, points, position FROM f1_constructor_standings. "
+                "Never FROM f1_constructor_results. Season final = last raceId of the year. "
+                "Search: championship, standings, cumulative."
             ),
             "f1_constructor_results": (
-                "Constructor points in a single race (not cumulative standings)."
+                "Constructor points in a single race. "
+                "Copy: SELECT constructors_name, points FROM f1_constructor_results. "
+                "Cumulative rank is f1_constructor_standings."
             ),
         },
         "descriptions": {
             "_all": {
                 "forename": "Driver first name. Full name is forename AND surname (two filters, do not concat).",
                 "surname": "Driver last name. Full name is forename AND surname (two filters, do not concat).",
-                "circuitRef": "Circuit code/slug. Distinct from circuits_name, location, and (lat,lng).",
+                "circuitRef": (
+                    "Circuit reference/slug (circuitRef). The reference name of a circuit is this "
+                    "column, never circuits_name."
+                ),
+                "url": "Race wikipedia page (races.url). Season page is seasons_url.",
+                "seasons_url": "Season wikipedia page (seasons.url). Race page is url.",
+                "dob": (
+                    "Driver date of birth. Youngest = ORDER BY dob DESC (larger dob is younger). "
+                    "Oldest = ORDER BY dob ASC."
+                ),
                 "location": "Circuit locality. Distinct from circuits_name, circuitRef, lat/lng.",
                 "lat": "Circuit latitude. Pair with lng; not the same as location.",
                 "lng": "Circuit longitude. Pair with lat; not the same as location.",
@@ -1016,10 +1328,56 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
                 "nationality": "On results/lap cubes this is the driver nationality; constructor nationality is constructors_nationality.",
             },
             "f1_race_results": {
+                "fastestLapSpeed": (
+                    "Fastest lap SPEED this race. Fastest lap duration is f1_lap_times.milliseconds, "
+                    "not this column."
+                ),
+                "rank": (
+                    "Fastest-lap rank this race (1 = fastest lap). Not finishing position. "
+                    "Highest rank = rank = 1."
+                ),
+                "statusId": (
+                    "Result status id. 2 = disqualified. A finisher still requires time IS NOT NULL."
+                ),
                 "time": "Result classified time. Finished/completed means time IS NOT NULL. Race clock is races_time.",
                 "circuits_name": "Circuit display name. Distinct from circuitRef, location, lat/lng.",
                 "constructors_name": "Constructor display name. Distinct from constructorRef.",
                 "status": "Result status text from status table (not constructorResults.status).",
+                "position": (
+                    "Finishing position this race (1 = winner of this race). "
+                    "Not f1_driver_standings.position."
+                ),
+                "points": (
+                    "Points scored in this race only. Not f1_driver_standings.points."
+                ),
+            },
+            "f1_driver_standings": {
+                "position": (
+                    "Cumulative championship rank after that race (driver standings). "
+                    "Not finishing position of a single race. "
+                    "Search: championship, standings, cumulative, Hamilton not first."
+                ),
+                "points": (
+                    "Cumulative driver championship standings points after that race. "
+                    "Not race-result points from f1_race_results."
+                ),
+                "wins": (
+                    "Cumulative championship race wins after that race (driver standings). "
+                    "Not wins in a single grand prix."
+                ),
+            },
+            "f1_constructor_standings": {
+                "position": (
+                    "Cumulative constructor championship rank after that race (standings). "
+                    "Not a single-race constructor result."
+                ),
+                "points": (
+                    "Cumulative constructor championship standings points after that race. "
+                    "Not f1_constructor_results.points for one race."
+                ),
+                "wins": (
+                    "Cumulative constructor championship wins after that race (standings)."
+                ),
             },
             "f1_qualifying": {
                 "q3": "Q3 time string. Pattern 0:0M:SS refers to q3 LIKE 'M:SS%'.",
@@ -1034,7 +1392,10 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
             },
             "f1_constructor_results": {
                 "nationality": "Constructor nationality (this cube has no drivers).",
-                "points": "Constructor points in this race (not standings).",
+                "points": (
+                    "Constructor points in this race only. "
+                    "Not f1_constructor_standings.points."
+                ),
                 "status": "Constructor result status (not race status table).",
             },
         },
@@ -1116,33 +1477,63 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
             },
             {
                 "name": "avg_points",
-                "description": "Average race-result points (AVG(points)).",
+                "description": (
+                    "Average race-result points (AVG(points)). "
+                    "Copy: SELECT AVG(points) FROM f1_race_results. Never championship standings."
+                ),
                 "expression": "AVG(points)",
                 "cube": "f1_race_results",
+            },
+            {
+                "name": "driver_standing_points",
+                "description": (
+                    "Cumulative driver championship points after a race. "
+                    "Copy: SELECT forename, surname, points FROM f1_driver_standings. Never FROM f1_race_results."
+                ),
+                "expression": "SUM(points)",
+                "cube": "f1_driver_standings",
+            },
+            {
+                "name": "constructor_standing_points",
+                "description": (
+                    "Cumulative constructor championship points after a race. "
+                    "Copy: SELECT constructors_name, points FROM f1_constructor_standings. "
+                    "Never FROM f1_constructor_results."
+                ),
+                "expression": "SUM(points)",
+                "cube": "f1_constructor_standings",
             },
         ],
     },
     "student_club": {
         "cube_descriptions": {
             "club_event": (
-                "One event. `type` is event type (Meeting, etc.). Not income/expense. "
-                "Attendance, budget, and money are other cubes."
+                "One event. Copy: SELECT event_id, event_name, type FROM club_event. "
+                "cost is on club_expense; amount is on club_income or club_budget — never FROM club_event for money. "
+                "`type` is event type (Meeting, etc.). Attendance is club_attendance."
             ),
-            "club_attendance": "One attendance link (event × member). Full name = first_name AND last_name.",
+            "club_attendance": (
+                "One attendance link (event × member). Copy: SELECT event_id, member_id FROM club_attendance. "
+                "Full name = first_name AND last_name."
+            ),
             "club_budget": (
-                "One budget line for an event. `category` is budget category (Food); "
-                "`event_status` is budget/event status (Closed); `type` is the event type."
+                "One budget line for an event. Copy: SELECT event_name, category, amount, spent FROM club_budget. "
+                "`category` is budget category (Food); `event_status` is budget/event status (Closed); "
+                "`type` is the event type."
             ),
             "club_expense": (
-                "One expense. `approved` True/False. Full name = first_name AND last_name. "
+                "One expense. Copy: SELECT expense_description, cost FROM club_expense. "
+                "`approved` True/False. Full name = first_name AND last_name. "
                 "Do not pull income into expense queries."
             ),
             "club_income": (
                 "One income row linked to a member (not an event). "
+                "Copy: SELECT amount, source, notes FROM club_income. "
                 "source includes 'Dues' and 'Fundraising'. Full name = first_name AND last_name."
             ),
             "club_member": (
-                "One member with zip_code and major. Full name = first_name AND last_name "
+                "One member with zip_code and major. Copy: SELECT member_id, first_name, last_name FROM club_member. "
+                "amount is on club_income (not this cube). Full name = first_name AND last_name "
                 "(two filters, do not concat). `type` here is zip type, not event type."
             ),
         },
@@ -1164,6 +1555,7 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
                 "amount": "Budgeted amount. Spend-to-budget ratio is the metric spend_to_budget_ratio.",
             },
             "club_expense": {
+                "category": "Budget category copied onto the expense (Food). Not event type.",
                 "approved": "Expense approval: True approved, False not approved.",
                 "expense_description": "Expense item text (Pizza).",
                 "cost": "Expense cost. Total cost is the metric total_expense_cost.",
@@ -1240,7 +1632,10 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
             },
             {
                 "name": "total_expense_cost",
-                "description": "Total expense cost (SUM(cost)).",
+                "description": (
+                    "Total expense cost (SUM(cost)). "
+                    "Copy: SELECT SUM(cost) FROM club_expense. Never FROM club_event."
+                ),
                 "expression": "SUM(cost)",
                 "cube": "club_expense",
             },
@@ -1330,6 +1725,58 @@ def build_docs(db_id: str, cube: dict | None = None) -> list[dict]:
     return docs
 
 
+def prune_stale_metric_segment(db_id: str) -> int:
+    """Drop metric/segment JSON whose names left DOMAIN_SPECS (e.g. D28 rename)."""
+    spec = DOMAIN_SPECS.get(db_id) or {}
+    keep = {s["name"] for s in spec.get("segments") or []}
+    keep |= {m["name"] for m in spec.get("metrics") or []}
+    meta_dir = ROOT / db_id / "meta"
+    if not meta_dir.is_dir():
+        return 0
+    n = 0
+    for path in meta_dir.glob("*.json"):
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        kind = doc.get("kind")
+        name = doc.get("name")
+        if kind == "segment" and name not in keep:
+            path.unlink()
+            n += 1
+        elif (
+            kind == "metric"
+            and name not in keep
+            and not str(name).endswith("_count")
+        ):
+            path.unlink()
+            n += 1
+    return n
+
+
+def patch_metric_descriptions(db_id: str) -> int:
+    """Refresh metric.description from DOMAIN_SPECS (existing files skip build_docs)."""
+    spec = DOMAIN_SPECS.get(db_id) or {}
+    by_name = {m["name"]: m for m in spec.get("metrics") or []}
+    meta_dir = ROOT / db_id / "meta"
+    if not meta_dir.is_dir() or not by_name:
+        return 0
+    n = 0
+    for path in meta_dir.glob("*.json"):
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        if doc.get("kind") != "metric":
+            continue
+        spec_m = by_name.get(doc.get("name"))
+        if not spec_m:
+            continue
+        new = spec_m.get("description") or ""
+        if not new or doc.get("description") == new:
+            continue
+        doc["description"] = new
+        path.write_text(
+            json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        n += 1
+    return n
+
+
 def write_docs(db_id: str, docs: list[dict]) -> int:
     meta_dir = ROOT / db_id / "meta"
     meta_dir.mkdir(exist_ok=True)
@@ -1354,11 +1801,14 @@ def main() -> int:
         patched = apply_knowledge(db_id)
         docs = build_docs(db_id)
         n = write_docs(db_id, docs)
+        stale = prune_stale_metric_segment(db_id)
+        met_desc = patch_metric_descriptions(db_id)
         seg_n = sum(1 for d in docs if d["kind"] == "segment")
         met_n = sum(1 for d in docs if d["kind"] == "metric")
         print(
             f"{db_id}: wrote {seg_n} segments, {met_n} metrics; "
-            f"patched {patched} cubes"
+            f"patched {patched} cubes; pruned {stale} stale; "
+            f"metric desc {met_desc}"
         )
         total += n
     print(f"done: {total} documents")
