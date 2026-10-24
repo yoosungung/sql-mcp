@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use libsql::{Connection, params};
-use serde_json::{Value, json};
+use libsql::{params, Connection};
+use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
-use crate::embed::{Embedder, blob_to_f32, cosine, f32_to_blob};
+use crate::embed::{blob_to_f32, cosine, f32_to_blob, Embedder};
 use crate::error::AppError;
 
 const RRF_K: f32 = 60.0;
@@ -196,7 +196,11 @@ fn name_desc_text(name: &str, doc: &Value) -> String {
 fn member_index_text(item: &Value) -> String {
     let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let with_desc = name_desc_text(name, item);
-    match item.get("type").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+    match item
+        .get("type")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
         Some(dtype) => format!("{with_desc} {dtype}"),
         None => with_desc,
     }
@@ -283,7 +287,9 @@ pub async fn search_columns_filtered(
             };
             Ok(rrf_fuse(kw, vec, limit))
         }
-        other => Err(AppError::Validation(format!("unknown search mode: {other}"))),
+        other => Err(AppError::Validation(format!(
+            "unknown search mode: {other}"
+        ))),
     }
 }
 
@@ -381,9 +387,8 @@ async fn vector_search(
     limit: usize,
     embedder: Option<&dyn Embedder>,
 ) -> Result<Vec<SearchHit>, AppError> {
-    let embedder = embedder.ok_or_else(|| {
-        AppError::Validation("vector search requires embedding provider".into())
-    })?;
+    let embedder = embedder
+        .ok_or_else(|| AppError::Validation("vector search requires embedding provider".into()))?;
     let qv = embedder.embed(&[query.to_string()]).await?.remove(0);
     let conn = conn.lock().await;
     let mut rows = if let Some(t) = target {
@@ -421,7 +426,11 @@ async fn vector_search(
             mode: "vector".into(),
         });
     }
-    scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    scored.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     scored.truncate(limit);
     Ok(scored)
 }
@@ -459,7 +468,11 @@ fn rrf_fuse(a: Vec<SearchHit>, b: Vec<SearchHit>, limit: usize) -> Vec<SearchHit
             hit
         })
         .collect();
-    out.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    out.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     out.truncate(limit);
     out
 }
@@ -650,8 +663,9 @@ mod tests {
         }
         let hits = store.search_columns("region", "keyword", 10).await.unwrap();
         assert!(
-            hits.iter()
-                .any(|h| h.field_name == "region_code" && h.field_role == "dimension" && h.target == "dw"),
+            hits.iter().any(|h| h.field_name == "region_code"
+                && h.field_role == "dimension"
+                && h.target == "dw"),
             "hits={hits:?}"
         );
         assert!(hits.iter().all(|h| h.score > 0.0 && h.score.is_finite()));
@@ -726,7 +740,9 @@ mod tests {
         let cube: Value =
             serde_json::from_str(include_str!("../../semantic/examples/cubes/sales.json")).unwrap();
         let rows = extract_index_rows(&cube);
-        assert!(rows.iter().any(|r| r.field_role == "document" && r.text.contains("매출")));
+        assert!(rows
+            .iter()
+            .any(|r| r.field_role == "document" && r.text.contains("매출")));
         let dim = rows
             .iter()
             .find(|r| r.field_name == "region_code")

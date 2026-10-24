@@ -31,8 +31,20 @@ fn looks_like_code(s: &str) -> bool {
         return false;
     }
     let has_newline = trimmed.contains('\n');
-    let keywords = ["SELECT ", "INSERT ", "function ", "def ", "return ", "=>{", "BEGIN "];
-    let hit = keywords.iter().any(|k| trimmed.to_ascii_uppercase().contains(&k.to_ascii_uppercase()));
+    let keywords = [
+        "SELECT ",
+        "INSERT ",
+        "function ",
+        "def ",
+        "return ",
+        "=>{",
+        "BEGIN ",
+    ];
+    let hit = keywords.iter().any(|k| {
+        trimmed
+            .to_ascii_uppercase()
+            .contains(&k.to_ascii_uppercase())
+    });
     (has_newline && (trimmed.contains(';') || trimmed.contains('{'))) || hit
 }
 

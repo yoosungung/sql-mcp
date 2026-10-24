@@ -1,14 +1,12 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use axum::routing::get;
 use axum::Json;
 use axum::Router;
-use axum::routing::get;
 use rmcp::transport::streamable_http_server::session::never::NeverSessionManager;
-use rmcp::transport::streamable_http_server::{
-    StreamableHttpServerConfig, StreamableHttpService,
-};
-use serde_json::{Value, json};
+use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
+use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;

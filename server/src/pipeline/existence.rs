@@ -52,7 +52,10 @@ fn is_literal_expr(expr: &Expr) -> bool {
 }
 
 /// Prefer a cube dimension whose view column maps to a leaf table `pk`; else `dimensions[0]`.
-pub(crate) fn resolve_existence_member(docs: &[Value], cube_name: &str) -> Result<String, AppError> {
+pub(crate) fn resolve_existence_member(
+    docs: &[Value],
+    cube_name: &str,
+) -> Result<String, AppError> {
     let cube = find_doc(docs, "cube", cube_name)?;
     let dims = cube
         .get("dimensions")
@@ -81,11 +84,7 @@ pub(crate) fn resolve_existence_member(docs: &[Value], cube_name: &str) -> Resul
     Ok(first.to_string())
 }
 
-fn dimension_matching_table_pk(
-    docs: &[Value],
-    view: &Value,
-    dims: &[Value],
-) -> Option<String> {
+fn dimension_matching_table_pk(docs: &[Value], view: &Value, dims: &[Value]) -> Option<String> {
     let view_cols = view.get("columns")?.as_array()?;
     for dim in dims {
         let Some(dim_name) = dim.get("name").and_then(|v| v.as_str()) else {

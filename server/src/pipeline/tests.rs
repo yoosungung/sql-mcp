@@ -1,954 +1,978 @@
-    use super::*;
-    use serde_json::{Value, json};
 
-    fn example_docs() -> Vec<Value> {
-        [
-            include_str!("../../../semantic/examples/tables/customer.json"),
-            include_str!("../../../semantic/examples/tables/orders.json"),
-            include_str!("../../../semantic/examples/tables/orders_month.json"),
-            include_str!("../../../semantic/examples/tables/region_codes.json"),
-            include_str!("../../../semantic/examples/tables/status_codes.json"),
-            include_str!("../../../semantic/examples/views/orders_customer.json"),
-            include_str!("../../../semantic/examples/cubes/sales.json"),
-            include_str!("../../../semantic/examples/metrics/revenue.json"),
-            include_str!("../../../semantic/examples/segments/paid.json"),
-        ]
-        .into_iter()
-        .map(|s| serde_json::from_str(s).unwrap())
-        .collect()
-    }
+use super::*;
+use serde_json::{json, Value};
 
-    fn docs_with_second_cube(target: &str) -> Vec<Value> {
-        let mut docs = example_docs();
-        // Second cube same view/target for JOIN/UNION tests.
-        let mut sales_b: Value = docs
-            .iter()
-            .find(|d| d.get("name").and_then(|v| v.as_str()) == Some("sales"))
-            .cloned()
-            .unwrap();
-        sales_b["name"] = json!("sales_b");
-        sales_b["target"] = json!(target);
-        docs.push(sales_b);
-        docs.push(json!({
-            "kind": "metric",
-            "name": "revenue_b",
-            "description": "sales_b 지역·일자별 판매 금액 합계.",
-            "cube": "sales_b",
-            "expression": "sum(sale_amount)",
-            "aggregation": "group",
-            "group_by": ["region_code", "order_date"],
-            "filter": null,
-            "role": "all"
-        }));
-        docs
-    }
+fn example_docs() -> Vec<Value> {
+    [
+        include_str!("../../../semantic/examples/tables/customer.json"),
+        include_str!("../../../semantic/examples/tables/orders.json"),
+        include_str!("../../../semantic/examples/tables/orders_month.json"),
+        include_str!("../../../semantic/examples/tables/region_codes.json"),
+        include_str!("../../../semantic/examples/tables/status_codes.json"),
+        include_str!("../../../semantic/examples/views/orders_customer.json"),
+        include_str!("../../../semantic/examples/cubes/sales.json"),
+        include_str!("../../../semantic/examples/metrics/revenue.json"),
+        include_str!("../../../semantic/examples/segments/paid.json"),
+    ]
+    .into_iter()
+    .map(|s| serde_json::from_str(s).unwrap())
+    .collect()
+}
 
-    #[test]
-    fn compiles_adhoc_sum_with_status_filter() {
-        let docs = example_docs();
-        let sql = compile_semantic_sql(
-            &docs,
-            "SELECT sum(sale_amount) AS revenue FROM sales WHERE status_code = 'PAID'",
-            Some("finance"),
-        )
+fn docs_with_second_cube(target: &str) -> Vec<Value> {
+    let mut docs = example_docs();
+    // Second cube same view/target for JOIN/UNION tests.
+    let mut sales_b: Value = docs
+        .iter()
+        .find(|d| d.get("name").and_then(|v| v.as_str()) == Some("sales"))
+        .cloned()
         .unwrap();
-        assert!(sql.to_ascii_lowercase().contains("sum("));
-        assert!(sql.contains("PAID") || sql.contains("paid") || sql.contains("'PAID'"));
-        assert_select_only(&sql).unwrap();
-    }
+    sales_b["name"] = json!("sales_b");
+    sales_b["target"] = json!(target);
+    docs.push(sales_b);
+    docs.push(json!({
+        "kind": "metric",
+        "name": "revenue_b",
+        "description": "sales_b 지역·일자별 판매 금액 합계.",
+        "cube": "sales_b",
+        "expression": "sum(sale_amount)",
+        "aggregation": "group",
+        "group_by": ["region_code", "order_date"],
+        "filter": null,
+        "role": "all"
+    }));
+    docs
+}
 
-    #[test]
-    fn accepts_qualified_from_as_cube_name() {
-        // LLM physical habit: FROM cube.physical_table → route to cube.
-        let docs = example_docs();
-        assert_eq!(
-            cube_name_from_semantic_sql("SELECT sum(sale_amount) FROM sales.orders").unwrap(),
-            "sales"
-        );
-        let sql = compile_semantic_sql(
-            &docs,
-            "SELECT sum(sale_amount) AS revenue FROM sales.orders",
-            Some("finance"),
-        )
-        .unwrap();
-        assert!(sql.to_ascii_lowercase().contains("sum("));
-        assert_select_only(&sql).unwrap();
-    }
+#[test]
+fn compiles_adhoc_sum_with_status_filter() {
+    let docs = example_docs();
+    let sql = compile_semantic_sql(
+        &docs,
+        "SELECT sum(sale_amount) AS revenue FROM sales WHERE status_code = 'PAID'",
+        Some("finance"),
+    )
+    .unwrap();
+    assert!(sql.to_ascii_lowercase().contains("sum("));
+    assert!(sql.contains("PAID") || sql.contains("paid") || sql.contains("'PAID'"));
+    assert_select_only(&sql).unwrap();
+}
 
-    #[test]
-    fn accepts_from_cube_with_alias() {
-        let docs = example_docs();
-        assert_eq!(
-            cube_names_from_semantic_sql("SELECT T1.region_code FROM sales AS T1").unwrap(),
-            vec!["sales".to_string()]
-        );
-        let sql = compile_semantic_sql(
-            &docs,
-            "SELECT T1.region_code FROM sales AS T1",
-            Some("finance"),
-        )
-        .unwrap();
-        assert!(sql.to_ascii_lowercase().contains("region_code"), "{sql}");
-        assert_select_only(&sql).unwrap();
-    }
+#[test]
+fn accepts_qualified_from_as_cube_name() {
+    // LLM physical habit: FROM cube.physical_table → route to cube.
+    let docs = example_docs();
+    assert_eq!(
+        cube_name_from_semantic_sql("SELECT sum(sale_amount) FROM sales.orders").unwrap(),
+        "sales"
+    );
+    let sql = compile_semantic_sql(
+        &docs,
+        "SELECT sum(sale_amount) AS revenue FROM sales.orders",
+        Some("finance"),
+    )
+    .unwrap();
+    assert!(sql.to_ascii_lowercase().contains("sum("));
+    assert_select_only(&sql).unwrap();
+}
 
-    #[test]
-    fn accepts_qualified_from_with_alias() {
-        let docs = example_docs();
-        assert_eq!(
-            cube_name_from_semantic_sql("SELECT sum(T1.sale_amount) FROM sales.orders AS T1").unwrap(),
-            "sales"
-        );
-        let sql = compile_semantic_sql(
-            &docs,
-            "SELECT sum(T1.sale_amount) AS revenue FROM sales.orders AS T1",
-            Some("finance"),
-        )
-        .unwrap();
-        assert!(sql.to_ascii_lowercase().contains("sum("));
-        assert_select_only(&sql).unwrap();
-    }
+#[test]
+fn accepts_from_cube_with_alias() {
+    let docs = example_docs();
+    assert_eq!(
+        cube_names_from_semantic_sql("SELECT T1.region_code FROM sales AS T1").unwrap(),
+        vec!["sales".to_string()]
+    );
+    let sql = compile_semantic_sql(
+        &docs,
+        "SELECT T1.region_code FROM sales AS T1",
+        Some("finance"),
+    )
+    .unwrap();
+    assert!(sql.to_ascii_lowercase().contains("region_code"), "{sql}");
+    assert_select_only(&sql).unwrap();
+}
 
-    #[test]
-    fn compiles_union_all_same_target() {
-        let docs = docs_with_second_cube("dw");
-        let sql = compile_semantic_sql(
-            &docs,
-            "SELECT sum(sale_amount) FROM sales UNION ALL SELECT sum(sale_amount) FROM sales_b",
-            Some("finance"),
-        )
-        .unwrap();
-        let u = sql.to_ascii_uppercase();
-        assert!(u.contains("UNION ALL"));
-        assert_select_only(&sql).unwrap();
-    }
+#[test]
+fn accepts_qualified_from_with_alias() {
+    let docs = example_docs();
+    assert_eq!(
+        cube_name_from_semantic_sql("SELECT sum(T1.sale_amount) FROM sales.orders AS T1").unwrap(),
+        "sales"
+    );
+    let sql = compile_semantic_sql(
+        &docs,
+        "SELECT sum(T1.sale_amount) AS revenue FROM sales.orders AS T1",
+        Some("finance"),
+    )
+    .unwrap();
+    assert!(sql.to_ascii_lowercase().contains("sum("));
+    assert_select_only(&sql).unwrap();
+}
 
-    #[test]
-    fn rejects_union_different_target() {
-        let mut docs = docs_with_second_cube("other");
-        // sales stays dw; sales_b is other
-        let err = compile_semantic_sql(
-            &docs,
-            "SELECT sum(sale_amount) FROM sales UNION ALL SELECT sum(sale_amount) FROM sales_b",
-            Some("finance"),
-        )
-        .unwrap_err();
-        assert!(matches!(err, AppError::Validation(_)), "{err:?}");
-        let _ = &mut docs;
-    }
+#[test]
+fn compiles_union_all_same_target() {
+    let docs = docs_with_second_cube("dw");
+    let sql = compile_semantic_sql(
+        &docs,
+        "SELECT sum(sale_amount) FROM sales UNION ALL SELECT sum(sale_amount) FROM sales_b",
+        Some("finance"),
+    )
+    .unwrap();
+    let u = sql.to_ascii_uppercase();
+    assert!(u.contains("UNION ALL"));
+    assert_select_only(&sql).unwrap();
+}
 
-    #[test]
-    fn compiles_join_same_target() {
-        let docs = docs_with_second_cube("dw");
-        let sql = compile_semantic_sql(
-            &docs,
-            "SELECT sum(sales.sale_amount), sum(sales_b.sale_amount) \
+#[test]
+fn rejects_union_different_target() {
+    let mut docs = docs_with_second_cube("other");
+    // sales stays dw; sales_b is other
+    let err = compile_semantic_sql(
+        &docs,
+        "SELECT sum(sale_amount) FROM sales UNION ALL SELECT sum(sale_amount) FROM sales_b",
+        Some("finance"),
+    )
+    .unwrap_err();
+    assert!(matches!(err, AppError::Validation(_)), "{err:?}");
+    let _ = &mut docs;
+}
+
+#[test]
+fn compiles_join_same_target() {
+    let docs = docs_with_second_cube("dw");
+    let sql = compile_semantic_sql(
+        &docs,
+        "SELECT sum(sales.sale_amount), sum(sales_b.sale_amount) \
              FROM sales JOIN sales_b ON sales.region_code = sales_b.region_code",
-            Some("finance"),
-        )
-        .unwrap();
-        let u = sql.to_ascii_uppercase();
-        assert!(u.contains("JOIN"));
-        assert!(u.contains("REGION_CODE"));
-        assert_select_only(&sql).unwrap();
-    }
+        Some("finance"),
+    )
+    .unwrap();
+    let u = sql.to_ascii_uppercase();
+    assert!(u.contains("JOIN"));
+    assert!(u.contains("REGION_CODE"));
+    assert_select_only(&sql).unwrap();
+}
 
-    #[test]
-    fn rejects_join_different_target() {
-        let docs = docs_with_second_cube("other");
-        let err = compile_semantic_sql(
-            &docs,
-            "SELECT sum(sales.sale_amount), sum(sales_b.sale_amount) \
+#[test]
+fn rejects_join_different_target() {
+    let docs = docs_with_second_cube("other");
+    let err = compile_semantic_sql(
+        &docs,
+        "SELECT sum(sales.sale_amount), sum(sales_b.sale_amount) \
              FROM sales JOIN sales_b ON sales.region_code = sales_b.region_code",
-            Some("finance"),
-        )
+        Some("finance"),
+    )
+    .unwrap_err();
+    assert!(matches!(err, AppError::Validation(_)), "{err:?}");
+}
+
+#[test]
+fn rejects_unknown_cube_in_qualified_from() {
+    // Qualified FROM still requires the first ident to be a registered cube.
+    let docs = example_docs();
+    let err = compile_semantic_sql(&docs, "SELECT sum(sale_amount) FROM nosuch_db.orders", None)
         .unwrap_err();
-        assert!(matches!(err, AppError::Validation(_)), "{err:?}");
-    }
+    assert!(matches!(
+        err,
+        AppError::Validation(_) | AppError::NotFound(_)
+    ));
+}
 
-    #[test]
-    fn rejects_unknown_cube_in_qualified_from() {
-        // Qualified FROM still requires the first ident to be a registered cube.
-        let docs = example_docs();
-        let err = compile_semantic_sql(
-            &docs,
-            "SELECT sum(sale_amount) FROM nosuch_db.orders",
-            None,
-        )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            AppError::Validation(_) | AppError::NotFound(_)
-        ));
-    }
+#[test]
+fn rejects_bare_physical_select() {
+    let docs = example_docs();
+    assert!(compile_semantic_sql(&docs, "SELECT 1", None).is_err());
+}
 
-    #[test]
-    fn rejects_bare_physical_select() {
-        let docs = example_docs();
-        assert!(compile_semantic_sql(&docs, "SELECT 1", None).is_err());
-    }
+#[test]
+fn mysql_dialect_adapts_identifier_quotes() {
+    let docs = example_docs();
+    let sql = compile_semantic_sql_with_binds(
+        &docs,
+        "SELECT sum(sale_amount) AS revenue FROM sales WHERE status_code = 'PAID'",
+        Some("finance"),
+        None,
+        DialectProfile::Mysql,
+    )
+    .unwrap();
+    assert!(sql.contains('`'), "expected MySQL backticks in {sql}");
+    assert!(
+        !sql.contains('"'),
+        "canonical double quotes should be adapted away: {sql}"
+    );
+    assert!(sql.to_ascii_lowercase().contains("sum("));
+}
 
-    #[test]
-    fn mysql_dialect_adapts_identifier_quotes() {
-        let docs = example_docs();
-        let sql = compile_semantic_sql_with_binds(
-            &docs,
-            "SELECT sum(sale_amount) AS revenue FROM sales WHERE status_code = 'PAID'",
-            Some("finance"),
-            None,
-            DialectProfile::Mysql,
-        )
-        .unwrap();
-        assert!(sql.contains('`'), "expected MySQL backticks in {sql}");
-        assert!(
-            !sql.contains('"'),
-            "canonical double quotes should be adapted away: {sql}"
-        );
-        assert!(sql.to_ascii_lowercase().contains("sum("));
-    }
-
-    #[test]
-    fn compiles_multiple_adhoc_aggs_with_having_and_dynamic_group_by() {
-        let docs = example_docs();
-        let mut binds = HashMap::new();
-        binds.insert("caller_region".into(), "KR".into());
-        let sql = compile_semantic_sql_with_binds(
-            &docs,
-            "SELECT region_code AS reg, sum(sale_amount) AS total_rev, \
+#[test]
+fn compiles_multiple_adhoc_aggs_with_having_and_dynamic_group_by() {
+    let docs = example_docs();
+    let mut binds = HashMap::new();
+    binds.insert("caller_region".into(), "KR".into());
+    let sql = compile_semantic_sql_with_binds(
+        &docs,
+        "SELECT region_code AS reg, sum(sale_amount) AS total_rev, \
              sum(CASE WHEN status_code = 'PAID' THEN sale_amount END) AS paid_rev \
              FROM sales \
              WHERE region_code = :caller_region \
              HAVING sum(sale_amount) > 100 \
              ORDER BY total_rev DESC \
              LIMIT 10 OFFSET 5",
-            Some("finance"),
-            Some(&binds),
-            DialectProfile::Postgres,
-        )
-        .unwrap();
-        let upper = sql.to_ascii_uppercase();
-        assert!(upper.contains("HAVING"), "expected HAVING clause: {sql}");
-        assert!(upper.contains("ORDER BY \"TOTAL_REV\" DESC"), "expected ORDER BY total_rev DESC: {sql}");
-        assert!(upper.contains("LIMIT 10"), "expected LIMIT 10: {sql}");
-        assert!(upper.contains("OFFSET 5"), "expected OFFSET 5: {sql}");
-        assert!(sql.contains("'KR'"), "expected bind :caller_region resolved to 'KR': {sql}");
-        assert!(!sql.contains("order_date\" AS"), "order_date should not be projected: {sql}");
-        assert_select_only(&sql).unwrap();
-    }
+        Some("finance"),
+        Some(&binds),
+        DialectProfile::Postgres,
+    )
+    .unwrap();
+    let upper = sql.to_ascii_uppercase();
+    assert!(upper.contains("HAVING"), "expected HAVING clause: {sql}");
+    assert!(
+        upper.contains("ORDER BY \"TOTAL_REV\" DESC"),
+        "expected ORDER BY total_rev DESC: {sql}"
+    );
+    assert!(upper.contains("LIMIT 10"), "expected LIMIT 10: {sql}");
+    assert!(upper.contains("OFFSET 5"), "expected OFFSET 5: {sql}");
+    assert!(
+        sql.contains("'KR'"),
+        "expected bind :caller_region resolved to 'KR': {sql}"
+    );
+    assert!(
+        !sql.contains("order_date\" AS"),
+        "order_date should not be projected: {sql}"
+    );
+    assert_select_only(&sql).unwrap();
+}
 
-    #[test]
-    fn enforces_fact_rbac_and_encryption_guards() {
-        let mut docs = example_docs();
-        // sale_amount is finance-only — branch cannot aggregate it
-        assert!(matches!(
-            compile_semantic_sql(
-                &docs,
-                "SELECT sum(sale_amount) FROM sales",
-                Some("branch")
-            ),
-            Err(AppError::Forbidden(_))
-        ));
-        assert!(compile_semantic_sql(
-            &docs,
-            "SELECT sum(sale_amount) FROM sales",
-            Some("finance")
-        )
-        .is_ok());
+#[test]
+fn enforces_fact_rbac_and_encryption_guards() {
+    let mut docs = example_docs();
+    // sale_amount is finance-only — branch cannot aggregate it
+    assert!(matches!(
+        compile_semantic_sql(&docs, "SELECT sum(sale_amount) FROM sales", Some("branch")),
+        Err(AppError::Forbidden(_))
+    ));
+    assert!(
+        compile_semantic_sql(&docs, "SELECT sum(sale_amount) FROM sales", Some("finance")).is_ok()
+    );
 
-        // Mark customer_id as encrypted in sales cube and verify WHERE filter is rejected
-        for doc in &mut docs {
-            if doc.get("kind").and_then(|v| v.as_str()) == Some("cube")
-                && doc.get("name").and_then(|v| v.as_str()) == Some("sales")
-            {
-                if let Some(dims) = doc.get_mut("dimensions").and_then(|v| v.as_array_mut()) {
-                    for d in dims {
-                        if d.get("name").and_then(|v| v.as_str()) == Some("customer_id") {
-                            d["encryption"] = json!(true);
-                        }
+    // Mark customer_id as encrypted in sales cube and verify WHERE filter is rejected
+    for doc in &mut docs {
+        if doc.get("kind").and_then(|v| v.as_str()) == Some("cube")
+            && doc.get("name").and_then(|v| v.as_str()) == Some("sales")
+        {
+            if let Some(dims) = doc.get_mut("dimensions").and_then(|v| v.as_array_mut()) {
+                for d in dims {
+                    if d.get("name").and_then(|v| v.as_str()) == Some("customer_id") {
+                        d["encryption"] = json!(true);
                     }
                 }
             }
         }
-        assert!(matches!(
-            compile_semantic_sql(
-                &docs,
-                "SELECT sum(sale_amount) FROM sales WHERE customer_id = 'C1'",
-                Some("finance")
-            ),
-            Err(AppError::Validation(_))
-        ));
     }
-
-    #[test]
-    fn rejects_unknown_member_in_join_on() {
-        let docs = docs_with_second_cube("dw");
-        let err = compile_semantic_sql(
+    assert!(matches!(
+        compile_semantic_sql(
             &docs,
-            "SELECT sum(sales.sale_amount), sum(sales_b.sale_amount) \
+            "SELECT sum(sale_amount) FROM sales WHERE customer_id = 'C1'",
+            Some("finance")
+        ),
+        Err(AppError::Validation(_))
+    ));
+}
+
+#[test]
+fn rejects_unknown_member_in_join_on() {
+    let docs = docs_with_second_cube("dw");
+    let err = compile_semantic_sql(
+        &docs,
+        "SELECT sum(sales.sale_amount), sum(sales_b.sale_amount) \
              FROM sales JOIN sales_b ON sales.nonexistent = sales_b.region_code",
-            Some("finance"),
-        )
-        .unwrap_err();
-        assert!(matches!(err, AppError::Validation(_)), "{err:?}");
-    }
+        Some("finance"),
+    )
+    .unwrap_err();
+    assert!(matches!(err, AppError::Validation(_)), "{err:?}");
+}
 
-    #[test]
-    fn compiles_dim_only_ungrouped() {
-        let docs = example_docs();
-        let sql = compile_semantic_sql(
-            &docs,
-            "SELECT region_code FROM sales WHERE region_code = 'KR'",
-            Some("finance"),
-        )
-        .unwrap();
-        let upper = sql.to_ascii_uppercase();
-        assert!(!upper.contains("GROUP BY"), "ungrouped must omit GROUP BY: {sql}");
-        assert!(!upper.contains("SUM("), "ungrouped must not aggregate: {sql}");
-        assert!(
-            sql.contains("region_code") || sql.contains("\"region_code\""),
-            "{sql}"
-        );
-        assert_select_only(&sql).unwrap();
-    }
+#[test]
+fn compiles_dim_only_ungrouped() {
+    let docs = example_docs();
+    let sql = compile_semantic_sql(
+        &docs,
+        "SELECT region_code FROM sales WHERE region_code = 'KR'",
+        Some("finance"),
+    )
+    .unwrap();
+    let upper = sql.to_ascii_uppercase();
+    assert!(
+        !upper.contains("GROUP BY"),
+        "ungrouped must omit GROUP BY: {sql}"
+    );
+    assert!(
+        !upper.contains("SUM("),
+        "ungrouped must not aggregate: {sql}"
+    );
+    assert!(
+        sql.contains("region_code") || sql.contains("\"region_code\""),
+        "{sql}"
+    );
+    assert_select_only(&sql).unwrap();
+}
 
-    #[test]
-    fn compiles_fact_and_dim_ungrouped() {
-        let docs = example_docs();
-        let sql = compile_semantic_sql(
-            &docs,
-            "SELECT region_code, sale_amount FROM sales LIMIT 5",
-            Some("finance"),
-        )
-        .unwrap();
-        let upper = sql.to_ascii_uppercase();
-        assert!(!upper.contains("GROUP BY"), "{sql}");
-        assert!(upper.contains("LIMIT"), "{sql}");
-        assert!(
-            sql.contains("sale_amount") || sql.contains("\"sale_amount\""),
-            "{sql}"
-        );
-        assert_select_only(&sql).unwrap();
-    }
+#[test]
+fn compiles_fact_and_dim_ungrouped() {
+    let docs = example_docs();
+    let sql = compile_semantic_sql(
+        &docs,
+        "SELECT region_code, sale_amount FROM sales LIMIT 5",
+        Some("finance"),
+    )
+    .unwrap();
+    let upper = sql.to_ascii_uppercase();
+    assert!(!upper.contains("GROUP BY"), "{sql}");
+    assert!(upper.contains("LIMIT"), "{sql}");
+    assert!(
+        sql.contains("sale_amount") || sql.contains("\"sale_amount\""),
+        "{sql}"
+    );
+    assert_select_only(&sql).unwrap();
+}
 
-    #[test]
-    fn rejects_having_in_dim_fact_ungrouped() {
-        let docs = example_docs();
-        let err = compile_semantic_sql(
-            &docs,
-            "SELECT region_code FROM sales HAVING region_code = 'KR'",
-            Some("finance"),
-        )
-        .unwrap_err();
-        assert!(
-            matches!(err, AppError::Validation(ref m) if m.to_ascii_lowercase().contains("having") || m.contains("ungrouped")),
-            "{err:?}"
-        );
-    }
+#[test]
+fn rejects_having_in_dim_fact_ungrouped() {
+    let docs = example_docs();
+    let err = compile_semantic_sql(
+        &docs,
+        "SELECT region_code FROM sales HAVING region_code = 'KR'",
+        Some("finance"),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, AppError::Validation(ref m) if m.to_ascii_lowercase().contains("having") || m.contains("ungrouped")),
+        "{err:?}"
+    );
+}
 
-    #[test]
-    fn compiles_dim_only_group_by_and_having_and_agg_order_by() {
-        let docs = example_docs();
-        let sql = compile_semantic_sql(
-            &docs,
-            "SELECT region_code FROM sales GROUP BY region_code",
-            Some("finance"),
-        )
-        .unwrap();
-        let upper = sql.to_ascii_uppercase();
-        assert!(upper.contains("GROUP BY"), "expected GROUP BY in {sql}");
-        assert_select_only(&sql).unwrap();
+#[test]
+fn compiles_dim_only_group_by_and_having_and_agg_order_by() {
+    let docs = example_docs();
+    let sql = compile_semantic_sql(
+        &docs,
+        "SELECT region_code FROM sales GROUP BY region_code",
+        Some("finance"),
+    )
+    .unwrap();
+    let upper = sql.to_ascii_uppercase();
+    assert!(upper.contains("GROUP BY"), "expected GROUP BY in {sql}");
+    assert_select_only(&sql).unwrap();
 
-        let sql_having = compile_semantic_sql(
-            &docs,
-            "SELECT region_code FROM sales WHERE status_code <> 'CANCEL' \
+    let sql_having = compile_semantic_sql(
+        &docs,
+        "SELECT region_code FROM sales WHERE status_code <> 'CANCEL' \
              GROUP BY region_code HAVING COUNT(*) > 20 ORDER BY SUM(sale_amount) DESC LIMIT 1",
-            Some("finance"),
-        )
-        .unwrap();
-        let u2 = sql_having.to_ascii_uppercase();
-        assert!(u2.contains("GROUP BY"), "{sql_having}");
-        assert!(u2.contains("HAVING COUNT(*) > 20"), "{sql_having}");
-        assert!(u2.contains("ORDER BY SUM("), "{sql_having}");
-        assert_select_only(&sql_having).unwrap();
-    }
+        Some("finance"),
+    )
+    .unwrap();
+    let u2 = sql_having.to_ascii_uppercase();
+    assert!(u2.contains("GROUP BY"), "{sql_having}");
+    assert!(u2.contains("HAVING COUNT(*) > 20"), "{sql_having}");
+    assert!(u2.contains("ORDER BY SUM("), "{sql_having}");
+    assert_select_only(&sql_having).unwrap();
+}
 
-    #[test]
-    fn rejects_ungrouped_cube_join_without_distinct_and_allows_distinct_or_grouped() {
-        let docs = docs_with_second_cube("dw");
-        // Non-DISTINCT ungrouped Cube JOIN is rejected to prevent Chasm Trap fan-out.
-        let err = compile_semantic_sql(
-            &docs,
-            "SELECT sales.region_code, sales_b.region_code \
+#[test]
+fn rejects_ungrouped_cube_join_without_distinct_and_allows_distinct_or_grouped() {
+    let docs = docs_with_second_cube("dw");
+    // Non-DISTINCT ungrouped Cube JOIN is rejected to prevent Chasm Trap fan-out.
+    let err = compile_semantic_sql(
+        &docs,
+        "SELECT sales.region_code, sales_b.region_code \
              FROM sales JOIN sales_b ON sales.region_code = sales_b.region_code",
-            Some("finance"),
-        )
-        .unwrap_err();
-        assert!(
-            matches!(err, AppError::Validation(ref m) if m.contains("DISTINCT") || m.contains("fan-out")),
-            "{err:?}"
-        );
+        Some("finance"),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, AppError::Validation(ref m) if m.contains("DISTINCT") || m.contains("fan-out")),
+        "{err:?}"
+    );
 
-        // SELECT DISTINCT ungrouped Cube JOIN is allowed.
-        let distinct_sql = compile_semantic_sql(
-            &docs,
-            "SELECT DISTINCT sales.region_code, sales_b.region_code AS reg_b \
+    // SELECT DISTINCT ungrouped Cube JOIN is allowed.
+    let distinct_sql = compile_semantic_sql(
+        &docs,
+        "SELECT DISTINCT sales.region_code, sales_b.region_code AS reg_b \
              FROM sales JOIN sales_b ON sales.region_code = sales_b.region_code",
-            Some("finance"),
-        )
-        .unwrap();
-        let u = distinct_sql.to_ascii_uppercase();
-        assert!(u.contains("SELECT DISTINCT"), "{distinct_sql}");
-        assert!(u.contains("JOIN"), "{distinct_sql}");
-        assert_select_only(&distinct_sql).unwrap();
+        Some("finance"),
+    )
+    .unwrap();
+    let u = distinct_sql.to_ascii_uppercase();
+    assert!(u.contains("SELECT DISTINCT"), "{distinct_sql}");
+    assert!(u.contains("JOIN"), "{distinct_sql}");
+    assert_select_only(&distinct_sql).unwrap();
 
-        // Explicit GROUP BY Cube JOIN without metrics is also allowed.
-        let grouped_sql = compile_semantic_sql(
-            &docs,
-            "SELECT sales.region_code, sales_b.region_code AS reg_b \
+    // Explicit GROUP BY Cube JOIN without metrics is also allowed.
+    let grouped_sql = compile_semantic_sql(
+        &docs,
+        "SELECT sales.region_code, sales_b.region_code AS reg_b \
              FROM sales JOIN sales_b ON sales.region_code = sales_b.region_code \
              GROUP BY sales.region_code, sales_b.region_code",
-            Some("finance"),
-        )
-        .unwrap();
-        assert!(grouped_sql.to_ascii_uppercase().contains("GROUP BY"), "{grouped_sql}");
-        assert_select_only(&grouped_sql).unwrap();
-    }
+        Some("finance"),
+    )
+    .unwrap();
+    assert!(
+        grouped_sql.to_ascii_uppercase().contains("GROUP BY"),
+        "{grouped_sql}"
+    );
+    assert_select_only(&grouped_sql).unwrap();
+}
 
-    #[test]
-    fn compiles_adhoc_sum_with_group_by() {
-        let docs = example_docs();
-        let sql = compile_semantic_sql(
-            &docs,
-            "SELECT region_code, sum(sale_amount) AS total \
+#[test]
+fn compiles_adhoc_sum_with_group_by() {
+    let docs = example_docs();
+    let sql = compile_semantic_sql(
+        &docs,
+        "SELECT region_code, sum(sale_amount) AS total \
              FROM sales GROUP BY region_code",
-            Some("finance"),
-        )
-        .unwrap();
-        let upper = sql.to_ascii_uppercase();
-        assert!(upper.contains("SUM("), "expected SUM in {sql}");
-        assert!(sql.contains("region_code") || sql.contains("\"region_code\""), "{sql}");
-        assert_select_only(&sql).unwrap();
-    }
+        Some("finance"),
+    )
+    .unwrap();
+    let upper = sql.to_ascii_uppercase();
+    assert!(upper.contains("SUM("), "expected SUM in {sql}");
+    assert!(
+        sql.contains("region_code") || sql.contains("\"region_code\""),
+        "{sql}"
+    );
+    assert_select_only(&sql).unwrap();
+}
 
-    #[test]
-    fn compiles_adhoc_global_aggregate() {
-        let docs = example_docs();
-        let sql = compile_semantic_sql(
-            &docs,
-            "SELECT sum(sale_amount) AS total FROM sales",
-            Some("finance"),
-        )
-        .unwrap();
-        assert!(sql.to_ascii_uppercase().contains("SUM("), "{sql}");
-        assert_select_only(&sql).unwrap();
-    }
+#[test]
+fn compiles_adhoc_global_aggregate() {
+    let docs = example_docs();
+    let sql = compile_semantic_sql(
+        &docs,
+        "SELECT sum(sale_amount) AS total FROM sales",
+        Some("finance"),
+    )
+    .unwrap();
+    assert!(sql.to_ascii_uppercase().contains("SUM("), "{sql}");
+    assert_select_only(&sql).unwrap();
+}
 
-    #[test]
-    fn compiles_mixed_adhoc_aggs_and_rejects_unknown_named_metric() {
-        let docs = example_docs();
-        let sql = compile_semantic_sql(
-            &docs,
-            "SELECT region_code, sum(sale_amount) AS revenue, count(*) AS cnt, \
+#[test]
+fn compiles_mixed_adhoc_aggs_and_rejects_unknown_named_metric() {
+    let docs = example_docs();
+    let sql = compile_semantic_sql(
+        &docs,
+        "SELECT region_code, sum(sale_amount) AS revenue, count(*) AS cnt, \
              sum(sale_amount) / count(*) AS avg_rev, round(sum(sale_amount), 2) AS rev_round \
              FROM sales GROUP BY region_code",
-            Some("finance"),
-        )
-        .unwrap();
-        let upper = sql.to_ascii_uppercase();
-        assert!(upper.contains("SUM("), "{sql}");
-        assert!(upper.contains("COUNT(*)"), "{sql}");
-        assert!(upper.contains("ROUND("), "{sql}");
-        assert_select_only(&sql).unwrap();
+        Some("finance"),
+    )
+    .unwrap();
+    let upper = sql.to_ascii_uppercase();
+    assert!(upper.contains("SUM("), "{sql}");
+    assert!(upper.contains("COUNT(*)"), "{sql}");
+    assert!(upper.contains("ROUND("), "{sql}");
+    assert_select_only(&sql).unwrap();
 
-        // D26: registered metric names are not SQL identifiers.
-        let err = compile_semantic_sql(
-            &docs,
-            "SELECT customer_id, revenue, count(*) AS cnt FROM sales",
-            Some("finance"),
-        )
-        .unwrap_err();
-        assert!(
-            matches!(err, AppError::Validation(ref m) if m.contains("unknown semantic member")),
-            "{err:?}"
-        );
+    // D26: registered metric names are not SQL identifiers.
+    let err = compile_semantic_sql(
+        &docs,
+        "SELECT customer_id, revenue, count(*) AS cnt FROM sales",
+        Some("finance"),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, AppError::Validation(ref m) if m.contains("unknown semantic member")),
+        "{err:?}"
+    );
 
-        let adhoc_ok = compile_semantic_sql(
-            &docs,
-            "SELECT customer_id, count(*) AS cnt FROM sales",
-            Some("finance"),
-        )
-        .unwrap();
-        assert!(adhoc_ok.to_ascii_uppercase().contains("GROUP BY"), "{adhoc_ok}");
-    }
+    let adhoc_ok = compile_semantic_sql(
+        &docs,
+        "SELECT customer_id, count(*) AS cnt FROM sales",
+        Some("finance"),
+    )
+    .unwrap();
+    assert!(
+        adhoc_ok.to_ascii_uppercase().contains("GROUP BY"),
+        "{adhoc_ok}"
+    );
+}
 
-    #[test]
-    fn rejects_adhoc_when_fact_role_denied() {
-        let docs = example_docs();
-        let err = compile_semantic_sql(
-            &docs,
-            "SELECT sum(sale_amount) AS total FROM sales",
-            Some("branch"),
-        )
-        .unwrap_err();
-        assert!(matches!(err, AppError::Forbidden(_)), "{err:?}");
-    }
+#[test]
+fn rejects_adhoc_when_fact_role_denied() {
+    let docs = example_docs();
+    let err = compile_semantic_sql(
+        &docs,
+        "SELECT sum(sale_amount) AS total FROM sales",
+        Some("branch"),
+    )
+    .unwrap_err();
+    assert!(matches!(err, AppError::Forbidden(_)), "{err:?}");
+}
 
-    #[test]
-    fn compiles_adhoc_aggs_in_cube_join_and_filter_only_side() {
-        let docs = docs_with_second_cube("dw");
-        let sql = compile_semantic_sql(
-            &docs,
-            "SELECT sum(sales.sale_amount) AS revenue, sum(sales_b.sale_amount) AS total \
+#[test]
+fn compiles_adhoc_aggs_in_cube_join_and_filter_only_side() {
+    let docs = docs_with_second_cube("dw");
+    let sql = compile_semantic_sql(
+        &docs,
+        "SELECT sum(sales.sale_amount) AS revenue, sum(sales_b.sale_amount) AS total \
              FROM sales JOIN sales_b ON sales.region_code = sales_b.region_code",
-            Some("finance"),
-        )
-        .unwrap();
-        let u = sql.to_ascii_uppercase();
-        assert!(u.contains("JOIN"), "{sql}");
-        assert!(u.contains("SUM("), "{sql}");
-        assert_select_only(&sql).unwrap();
+        Some("finance"),
+    )
+    .unwrap();
+    let u = sql.to_ascii_uppercase();
+    assert!(u.contains("JOIN"), "{sql}");
+    assert!(u.contains("SUM("), "{sql}");
+    assert_select_only(&sql).unwrap();
 
-        // Joined side used only for join/filtering compiles as a grouped subquery.
-        let filter_side_sql = compile_semantic_sql(
-            &docs,
-            "SELECT sum(sales.sale_amount) AS total \
+    // Joined side used only for join/filtering compiles as a grouped subquery.
+    let filter_side_sql = compile_semantic_sql(
+        &docs,
+        "SELECT sum(sales.sale_amount) AS total \
              FROM sales JOIN sales_b ON sales.region_code = sales_b.region_code \
              WHERE sales_b.status_code = 'PAID'",
-            Some("finance"),
-        )
-        .unwrap();
-        assert!(filter_side_sql.to_ascii_uppercase().contains("JOIN"), "{filter_side_sql}");
-        assert_select_only(&filter_side_sql).unwrap();
-    }
+        Some("finance"),
+    )
+    .unwrap();
+    assert!(
+        filter_side_sql.to_ascii_uppercase().contains("JOIN"),
+        "{filter_side_sql}"
+    );
+    assert_select_only(&filter_side_sql).unwrap();
+}
 
-    #[test]
-    fn compiles_adhoc_cube_join() {
-        let docs = docs_with_second_cube("dw");
-        let sql = compile_semantic_sql(
-            &docs,
-            "SELECT sales.region_code, sum(sales.sale_amount) AS a, sum(sales_b.sale_amount) AS b \
+#[test]
+fn compiles_adhoc_cube_join() {
+    let docs = docs_with_second_cube("dw");
+    let sql = compile_semantic_sql(
+        &docs,
+        "SELECT sales.region_code, sum(sales.sale_amount) AS a, sum(sales_b.sale_amount) AS b \
              FROM sales JOIN sales_b ON sales.region_code = sales_b.region_code \
              GROUP BY sales.region_code",
-            Some("finance"),
-        )
-        .unwrap();
-        let u = sql.to_ascii_uppercase();
-        assert!(u.contains("JOIN"), "{sql}");
-        assert!(u.contains("SUM("), "{sql}");
-        assert_select_only(&sql).unwrap();
-    }
+        Some("finance"),
+    )
+    .unwrap();
+    let u = sql.to_ascii_uppercase();
+    assert!(u.contains("JOIN"), "{sql}");
+    assert!(u.contains("SUM("), "{sql}");
+    assert_select_only(&sql).unwrap();
+}
 
-    #[test]
-    fn compiles_scalar_expressions_and_unprojected_order_by() {
-        let docs = example_docs();
-        // Scalar date_trunc in SELECT + GROUP BY by alias + positional ORDER BY
-        let sql_grouped = compile_semantic_sql(
-            &docs,
-            "SELECT date_trunc('month', order_date) AS m, sum(sale_amount) AS total \
+#[test]
+fn compiles_scalar_expressions_and_unprojected_order_by() {
+    let docs = example_docs();
+    // Scalar date_trunc in SELECT + GROUP BY by alias + positional ORDER BY
+    let sql_grouped = compile_semantic_sql(
+        &docs,
+        "SELECT date_trunc('month', order_date) AS m, sum(sale_amount) AS total \
              FROM sales GROUP BY m ORDER BY 2 DESC",
-            Some("finance"),
-        )
-        .unwrap();
-        let ug = sql_grouped.to_ascii_uppercase();
-        assert!(ug.contains("DATE_TRUNC"), "{sql_grouped}");
-        assert!(ug.contains("GROUP BY"), "{sql_grouped}");
-        assert!(ug.contains("ORDER BY 2 DESC"), "{sql_grouped}");
-        assert_select_only(&sql_grouped).unwrap();
+        Some("finance"),
+    )
+    .unwrap();
+    let ug = sql_grouped.to_ascii_uppercase();
+    assert!(ug.contains("DATE_TRUNC"), "{sql_grouped}");
+    assert!(ug.contains("GROUP BY"), "{sql_grouped}");
+    assert!(ug.contains("ORDER BY 2 DESC"), "{sql_grouped}");
+    assert_select_only(&sql_grouped).unwrap();
 
-        // Ungrouped scalar arithmetic in SELECT + unprojected cube member in ORDER BY
-        let sql_ungrouped = compile_semantic_sql(
-            &docs,
-            "SELECT sale_amount * fx_rate AS krw_amount \
+    // Ungrouped scalar arithmetic in SELECT + unprojected cube member in ORDER BY
+    let sql_ungrouped = compile_semantic_sql(
+        &docs,
+        "SELECT sale_amount * fx_rate AS krw_amount \
              FROM sales WHERE status_code = 'PAID' ORDER BY order_date DESC LIMIT 5",
-            Some("finance"),
-        )
-        .unwrap();
-        let uu = sql_ungrouped.to_ascii_uppercase();
-        assert!(!uu.contains("GROUP BY"), "{sql_ungrouped}");
-        assert!(uu.contains("ORDER BY \"ORDERS\".\"ORDER_DATE\" DESC"), "{sql_ungrouped}");
-        assert_select_only(&sql_ungrouped).unwrap();
-    }
+        Some("finance"),
+    )
+    .unwrap();
+    let uu = sql_ungrouped.to_ascii_uppercase();
+    assert!(!uu.contains("GROUP BY"), "{sql_ungrouped}");
+    assert!(
+        uu.contains("ORDER BY \"ORDERS\".\"ORDER_DATE\" DESC"),
+        "{sql_ungrouped}"
+    );
+    assert_select_only(&sql_ungrouped).unwrap();
+}
 
-    #[test]
-    fn sqlite_dialect_compiles_helpers_date_trunc_and_float_division() {
-        let docs = example_docs();
-        let sql = compile_semantic_sql_with_binds(
-            &docs,
-            "SELECT sales.region_code, \
+#[test]
+fn sqlite_dialect_compiles_helpers_date_trunc_and_float_division() {
+    let docs = example_docs();
+    let sql = compile_semantic_sql_with_binds(
+        &docs,
+        "SELECT sales.region_code, \
                     SUM(IIF(status_code = 'PAID', 1, 0)) * 100 / COUNT(*) AS paid_pct, \
                     DIVIDE(SUM(sale_amount), COUNT(*)) AS avg_sale \
              FROM sales \
              WHERE date_trunc('year', order_date) = 2024 AND SUBSTR(order_date, 1, 4) = '2024' \
              GROUP BY sales.region_code",
-            Some("finance"),
-            None,
-            DialectProfile::Sqlite,
-        )
-        .unwrap();
-        assert!(sql.contains("AS REAL)"), "expected REAL cast for SQLite division: {sql}");
-        assert!(sql.contains("NULLIF("), "expected NULLIF from `/` and DIVIDE: {sql}");
-        assert!(
-            sql.contains(r#"CAST(SUBSTR(CAST("orders"."order_date" AS TEXT), 1, 4) AS INTEGER) = 2024"#),
-            "expected integer year comparison rewrite in SQLite: {sql}"
-        );
-        assert_select_only(&sql).unwrap();
-    }
+        Some("finance"),
+        None,
+        DialectProfile::Sqlite,
+    )
+    .unwrap();
+    assert!(
+        sql.contains("AS REAL)"),
+        "expected REAL cast for SQLite division: {sql}"
+    );
+    assert!(
+        sql.contains("NULLIF("),
+        "expected NULLIF from `/` and DIVIDE: {sql}"
+    );
+    assert!(
+        sql.contains(
+            r#"CAST(SUBSTR(CAST("orders"."order_date" AS TEXT), 1, 4) AS INTEGER) = 2024"#
+        ),
+        "expected integer year comparison rewrite in SQLite: {sql}"
+    );
+    assert_select_only(&sql).unwrap();
+}
 
-    #[test]
-    fn raw_division_emit_includes_nullif_without_divide_helper() {
-        let docs = example_docs();
-        let sql = compile_semantic_sql_with_binds(
-            &docs,
-            "SELECT sales.region_code, \
+#[test]
+fn raw_division_emit_includes_nullif_without_divide_helper() {
+    let docs = example_docs();
+    let sql = compile_semantic_sql_with_binds(
+        &docs,
+        "SELECT sales.region_code, \
                     SUM(sale_amount) / COUNT(*) AS avg_sale \
              FROM sales GROUP BY sales.region_code",
-            Some("finance"),
-            None,
-            DialectProfile::Sqlite,
-        )
-        .unwrap();
-        assert!(
-            sql.contains("NULLIF("),
-            "expected engine NULLIF wrap on raw `/`, got: {sql}"
-        );
-        assert!(
-            !sql.to_ascii_lowercase().contains("divide("),
-            "must not require DIVIDE helper, got: {sql}"
-        );
-        assert_select_only(&sql).unwrap();
-    }
+        Some("finance"),
+        None,
+        DialectProfile::Sqlite,
+    )
+    .unwrap();
+    assert!(
+        sql.contains("NULLIF("),
+        "expected engine NULLIF wrap on raw `/`, got: {sql}"
+    );
+    assert!(
+        !sql.to_ascii_lowercase().contains("divide("),
+        "must not require DIVIDE helper, got: {sql}"
+    );
+    assert_select_only(&sql).unwrap();
+}
 
-    #[test]
-    fn compiles_d25_temporal_helpers_in_semantic_select() {
-        let docs = example_docs();
-        let sql_age = compile_semantic_sql_with_binds(
-            &docs,
-            "SELECT YEAR(CURRENT_DATE) - YEAR(order_date) AS age_years, \
+#[test]
+fn compiles_d25_temporal_helpers_in_semantic_select() {
+    let docs = example_docs();
+    let sql_age = compile_semantic_sql_with_binds(
+        &docs,
+        "SELECT YEAR(CURRENT_DATE) - YEAR(order_date) AS age_years, \
                     AVG(DATEDIFF(CURRENT_DATE, order_date)) AS avg_age_days \
              FROM sales GROUP BY YEAR(CURRENT_DATE) - YEAR(order_date)",
-            Some("finance"),
-            None,
-            DialectProfile::Sqlite,
-        )
-        .unwrap();
-        let lower = sql_age.to_ascii_lowercase();
-        assert!(
-            lower.contains("julianday") || lower.contains("substr"),
-            "expected SQLite temporal rewrite, got: {sql_age}"
-        );
-        assert!(
-            lower.contains("current_date"),
-            "expected CURRENT_DATE preserved, got: {sql_age}"
-        );
-        assert_select_only(&sql_age).unwrap();
+        Some("finance"),
+        None,
+        DialectProfile::Sqlite,
+    )
+    .unwrap();
+    let lower = sql_age.to_ascii_lowercase();
+    assert!(
+        lower.contains("julianday") || lower.contains("substr"),
+        "expected SQLite temporal rewrite, got: {sql_age}"
+    );
+    assert!(
+        lower.contains("current_date"),
+        "expected CURRENT_DATE preserved, got: {sql_age}"
+    );
+    assert_select_only(&sql_age).unwrap();
 
-        let sql_extract = compile_semantic_sql_with_binds(
-            &docs,
-            "SELECT EXTRACT(YEAR FROM order_date) AS y, COUNT(*) AS n \
+    let sql_extract = compile_semantic_sql_with_binds(
+        &docs,
+        "SELECT EXTRACT(YEAR FROM order_date) AS y, COUNT(*) AS n \
              FROM sales GROUP BY EXTRACT(YEAR FROM order_date)",
-            Some("finance"),
-            None,
-            DialectProfile::Sqlite,
-        )
-        .unwrap();
-        assert!(
-            sql_extract.contains("strftime('%Y'"),
-            "expected EXTRACT→strftime on SQLite, got: {sql_extract}"
-        );
-        assert_select_only(&sql_extract).unwrap();
+        Some("finance"),
+        None,
+        DialectProfile::Sqlite,
+    )
+    .unwrap();
+    assert!(
+        sql_extract.contains("strftime('%Y'"),
+        "expected EXTRACT→strftime on SQLite, got: {sql_extract}"
+    );
+    assert_select_only(&sql_extract).unwrap();
 
-        let sql_pg = compile_semantic_sql_with_binds(
-            &docs,
-            "SELECT YEAR(order_date) AS y, COUNT(*) AS n FROM sales GROUP BY YEAR(order_date)",
-            Some("finance"),
-            None,
-            DialectProfile::Postgres,
-        )
-        .unwrap();
-        assert!(
-            sql_pg.to_ascii_uppercase().contains("EXTRACT(YEAR FROM"),
-            "expected PG YEAR→EXTRACT, got: {sql_pg}"
-        );
-        assert_select_only(&sql_pg).unwrap();
-    }
+    let sql_pg = compile_semantic_sql_with_binds(
+        &docs,
+        "SELECT YEAR(order_date) AS y, COUNT(*) AS n FROM sales GROUP BY YEAR(order_date)",
+        Some("finance"),
+        None,
+        DialectProfile::Postgres,
+    )
+    .unwrap();
+    assert!(
+        sql_pg.to_ascii_uppercase().contains("EXTRACT(YEAR FROM"),
+        "expected PG YEAR→EXTRACT, got: {sql_pg}"
+    );
+    assert_select_only(&sql_pg).unwrap();
+}
 
-    #[test]
-    fn compiles_adhoc_subqueries_in_select_and_where() {
-        let docs = example_docs();
+#[test]
+fn compiles_adhoc_subqueries_in_select_and_where() {
+    let docs = example_docs();
 
-        let sql = compile_semantic_sql(
+    let sql = compile_semantic_sql(
             &docs,
             "SELECT region_code,              SUM(sale_amount) / (SELECT SUM(sale_amount) FROM sales) AS revenue_ratio              FROM sales              WHERE region_code IN (SELECT region_code FROM sales GROUP BY region_code HAVING SUM(sale_amount) > 1000)              GROUP BY region_code",
             Some("finance"),
         )
         .unwrap();
-        assert!(
-            sql.contains(r#"SUM("orders"."sale_amount")"#),
-            "expected compiled subquery in {sql}"
-        );
-        assert!(
-            sql.contains(r#""orders"."region_code" IN (SELECT"#),
-            "expected compiled IN (SELECT ...) in {sql}"
-        );
-        assert_select_only(&sql).unwrap();
+    assert!(
+        sql.contains(r#"SUM("orders"."sale_amount")"#),
+        "expected compiled subquery in {sql}"
+    );
+    assert!(
+        sql.contains(r#""orders"."region_code" IN (SELECT"#),
+        "expected compiled IN (SELECT ...) in {sql}"
+    );
+    assert_select_only(&sql).unwrap();
 
-        let sql_not = compile_semantic_sql(
+    let sql_not = compile_semantic_sql(
             &docs,
             "SELECT region_code, SUM(sale_amount) AS revenue              FROM sales              WHERE NOT (region_code IN (SELECT region_code FROM sales GROUP BY region_code HAVING SUM(sale_amount) > 1000))              GROUP BY region_code",
             Some("finance"),
         )
         .unwrap();
-        assert!(
-            sql_not.contains(r#"NOT ("orders"."region_code" IN (SELECT"#)
-                || sql_not.contains(r#"NOT "orders"."region_code" IN (SELECT"#),
-            "expected negated subquery in {sql_not}"
-        );
-        assert_select_only(&sql_not).unwrap();
+    assert!(
+        sql_not.contains(r#"NOT ("orders"."region_code" IN (SELECT"#)
+            || sql_not.contains(r#"NOT "orders"."region_code" IN (SELECT"#),
+        "expected negated subquery in {sql_not}"
+    );
+    assert_select_only(&sql_not).unwrap();
 
-        let sql_scalar = compile_semantic_sql(
+    let sql_scalar = compile_semantic_sql(
             &docs,
             "SELECT region_code, (SELECT MAX(sale_amount) FROM sales) AS mx FROM sales GROUP BY region_code",
             Some("finance"),
         )
         .unwrap();
-        assert!(sql_scalar.to_ascii_uppercase().contains("SELECT"), "{sql_scalar}");
-        assert_select_only(&sql_scalar).unwrap();
-    }
+    assert!(
+        sql_scalar.to_ascii_uppercase().contains("SELECT"),
+        "{sql_scalar}"
+    );
+    assert_select_only(&sql_scalar).unwrap();
+}
 
-    #[test]
-    fn compiles_cte_and_derived_from() {
-        let docs = example_docs();
-        let cte_sql = compile_semantic_sql(
+#[test]
+fn compiles_cte_and_derived_from() {
+    let docs = example_docs();
+    let cte_sql = compile_semantic_sql(
             &docs,
             "WITH t AS (SELECT region_code, SUM(sale_amount) AS s FROM sales GROUP BY region_code)              SELECT region_code FROM t WHERE s > 100",
             Some("finance"),
         )
         .unwrap();
-        assert!(cte_sql.to_ascii_uppercase().contains("WITH"), "{cte_sql}");
-        assert_select_only(&cte_sql).unwrap();
+    assert!(cte_sql.to_ascii_uppercase().contains("WITH"), "{cte_sql}");
+    assert_select_only(&cte_sql).unwrap();
 
-        let derived = compile_semantic_sql(
+    let derived = compile_semantic_sql(
             &docs,
             "SELECT region_code FROM (SELECT region_code, SUM(sale_amount) AS s FROM sales GROUP BY region_code) t WHERE s > 100",
             Some("finance"),
         )
         .unwrap();
-        assert!(derived.contains("SELECT"), "{derived}");
-        assert_select_only(&derived).unwrap();
-    }
+    assert!(derived.contains("SELECT"), "{derived}");
+    assert_select_only(&derived).unwrap();
+}
 
-    #[test]
-    fn compiles_window_functions_in_grouped_and_ungrouped_modes() {
-        let docs = example_docs();
+#[test]
+fn compiles_window_functions_in_grouped_and_ungrouped_modes() {
+    let docs = example_docs();
 
-        let sql_named_win = compile_semantic_sql(
+    let sql_named_win = compile_semantic_sql(
             &docs,
             "SELECT region_code, SUM(sale_amount) AS revenue,              RANK() OVER (PARTITION BY region_code ORDER BY SUM(sale_amount) DESC) AS rnk              FROM sales GROUP BY region_code",
             Some("finance"),
         )
         .unwrap();
-        assert!(
-            sql_named_win.contains("RANK() OVER"),
-            "unexpected window SQL: {sql_named_win}"
-        );
-        assert_select_only(&sql_named_win).unwrap();
+    assert!(
+        sql_named_win.contains("RANK() OVER"),
+        "unexpected window SQL: {sql_named_win}"
+    );
+    assert_select_only(&sql_named_win).unwrap();
 
-        let sql_adhoc_win = compile_semantic_sql(
+    let sql_adhoc_win = compile_semantic_sql(
             &docs,
             "SELECT region_code, SUM(sale_amount) / SUM(SUM(sale_amount)) OVER () AS share              FROM sales GROUP BY region_code",
             Some("finance"),
         )
         .unwrap();
-        assert!(
-            sql_adhoc_win.contains("NULLIF(")
-                && sql_adhoc_win.contains(r#"SUM("orders"."sale_amount")"#)
-                && sql_adhoc_win.contains(r#"SUM(SUM("orders"."sale_amount")) OVER ()"#),
-            "unexpected ad-hoc share window SQL (expect safe `/`): {sql_adhoc_win}"
-        );
-        assert_select_only(&sql_adhoc_win).unwrap();
+    assert!(
+        sql_adhoc_win.contains("NULLIF(")
+            && sql_adhoc_win.contains(r#"SUM("orders"."sale_amount")"#)
+            && sql_adhoc_win.contains(r#"SUM(SUM("orders"."sale_amount")) OVER ()"#),
+        "unexpected ad-hoc share window SQL (expect safe `/`): {sql_adhoc_win}"
+    );
+    assert_select_only(&sql_adhoc_win).unwrap();
 
-        let sql_ungrouped_win = compile_semantic_sql(
+    let sql_ungrouped_win = compile_semantic_sql(
             &docs,
             "SELECT region_code, sale_amount, ROW_NUMBER() OVER (PARTITION BY region_code ORDER BY sale_amount DESC) AS rn              FROM sales",
             Some("finance"),
         )
         .unwrap();
-        let u = sql_ungrouped_win.to_ascii_uppercase();
-        assert!(!u.contains("GROUP BY"), "ungrouped window query must not have GROUP BY: {sql_ungrouped_win}");
-        assert!(
+    let u = sql_ungrouped_win.to_ascii_uppercase();
+    assert!(
+        !u.contains("GROUP BY"),
+        "ungrouped window query must not have GROUP BY: {sql_ungrouped_win}"
+    );
+    assert!(
             sql_ungrouped_win.contains(r#"ROW_NUMBER() OVER (PARTITION BY "orders"."region_code" ORDER BY "orders"."sale_amount" DESC)"#),
             "unexpected ungrouped window SQL: {sql_ungrouped_win}"
         );
-        assert_select_only(&sql_ungrouped_win).unwrap();
+    assert_select_only(&sql_ungrouped_win).unwrap();
 
-        let err_gb = compile_semantic_sql(
+    let err_gb = compile_semantic_sql(
             &docs,
             "SELECT ROW_NUMBER() OVER (ORDER BY region_code) AS rn, SUM(sale_amount) FROM sales GROUP BY 1",
             Some("finance"),
         )
         .unwrap_err();
+    assert!(
+        err_gb.to_string().contains("GROUP BY"),
+        "expected window function in GROUP BY rejection, got: {err_gb}"
+    );
+}
+
+#[test]
+fn rewrites_literal_existence_projection_and_keeps_star_forbidden() {
+    let docs = example_docs();
+
+    for q in [
+        "SELECT 1 FROM sales",
+        "SELECT true FROM sales",
+        "SELECT TRUE FROM sales",
+        "SELECT 1 AS x FROM sales",
+    ] {
+        let sql = compile_semantic_sql(&docs, q, Some("finance")).unwrap_or_else(|e| {
+            panic!("expected {q} to compile, got: {e}");
+        });
+        // Prefer dim mapped to leaf table pk (customer_id); else dimensions[0] (order_date).
         assert!(
-            err_gb.to_string().contains("GROUP BY"),
-            "expected window function in GROUP BY rejection, got: {err_gb}"
+            sql.contains("customer_id") || sql.contains("order_date"),
+            "expected existence dim projection in {q} => {sql}"
         );
+        assert_select_only(&sql).unwrap();
     }
 
-    #[test]
-    fn rewrites_literal_existence_projection_and_keeps_star_forbidden() {
-        let docs = example_docs();
+    let exists_sql = compile_semantic_sql(
+        &docs,
+        "SELECT region_code FROM sales WHERE EXISTS (SELECT 1 FROM sales WHERE sale_amount > 1000)",
+        Some("finance"),
+    )
+    .unwrap();
+    assert!(
+        exists_sql.to_ascii_uppercase().contains("EXISTS"),
+        "{exists_sql}"
+    );
+    assert_select_only(&exists_sql).unwrap();
 
-        for q in [
-            "SELECT 1 FROM sales",
-            "SELECT true FROM sales",
-            "SELECT TRUE FROM sales",
-            "SELECT 1 AS x FROM sales",
-        ] {
-            let sql = compile_semantic_sql(&docs, q, Some("finance")).unwrap_or_else(|e| {
-                panic!("expected {q} to compile, got: {e}");
-            });
-            // Prefer dim mapped to leaf table pk (customer_id); else dimensions[0] (order_date).
-            assert!(
-                sql.contains("customer_id") || sql.contains("order_date"),
-                "expected existence dim projection in {q} => {sql}"
-            );
-            assert_select_only(&sql).unwrap();
-        }
+    let err_star = compile_semantic_sql(&docs, "SELECT * FROM sales", Some("finance")).unwrap_err();
+    assert!(
+        err_star.to_string().contains("SELECT *"),
+        "expected SELECT * rejection, got: {err_star}"
+    );
+}
 
-        let exists_sql = compile_semantic_sql(
-            &docs,
-            "SELECT region_code FROM sales WHERE EXISTS (SELECT 1 FROM sales WHERE sale_amount > 1000)",
-            Some("finance"),
-        )
-        .unwrap();
-        assert!(
-            exists_sql.to_ascii_uppercase().contains("EXISTS"),
-            "{exists_sql}"
-        );
-        assert_select_only(&exists_sql).unwrap();
-
-        let err_star = compile_semantic_sql(&docs, "SELECT * FROM sales", Some("finance")).unwrap_err();
-        assert!(
-            err_star.to_string().contains("SELECT *"),
-            "expected SELECT * rejection, got: {err_star}"
-        );
-    }
-
-    #[test]
-    fn compiles_ungrouped_scalar_avg_subquery_where_q1457_shape() {
-        let docs = example_docs();
-        let sql = compile_semantic_sql(
+#[test]
+fn compiles_ungrouped_scalar_avg_subquery_where_q1457_shape() {
+    let docs = example_docs();
+    let sql = compile_semantic_sql(
             &docs,
             "SELECT region_code, customer_id FROM sales WHERE sale_amount > (SELECT AVG(sale_amount) FROM sales)",
             Some("finance"),
         )
         .unwrap();
-        assert!(
-            sql.to_ascii_uppercase().contains("AVG")
-                && sql.contains(r#""orders"."sale_amount""#),
-            "unexpected q1457-shaped SQL: {sql}"
-        );
-        assert_select_only(&sql).unwrap();
-    }
+    assert!(
+        sql.to_ascii_uppercase().contains("AVG") && sql.contains(r#""orders"."sale_amount""#),
+        "unexpected q1457-shaped SQL: {sql}"
+    );
+    assert_select_only(&sql).unwrap();
+}
 
-    fn docs_with_non_additive_rate() -> Vec<Value> {
-        let mut docs = example_docs();
-        for d in &mut docs {
-            if d.get("kind").and_then(|v| v.as_str()) == Some("cube")
-                && d.get("name").and_then(|v| v.as_str()) == Some("sales")
-            {
-                d["facts"].as_array_mut().unwrap().push(json!({
-                    "name": "eligible_frpm_rate_k12",
-                    "description": "row rate",
-                    "type": "quantity",
-                    "expression": "sale_amount / fx_rate",
-                    "additive": false,
-                    "encryption": false,
-                    "role": ["finance"]
-                }));
-            }
+fn docs_with_non_additive_rate() -> Vec<Value> {
+    let mut docs = example_docs();
+    for d in &mut docs {
+        if d.get("kind").and_then(|v| v.as_str()) == Some("cube")
+            && d.get("name").and_then(|v| v.as_str()) == Some("sales")
+        {
+            d["facts"].as_array_mut().unwrap().push(json!({
+                "name": "eligible_frpm_rate_k12",
+                "description": "row rate",
+                "type": "quantity",
+                "expression": "sale_amount / fx_rate",
+                "additive": false,
+                "encryption": false,
+                "role": ["finance"]
+            }));
         }
-        docs
     }
+    docs
+}
 
-    #[test]
-    fn compiles_ungrouped_select_and_order_by_non_additive_fact() {
-        let docs = docs_with_non_additive_rate();
+#[test]
+fn compiles_ungrouped_select_and_order_by_non_additive_fact() {
+    let docs = docs_with_non_additive_rate();
+    let sql = compile_semantic_sql(
+        &docs,
+        "SELECT eligible_frpm_rate_k12 FROM sales ORDER BY eligible_frpm_rate_k12 DESC",
+        Some("finance"),
+    )
+    .unwrap();
+    assert!(
+        sql.to_ascii_lowercase().contains("sale_amount")
+            && sql.to_ascii_lowercase().contains("fx_rate"),
+        "expected rate expression in {sql}"
+    );
+    assert_select_only(&sql).unwrap();
+}
+
+#[test]
+fn compiles_min_max_of_non_additive_fact() {
+    let docs = docs_with_non_additive_rate();
+    for agg in ["MAX", "MIN"] {
         let sql = compile_semantic_sql(
             &docs,
-            "SELECT eligible_frpm_rate_k12 FROM sales ORDER BY eligible_frpm_rate_k12 DESC",
+            &format!("SELECT {agg}(eligible_frpm_rate_k12) FROM sales"),
             Some("finance"),
         )
         .unwrap();
         assert!(
-            sql.to_ascii_lowercase().contains("sale_amount")
-                && sql.to_ascii_lowercase().contains("fx_rate"),
-            "expected rate expression in {sql}"
+            sql.to_ascii_uppercase().contains(agg),
+            "expected {agg} in {sql}"
         );
         assert_select_only(&sql).unwrap();
     }
+}
 
-    #[test]
-    fn compiles_min_max_of_non_additive_fact() {
-        let docs = docs_with_non_additive_rate();
-        for agg in ["MAX", "MIN"] {
-            let sql = compile_semantic_sql(
-                &docs,
-                &format!("SELECT {agg}(eligible_frpm_rate_k12) FROM sales"),
-                Some("finance"),
-            )
-            .unwrap();
-            assert!(
-                sql.to_ascii_uppercase().contains(agg),
-                "expected {agg} in {sql}"
-            );
-            assert_select_only(&sql).unwrap();
-        }
-    }
-
-    #[test]
-    fn rejects_sum_avg_count_of_non_additive_fact() {
-        let docs = docs_with_non_additive_rate();
-        for sql in [
-            "SELECT SUM(eligible_frpm_rate_k12) FROM sales",
-            "SELECT AVG(eligible_frpm_rate_k12) FROM sales",
-            "SELECT COUNT(eligible_frpm_rate_k12) FROM sales",
-        ] {
-            let err = compile_semantic_sql(&docs, sql, Some("finance")).unwrap_err();
-            let msg = err.to_string();
-            assert!(
-                msg.contains("non-additive") || msg.contains("additive"),
-                "expected additive rejection for {sql}, got: {msg}"
-            );
-        }
-        compile_semantic_sql(
-            &docs,
-            "SELECT SUM(sale_amount) FROM sales",
-            Some("finance"),
-        )
-        .unwrap();
-        compile_semantic_sql(&docs, "SELECT COUNT(*) FROM sales", Some("finance")).unwrap();
-    }
-
-    #[test]
-    fn rejects_aggregate_in_cube_member_expression() {
-        let mut docs = example_docs();
-        for d in &mut docs {
-            if d.get("kind").and_then(|v| v.as_str()) == Some("cube")
-                && d.get("name").and_then(|v| v.as_str()) == Some("sales")
-            {
-                d["facts"][0]["expression"] = json!("SUM(sale_amount)");
-                d["facts"][0].as_object_mut().unwrap().remove("column");
-            }
-        }
-        let err = compile_semantic_sql(
-            &docs,
-            "SELECT customer_id FROM sales",
-            Some("finance"),
-        )
-        .unwrap_err();
-        let msg = err.to_string().to_ascii_lowercase();
+#[test]
+fn rejects_sum_avg_count_of_non_additive_fact() {
+    let docs = docs_with_non_additive_rate();
+    for sql in [
+        "SELECT SUM(eligible_frpm_rate_k12) FROM sales",
+        "SELECT AVG(eligible_frpm_rate_k12) FROM sales",
+        "SELECT COUNT(eligible_frpm_rate_k12) FROM sales",
+    ] {
+        let err = compile_semantic_sql(&docs, sql, Some("finance")).unwrap_err();
+        let msg = err.to_string();
         assert!(
-            msg.contains("aggregate") || msg.contains("scalar"),
-            "expected scalar member rejection, got: {err}"
+            msg.contains("non-additive") || msg.contains("additive"),
+            "expected additive rejection for {sql}, got: {msg}"
         );
     }
+    compile_semantic_sql(&docs, "SELECT SUM(sale_amount) FROM sales", Some("finance")).unwrap();
+    compile_semantic_sql(&docs, "SELECT COUNT(*) FROM sales", Some("finance")).unwrap();
+}
+
+#[test]
+fn rejects_aggregate_in_cube_member_expression() {
+    let mut docs = example_docs();
+    for d in &mut docs {
+        if d.get("kind").and_then(|v| v.as_str()) == Some("cube")
+            && d.get("name").and_then(|v| v.as_str()) == Some("sales")
+        {
+            d["facts"][0]["expression"] = json!("SUM(sale_amount)");
+            d["facts"][0].as_object_mut().unwrap().remove("column");
+        }
+    }
+    let err =
+        compile_semantic_sql(&docs, "SELECT customer_id FROM sales", Some("finance")).unwrap_err();
+    let msg = err.to_string().to_ascii_lowercase();
+    assert!(
+        msg.contains("aggregate") || msg.contains("scalar"),
+        "expected scalar member rejection, got: {err}"
+    );
+}

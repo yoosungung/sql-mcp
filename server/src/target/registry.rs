@@ -69,15 +69,9 @@ impl TargetRegistry {
     }
 }
 
-async fn build_target(
-    cfg: &TargetConfig,
-    info: TargetInfo,
-) -> Result<Arc<dyn TargetDb>, AppError> {
+async fn build_target(cfg: &TargetConfig, info: TargetInfo) -> Result<Arc<dyn TargetDb>, AppError> {
     let url = std::env::var(&cfg.url_env).map_err(|_| {
-        AppError::Validation(format!(
-            "missing env {} for target {}",
-            cfg.url_env, cfg.id
-        ))
+        AppError::Validation(format!("missing env {} for target {}", cfg.url_env, cfg.id))
     })?;
     match cfg.engine.as_str() {
         "postgres" => {

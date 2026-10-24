@@ -53,5 +53,8 @@ fn missing_config_names_path_on_stderr() {
         stderr.contains(missing.to_string_lossy().as_ref()),
         "{stderr}"
     );
-    assert!(stderr.contains("SQL_MCP_CONFIG") || stderr.contains("cannot read config"), "{stderr}");
+    assert!(
+        stderr.contains("SQL_MCP_CONFIG") || stderr.contains("cannot read config"),
+        "{stderr}"
+    );
 }

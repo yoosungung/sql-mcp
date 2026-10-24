@@ -28,12 +28,12 @@ timeout_ms = 5000
     ))
     .expect("spawn sql-mcp --stdio");
 
-    let client = ()
-        .serve(transport)
-        .await
-        .expect("stdio initialize handshake");
+    let client = ().serve(transport).await.expect("stdio initialize handshake");
 
-    let tools = client.list_tools(Default::default()).await.expect("list_tools");
+    let tools = client
+        .list_tools(Default::default())
+        .await
+        .expect("list_tools");
     let names: Vec<_> = tools.tools.iter().map(|t| t.name.as_ref()).collect();
     assert!(
         names.iter().any(|n| *n == "list_databases"),

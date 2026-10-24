@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 /// Mask token used when null is undesirable; primary mask is JSON null.
 pub const MASK_TOKEN: &str = "***";

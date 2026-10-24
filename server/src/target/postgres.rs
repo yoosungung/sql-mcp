@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{Column, PgPool, Row, TypeInfo};
 
@@ -329,7 +329,10 @@ mod tests {
             0x09, 0x29, // 2345
             0x1a, 0x2c, // 6700
         ];
-        assert_eq!(decode_pg_numeric_binary(&bytes).as_deref(), Some("12345.67"));
+        assert_eq!(
+            decode_pg_numeric_binary(&bytes).as_deref(),
+            Some("12345.67")
+        );
         assert_eq!(pg_days_to_ymd(0), "2000-01-01");
         assert_eq!(pg_days_to_ymd(9131), "2024-12-31");
         assert_eq!(pg_days_to_ymd(9132), "2025-01-01");

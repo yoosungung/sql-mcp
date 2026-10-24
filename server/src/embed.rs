@@ -181,7 +181,10 @@ mod tests {
     async fn similar_texts_closer() {
         let e = HashEmbedder::new(32);
         let a = e.embed(&[String::from("order_date sales")]).await.unwrap();
-        let b = e.embed(&[String::from("order_date revenue")]).await.unwrap();
+        let b = e
+            .embed(&[String::from("order_date revenue")])
+            .await
+            .unwrap();
         let c = e.embed(&[String::from("zzzz unrelated")]).await.unwrap();
         assert!(cosine(&a[0], &b[0]) > cosine(&a[0], &c[0]));
     }

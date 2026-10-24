@@ -19,9 +19,7 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
             .to_string();
         let slot = by_kind.entry(kind).or_default();
         if slot.insert(name.clone(), doc).is_some() {
-            return Err(AppError::Validation(format!(
-                "duplicate {kind}/{name}"
-            )));
+            return Err(AppError::Validation(format!("duplicate {kind}/{name}")));
         }
     }
 
@@ -32,9 +30,8 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
     let segments = by_kind.get("segment").cloned().unwrap_or_default();
 
     for (name, table) in &tables {
-        let table_target = doc_target(table).ok_or_else(|| {
-            AppError::Validation(format!("table {name}: target missing"))
-        })?;
+        let table_target = doc_target(table)
+            .ok_or_else(|| AppError::Validation(format!("table {name}: target missing")))?;
         if let Some(fks) = table.get("fk").and_then(|v| v.as_array()) {
             for fk in fks {
                 let ref_table = fk
@@ -61,9 +58,8 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
     }
 
     for (name, view) in &views {
-        let view_target = doc_target(view).ok_or_else(|| {
-            AppError::Validation(format!("view {name}: target missing"))
-        })?;
+        let view_target = doc_target(view)
+            .ok_or_else(|| AppError::Validation(format!("view {name}: target missing")))?;
         let combine = view
             .get("combine")
             .and_then(|v| v.as_str())
@@ -95,8 +91,7 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
                 )));
             }
         }
-        let leaf_targets =
-            leaf_table_targets(view, &tables, &views, &mut HashSet::new())?;
+        let leaf_targets = leaf_table_targets(view, &tables, &views, &mut HashSet::new())?;
         for lt in &leaf_targets {
             if *lt != view_target {
                 return Err(AppError::Validation(format!(
@@ -108,14 +103,9 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
             for col in cols {
                 if let Some(mappings) = col.get("mappings").and_then(|v| v.as_array()) {
                     for m in mappings {
-                        let src = m
-                            .get("source")
-                            .and_then(|v| v.as_str())
-                            .ok_or_else(|| {
-                                AppError::Validation(format!(
-                                    "view {name}: mapping.source missing"
-                                ))
-                            })?;
+                        let src = m.get("source").and_then(|v| v.as_str()).ok_or_else(|| {
+                            AppError::Validation(format!("view {name}: mapping.source missing"))
+                        })?;
                         if !source_aliases.contains(src) {
                             return Err(AppError::Validation(format!(
                                 "view {name}: mapping source {src} not in sources"
@@ -128,9 +118,8 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
     }
 
     for (name, cube) in &cubes {
-        let cube_target = doc_target(cube).ok_or_else(|| {
-            AppError::Validation(format!("cube {name}: target missing"))
-        })?;
+        let cube_target = doc_target(cube)
+            .ok_or_else(|| AppError::Validation(format!("cube {name}: target missing")))?;
         let view_name = cube
             .get("view")
             .and_then(|v| v.as_str())
@@ -141,9 +130,8 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
             )));
         }
         let view = views[view_name];
-        let view_target = doc_target(view).ok_or_else(|| {
-            AppError::Validation(format!("view {view_name}: target missing"))
-        })?;
+        let view_target = doc_target(view)
+            .ok_or_else(|| AppError::Validation(format!("view {view_name}: target missing")))?;
         if cube_target != view_target {
             return Err(AppError::Validation(format!(
                 "cube {name}: target {cube_target} != view {view_name} target {view_target}"
@@ -154,12 +142,9 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
         for key in ["dimensions", "facts"] {
             if let Some(items) = cube.get(key).and_then(|v| v.as_array()) {
                 for item in items {
-                    let iname = item
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| {
-                            AppError::Validation(format!("cube {name}: {key} item missing name"))
-                        })?;
+                    let iname = item.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+                        AppError::Validation(format!("cube {name}: {key} item missing name"))
+                    })?;
                     if !dim_fact_names.insert(iname.to_string()) {
                         return Err(AppError::Validation(format!(
                             "cube {name}: duplicate dimension/fact name {iname}"
@@ -213,15 +198,17 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
             .unwrap_or("");
         if aggregation == "group" {
             let view_name = cube.get("view").and_then(|v| v.as_str()).unwrap_or("");
-            let view = views.get(view_name).ok_or_else(|| {
-                AppError::Validation(format!("metric {name}: cube view missing"))
-            })?;
+            let view = views
+                .get(view_name)
+                .ok_or_else(|| AppError::Validation(format!("metric {name}: cube view missing")))?;
             let view_cols = view_column_names(view);
             let group_by = metric
                 .get("group_by")
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| {
-                    AppError::Validation(format!("metric {name}: group_by required for aggregation=group"))
+                    AppError::Validation(format!(
+                        "metric {name}: group_by required for aggregation=group"
+                    ))
                 })?;
             for g in group_by {
                 let gname = g.as_str().ok_or_else(|| {
@@ -272,17 +259,14 @@ fn validate_dim_as_code(
     let code_table = as_code
         .get("table")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            AppError::Validation(format!("cube {cube}.{dim}: as_code.table missing"))
-        })?;
+        .ok_or_else(|| AppError::Validation(format!("cube {cube}.{dim}: as_code.table missing")))?;
     let code_doc = tables.get(code_table).ok_or_else(|| {
         AppError::Validation(format!(
             "cube {cube}.{dim}: as_code unknown table {code_table}"
         ))
     })?;
-    let code_target = doc_target(code_doc).ok_or_else(|| {
-        AppError::Validation(format!("table {code_table}: target missing"))
-    })?;
+    let code_target = doc_target(code_doc)
+        .ok_or_else(|| AppError::Validation(format!("table {code_table}: target missing")))?;
     if code_target != cube_target {
         return Err(AppError::Validation(format!(
             "cube {cube}.{dim}: as_code table {code_table} target {code_target} != cube target {cube_target}"
@@ -313,19 +297,11 @@ fn leaf_table_targets<'a>(
     views: &HashMap<String, &'a Value>,
     visiting: &mut HashSet<String>,
 ) -> Result<HashSet<&'a str>, AppError> {
-    let name = view
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("?");
+    let name = view.get("name").and_then(|v| v.as_str()).unwrap_or("?");
     if !visiting.insert(name.to_string()) {
-        return Err(AppError::Validation(format!(
-            "view {name}: cyclic sources"
-        )));
+        return Err(AppError::Validation(format!("view {name}: cyclic sources")));
     }
-    let combine = view
-        .get("combine")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let combine = view.get("combine").and_then(|v| v.as_str()).unwrap_or("");
     let sources = view
         .get("sources")
         .and_then(|v| v.as_array())
@@ -343,9 +319,8 @@ fn leaf_table_targets<'a>(
             let table = tables.get(catalog).ok_or_else(|| {
                 AppError::Validation(format!("view {name}: unknown source table {catalog}"))
             })?;
-            let t = doc_target(table).ok_or_else(|| {
-                AppError::Validation(format!("table {catalog}: target missing"))
-            })?;
+            let t = doc_target(table)
+                .ok_or_else(|| AppError::Validation(format!("table {catalog}: target missing")))?;
             out.insert(t);
         }
     }

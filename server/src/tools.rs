@@ -8,10 +8,10 @@ use rmcp::model::{
 };
 use rmcp::service::RequestContext;
 use rmcp::{
-    ErrorData as McpError, RoleServer, ServerHandler, schemars, tool, tool_handler, tool_router,
+    schemars, tool, tool_handler, tool_router, ErrorData as McpError, RoleServer, ServerHandler,
 };
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::config::{Config, McpMode};
 use crate::error::AppError;
@@ -232,11 +232,7 @@ impl SqlMcp {
                 "metadata mutation is disabled (SQL_MCP_MODE=query)".into(),
             ));
         }
-        map_result(
-            self.store
-                .update(&args.kind, &args.name, args.body)
-                .await,
-        )
+        map_result(self.store.update(&args.kind, &args.name, args.body).await)
     }
 
     #[tool(description = "Delete a semantic document")]
@@ -419,16 +415,17 @@ impl SqlMcp {
             Ok(s) => s,
             Err(e) => return tool_err(e),
         };
-        let result = match tokio::time::timeout(self.cfg.timeout(), db.execute_select(&sql, limit)).await {
-            Ok(Ok(r)) => r,
-            Ok(Err(e)) => return tool_err(e),
-            Err(_) => {
-                return tool_err(AppError::Connection(anyhow::anyhow!(
-                    "target query timed out after {}ms",
-                    self.cfg.timeout_ms
-                )));
-            }
-        };
+        let result =
+            match tokio::time::timeout(self.cfg.timeout(), db.execute_select(&sql, limit)).await {
+                Ok(Ok(r)) => r,
+                Ok(Err(e)) => return tool_err(e),
+                Err(_) => {
+                    return tool_err(AppError::Connection(anyhow::anyhow!(
+                        "target query timed out after {}ms",
+                        self.cfg.timeout_ms
+                    )));
+                }
+            };
         let encrypted = crate::mask::is_encrypted_member(&docs, &args.table, &args.name);
         let values: Value = if target.from_as_code {
             let rows: Vec<Value> = result
@@ -612,16 +609,19 @@ impl ServerHandler for SqlMcp {
         _context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, McpError> {
         if request.uri.as_str() == DOCUMENT_SCHEMA_URI {
-            return Ok(ReadResourceResult::new(vec![
-                ResourceContents::text(DOCUMENT_SCHEMA_JSON, DOCUMENT_SCHEMA_URI)
-                    .with_mime_type("application/schema+json"),
-            ])
+            return Ok(ReadResourceResult::new(vec![ResourceContents::text(
+                DOCUMENT_SCHEMA_JSON,
+                DOCUMENT_SCHEMA_URI,
+            )
+            .with_mime_type("application/schema+json")])
             .into());
         }
         if let Some((mime, text)) = read_skill_resource(request.uri.as_str()) {
-            return Ok(ReadResourceResult::new(vec![
-                ResourceContents::text(text, request.uri.as_str()).with_mime_type(mime),
-            ])
+            return Ok(ReadResourceResult::new(vec![ResourceContents::text(
+                text,
+                request.uri.as_str(),
+            )
+            .with_mime_type(mime)])
             .into());
         }
         Err(McpError::resource_not_found(
@@ -657,10 +657,7 @@ fn role_visible(role_val: Option<&Value>, caller: Option<&str>) -> bool {
 fn filter_as_expression(filter: Option<&Value>) -> Value {
     match filter {
         None | Some(Value::Null) => Value::Null,
-        Some(Value::Object(o)) => o
-            .get("expression")
-            .cloned()
-            .unwrap_or(Value::Null),
+        Some(Value::Object(o)) => o.get("expression").cloned().unwrap_or(Value::Null),
         Some(Value::String(s)) => json!(s),
         Some(other) => other.clone(),
     }
@@ -758,9 +755,7 @@ mod tests {
     use schemars::schema_for;
 
     use crate::config::{Config, McpMode};
-    use crate::target::{
-        ColumnInfo, QueryResult, TableInfo, TargetDb, TargetInfo, TargetRegistry,
-    };
+    use crate::target::{ColumnInfo, QueryResult, TableInfo, TargetDb, TargetInfo, TargetRegistry};
 
     #[test]
     fn metadata_body_schema_is_object_not_boolean() {
@@ -975,10 +970,7 @@ mod tests {
                 description: "dw".into(),
                 engine: "sqlite".into(),
             },
-            rows: vec![
-                vec![json!("KR")],
-                vec![json!("US")],
-            ],
+            rows: vec![vec![json!("KR")], vec![json!("US")]],
         });
         let mut targets = TargetRegistry::empty();
         targets.insert_for_test(fixed);
@@ -1046,7 +1038,9 @@ mod tests {
         let examples = branch["examples"].as_array().unwrap();
         assert_eq!(examples.len(), 2);
         assert!(
-            examples.iter().any(|e| e["kind"] == "metric" && e["name"] == "revenue"),
+            examples
+                .iter()
+                .any(|e| e["kind"] == "metric" && e["name"] == "revenue"),
             "expected revenue metric example: {examples:?}"
         );
         let paid = examples

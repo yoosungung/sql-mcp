@@ -23,12 +23,10 @@ async fn spawn_server() -> (String, tokio::task::JoinHandle<()>) {
         let store = store.clone();
         let cfg = cfg_arc.clone();
         Arc::new(move || {
-            Ok(SqlMcp::new(
-                store.clone(),
-                TargetRegistry::empty(),
-                (*cfg).clone(),
+            Ok(
+                SqlMcp::new(store.clone(), TargetRegistry::empty(), (*cfg).clone())
+                    .with_mode(sql_mcp::config::McpMode::Author),
             )
-            .with_mode(sql_mcp::config::McpMode::Author))
         }) as Arc<dyn Fn() -> Result<SqlMcp, std::io::Error> + Send + Sync>
     };
 
@@ -113,8 +111,7 @@ async fn initialize_and_metadata_roundtrip() {
     );
 
     let customer: serde_json::Value =
-        serde_json::from_str(include_str!("../../semantic/examples/tables/customer.json"))
-            .unwrap();
+        serde_json::from_str(include_str!("../../semantic/examples/tables/customer.json")).unwrap();
 
     let (status, body) = post_rpc(
         &url,
@@ -234,9 +231,9 @@ async fn document_schema_and_skill_resources_list_and_read() {
     assert_eq!(skill_res["name"], "semantic-register/SKILL.md");
     assert_eq!(skill_res["mimeType"], "text/markdown");
     assert!(
-        resources.iter().any(|r| {
-            r["uri"] == "https://sql-mcp.local/skills/semantic-table-view/SKILL.md"
-        }),
+        resources
+            .iter()
+            .any(|r| { r["uri"] == "https://sql-mcp.local/skills/semantic-table-view/SKILL.md" }),
         "missing table-view skill: {resources:?}"
     );
     assert!(
@@ -246,15 +243,15 @@ async fn document_schema_and_skill_resources_list_and_read() {
         "missing cube-metric-segment skill: {resources:?}"
     );
     assert!(
-        resources.iter().any(|r| {
-            r["uri"] == "https://sql-mcp.local/skills/semantic-from-qa/SKILL.md"
-        }),
+        resources
+            .iter()
+            .any(|r| { r["uri"] == "https://sql-mcp.local/skills/semantic-from-qa/SKILL.md" }),
         "missing from-qa skill: {resources:?}"
     );
     assert!(
-        resources.iter().any(|r| {
-            r["uri"] == "https://sql-mcp.local/skills/semantic-from-eval/SKILL.md"
-        }),
+        resources
+            .iter()
+            .any(|r| { r["uri"] == "https://sql-mcp.local/skills/semantic-from-eval/SKILL.md" }),
         "missing from-eval skill: {resources:?}"
     );
 

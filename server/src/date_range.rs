@@ -198,10 +198,7 @@ pub fn extract_dnf(expr: &str) -> Vec<AndClause> {
     extract_dnf_with_binds(expr, &HashMap::new())
 }
 
-pub fn extract_dnf_with_binds(
-    expr: &str,
-    binds: &HashMap<String, String>,
-) -> Vec<AndClause> {
+pub fn extract_dnf_with_binds(expr: &str, binds: &HashMap<String, String>) -> Vec<AndClause> {
     let expr = substitute_binds(expr, binds);
     let wrapped = format!("SELECT 1 WHERE {expr}");
     let dialect = GenericDialect {};
@@ -415,7 +412,9 @@ mod tests {
     #[test]
     fn find_unresolved_bind_detects_missing_and_ignores_strings_and_casts() {
         assert_eq!(
-            find_unresolved_bind("SELECT \"a\"::text, ':not_a_bind' FROM t WHERE r = :caller_region"),
+            find_unresolved_bind(
+                "SELECT \"a\"::text, ':not_a_bind' FROM t WHERE r = :caller_region"
+            ),
             Some("caller_region".to_string())
         );
         assert_eq!(

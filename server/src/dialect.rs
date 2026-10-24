@@ -10,7 +10,7 @@ use std::ops::ControlFlow;
 
 use sqlparser::ast::{
     BinaryOperator, DateTimeField, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments,
-    Ident, VisitMut, VisitorMut, Value as AstValue,
+    Ident, Value as AstValue, VisitMut, VisitorMut,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
@@ -120,9 +120,9 @@ impl DialectProfile {
     /// Wrap a SELECT so the engine returns at most `max_rows`.
     pub fn wrap_row_limit(self, sql: &str, max_rows: usize) -> String {
         match self {
-            Self::Oracle => format!(
-                "SELECT * FROM ({sql}) _sql_mcp_q FETCH FIRST {max_rows} ROWS ONLY"
-            ),
+            Self::Oracle => {
+                format!("SELECT * FROM ({sql}) _sql_mcp_q FETCH FIRST {max_rows} ROWS ONLY")
+            }
             Self::Postgres | Self::Mysql | Self::Sqlite => {
                 format!("SELECT * FROM ({sql}) AS _sql_mcp_q LIMIT {max_rows}")
             }
@@ -249,7 +249,9 @@ impl VisitorMut for DateTruncRewriter {
                     }
                 }
             }
-            Expr::Extract { field, expr: inner, .. } if self.profile == DialectProfile::Sqlite => {
+            Expr::Extract {
+                field, expr: inner, ..
+            } if self.profile == DialectProfile::Sqlite => {
                 match rewrite_sqlite_extract(field.clone(), inner) {
                     Ok(new_expr) => *expr = new_expr,
                     Err(e) => {
@@ -387,9 +389,7 @@ fn rewrite_now_fn(profile: DialectProfile, func: &Function) -> Result<Expr, AppE
     }
     if let FunctionArguments::List(list) = &func.args {
         if !list.args.is_empty() {
-            return Err(AppError::Validation(
-                "NOW requires zero arguments".into(),
-            ));
+            return Err(AppError::Validation("NOW requires zero arguments".into()));
         }
     }
     match profile {
@@ -428,9 +428,7 @@ fn rewrite_datediff_fn(profile: DialectProfile, func: &Function) -> Result<Expr,
 
 fn rewrite_ymd_fn(profile: DialectProfile, fname: &str, func: &Function) -> Result<Expr, AppError> {
     let FunctionArguments::List(list) = &func.args else {
-        return Err(AppError::Validation(format!(
-            "{fname} requires 1 argument"
-        )));
+        return Err(AppError::Validation(format!("{fname} requires 1 argument")));
     };
     if list.args.len() != 1 {
         return Err(AppError::Validation(format!(
@@ -615,9 +613,8 @@ fn date_trunc_args(func: &Function) -> Result<(String, Expr), AppError> {
     };
     let unit_expr = unnamed_arg_expr(&list.args[0])?;
     let value_expr = unnamed_arg_expr(&list.args[1])?;
-    let unit = string_literal(&unit_expr).ok_or_else(|| {
-        AppError::Validation("date_trunc unit must be a string literal".into())
-    })?;
+    let unit = string_literal(&unit_expr)
+        .ok_or_else(|| AppError::Validation("date_trunc unit must be a string literal".into()))?;
     Ok((unit.to_ascii_lowercase(), value_expr))
 }
 
@@ -771,9 +768,7 @@ mod tests {
             "\"Percent (%) Eligible Free (K-12)\""
         );
         assert_eq!(
-            DialectProfile::Sqlite
-                .quote_ident("Academic Year")
-                .unwrap(),
+            DialectProfile::Sqlite.quote_ident("Academic Year").unwrap(),
             "\"Academic Year\""
         );
         assert!(DialectProfile::Postgres.quote_ident("we\"ird").is_err());
@@ -905,9 +900,7 @@ mod tests {
         );
 
         let d_iso = DialectProfile::Sqlite
-            .emit_physical_sql(
-                r#"SELECT "a" FROM "t" WHERE date_trunc('day', "d") = '2012-08-25'"#,
-            )
+            .emit_physical_sql(r#"SELECT "a" FROM "t" WHERE date_trunc('day', "d") = '2012-08-25'"#)
             .unwrap();
         assert!(
             d_iso.contains(r#"date("d", 'start of day') = '2012-08-25'"#),
@@ -985,7 +978,9 @@ mod tests {
     #[test]
     fn rewrite_d25_temporal_helpers_per_dialect() {
         let year_sql = r#"SELECT YEAR("d") AS "y" FROM "t""#;
-        let pg_year = DialectProfile::Postgres.emit_physical_sql(year_sql).unwrap();
+        let pg_year = DialectProfile::Postgres
+            .emit_physical_sql(year_sql)
+            .unwrap();
         assert!(
             pg_year.to_ascii_uppercase().contains("EXTRACT(YEAR FROM"),
             "expected PG YEAR→EXTRACT, got: {pg_year}"
@@ -1023,7 +1018,9 @@ mod tests {
             mysql_diff.to_ascii_uppercase().contains("DATEDIFF("),
             "expected MySQL DATEDIFF identity, got: {mysql_diff}"
         );
-        let pg_diff = DialectProfile::Postgres.emit_physical_sql(diff_sql).unwrap();
+        let pg_diff = DialectProfile::Postgres
+            .emit_physical_sql(diff_sql)
+            .unwrap();
         let pg_diff_u = pg_diff.to_ascii_uppercase();
         assert!(
             pg_diff_u.contains("CAST(")
@@ -1043,12 +1040,17 @@ mod tests {
         );
 
         let extract_sql = r#"SELECT EXTRACT(YEAR FROM "d") AS "y" FROM "t""#;
-        let lite_ex = DialectProfile::Sqlite.emit_physical_sql(extract_sql).unwrap();
+        let lite_ex = DialectProfile::Sqlite
+            .emit_physical_sql(extract_sql)
+            .unwrap();
         assert!(
-            lite_ex.contains("strftime('%Y'") && lite_ex.to_ascii_uppercase().contains("AS INTEGER"),
+            lite_ex.contains("strftime('%Y'")
+                && lite_ex.to_ascii_uppercase().contains("AS INTEGER"),
             "expected SQLite EXTRACT→strftime, got: {lite_ex}"
         );
-        let pg_ex = DialectProfile::Postgres.emit_physical_sql(extract_sql).unwrap();
+        let pg_ex = DialectProfile::Postgres
+            .emit_physical_sql(extract_sql)
+            .unwrap();
         assert!(
             pg_ex.to_ascii_uppercase().contains("EXTRACT(YEAR FROM"),
             "expected PG EXTRACT identity, got: {pg_ex}"

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sqlx::mysql::MySqlPoolOptions;
 use sqlx::{Column, MySqlPool, Row, TypeInfo};
 

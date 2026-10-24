@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::compile::{
     apply_binds, check_role_access, collect_table_filters, physical_from, resolve_dim_as_code,
@@ -55,9 +55,8 @@ fn resolve_sample_target_inner(
     if enforce_rbac {
         check_role_access(cube.get("role"), role)?;
     }
-    let member_doc = find_cube_member(cube, member).ok_or_else(|| {
-        AppError::NotFound(format!("cube {cube_name} has no member {member}"))
-    })?;
+    let member_doc = find_cube_member(cube, member)
+        .ok_or_else(|| AppError::NotFound(format!("cube {cube_name} has no member {member}")))?;
     if enforce_rbac {
         check_role_access(member_doc.get("role"), role)?;
     }
@@ -385,7 +384,10 @@ mod tests {
         )
         .unwrap();
         let w = t.where_extra.as_deref().unwrap();
-        assert!(w.contains("region_code = 'KR'"), "expected resolved permission filter in {w}");
+        assert!(
+            w.contains("region_code = 'KR'"),
+            "expected resolved permission filter in {w}"
+        );
         assert!(w.contains("CANCELLED"), "expected default_filter in {w}");
     }
 }

@@ -24,9 +24,7 @@ On failure, stderr shows the path/env that failed and a short hint. Full setup: 
 
 /// True if argv contains `-h` or `--help`.
 pub fn wants_help(args: impl IntoIterator<Item = String>) -> bool {
-    args.into_iter()
-        .skip(1)
-        .any(|a| a == "-h" || a == "--help")
+    args.into_iter().skip(1).any(|a| a == "-h" || a == "--help")
 }
 
 /// First unrecognized flag (leading `-`), if any. `--stdio` / help are known.

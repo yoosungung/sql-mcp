@@ -37,11 +37,7 @@ pub trait TargetDb: Send + Sync {
         schema: Option<&str>,
         table: &str,
     ) -> Result<Vec<ColumnInfo>, AppError>;
-    async fn execute_select(
-        &self,
-        sql: &str,
-        max_rows: usize,
-    ) -> Result<QueryResult, AppError>;
+    async fn execute_select(&self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError>;
     async fn sample_column(
         &self,
         schema: Option<&str>,

@@ -2,7 +2,7 @@
 //! Serves `skills/list` and `skills/get` over the same skill files as Resources.
 
 use include_dir::{Dir, File};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::skill_resources::{SKILLS_DIR, SKILLS_URI_PREFIX};
@@ -50,12 +50,9 @@ fn all_skill_entries() -> Result<Vec<Value>, String> {
 
 /// Top-level dirs that contain `SKILL.md` (skill roots).
 fn collect_skill_root_names(dir: &Dir<'_>, prefix: &str, out: &mut Vec<String>) {
-    let has_skill_md = dir.files().any(|f| {
-        f.path()
-            .file_name()
-            .and_then(|s| s.to_str())
-            == Some("SKILL.md")
-    });
+    let has_skill_md = dir
+        .files()
+        .any(|f| f.path().file_name().and_then(|s| s.to_str()) == Some("SKILL.md"));
     if has_skill_md && !prefix.is_empty() && !prefix.contains('/') {
         out.push(prefix.to_string());
         return;
@@ -91,9 +88,7 @@ fn skill_entry_for_root(skill_name: &str) -> Result<Value, String> {
         .ok_or_else(|| format!("skill dir missing: {skill_name}"))?;
     let skill_md = dir
         .files()
-        .find(|f| {
-            f.path().file_name().and_then(|s| s.to_str()) == Some("SKILL.md")
-        })
+        .find(|f| f.path().file_name().and_then(|s| s.to_str()) == Some("SKILL.md"))
         .ok_or_else(|| format!("SKILL.md missing: {skill_name}"))?;
     let text = skill_md
         .contents_utf8()
@@ -104,9 +99,7 @@ fn skill_entry_for_root(skill_name: &str) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| format!("frontmatter.name missing: {skill_name}"))?;
     if name != skill_name {
-        return Err(format!(
-            "skill dir {skill_name} != frontmatter.name {name}"
-        ));
+        return Err(format!("skill dir {skill_name} != frontmatter.name {name}"));
     }
     if frontmatter
         .get("description")
@@ -133,12 +126,7 @@ fn skill_entry_for_root(skill_name: &str) -> Result<Value, String> {
     }))
 }
 
-fn collect_skill_resources(
-    dir: &Dir<'_>,
-    skill_name: &str,
-    prefix: &str,
-    out: &mut Vec<Value>,
-) {
+fn collect_skill_resources(dir: &Dir<'_>, skill_name: &str, prefix: &str, out: &mut Vec<Value>) {
     for file in dir.files() {
         push_skill_resource(file, skill_name, prefix, out);
     }
@@ -236,12 +224,7 @@ mod tests {
         assert_eq!(skills.len(), 5);
         let names: std::collections::BTreeMap<_, _> = skills
             .iter()
-            .map(|s| {
-                (
-                    s["frontmatter"]["name"].as_str().unwrap().to_string(),
-                    s,
-                )
-            })
+            .map(|s| (s["frontmatter"]["name"].as_str().unwrap().to_string(), s))
             .collect();
         assert!(names.contains_key("semantic-register"));
         assert!(names.contains_key("semantic-table-view"));
@@ -276,9 +259,7 @@ mod tests {
 
     #[test]
     fn handle_dispatch() {
-        let list = handle_skills_custom("skills/list", None)
-            .unwrap()
-            .unwrap();
+        let list = handle_skills_custom("skills/list", None).unwrap().unwrap();
         assert_eq!(list["skills"].as_array().unwrap().len(), 5);
         let get = handle_skills_custom(
             "skills/get",
@@ -286,10 +267,7 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(
-            get["skill"]["frontmatter"]["name"],
-            "semantic-table-view"
-        );
+        assert_eq!(get["skill"]["frontmatter"]["name"], "semantic-table-view");
         assert!(handle_skills_custom("tools/list", None).is_none());
     }
 }

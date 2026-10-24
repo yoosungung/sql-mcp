@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use oracledb::{Pool, PoolConfig};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::task;
 
 use crate::dialect::DialectProfile;
@@ -120,9 +120,7 @@ impl TargetDb for OracleTarget {
         let pool = Arc::clone(&self.pool);
         let schema = schema.map(|s| s.to_string());
         task::spawn_blocking(move || {
-            let conn = pool
-                .acquire()
-                .map_err(|e| ora_err(e))?;
+            let conn = pool.acquire().map_err(|e| ora_err(e))?;
             let sql = if schema.is_some() {
                 r#"
                 SELECT owner AS table_schema, table_name
@@ -148,12 +146,8 @@ impl TargetDb for OracleTarget {
             for row in cursor {
                 let row = row.map_err(|e| ora_err(e))?;
                 out.push(TableInfo {
-                    schema: row
-                        .get::<String>(0)
-                        .map_err(|e| ora_err(e))?,
-                    name: row
-                        .get::<String>(1)
-                        .map_err(|e| ora_err(e))?,
+                    schema: row.get::<String>(0).map_err(|e| ora_err(e))?,
+                    name: row.get::<String>(1).map_err(|e| ora_err(e))?,
                 });
             }
             Ok(out)
@@ -171,9 +165,7 @@ impl TargetDb for OracleTarget {
         let schema = schema.unwrap_or("").to_string();
         let table = table.to_string();
         task::spawn_blocking(move || {
-            let conn = pool
-                .acquire()
-                .map_err(|e| ora_err(e))?;
+            let conn = pool.acquire().map_err(|e| ora_err(e))?;
             let owner = if schema.is_empty() {
                 conn.query_row("SELECT USER FROM dual", &[])
                     .map_err(|e| ora_err(e))?
@@ -196,16 +188,10 @@ impl TargetDb for OracleTarget {
             let mut out = Vec::new();
             for row in cursor {
                 let row = row.map_err(|e| ora_err(e))?;
-                let nullable: String = row
-                    .get(2)
-                    .map_err(|e| ora_err(e))?;
+                let nullable: String = row.get(2).map_err(|e| ora_err(e))?;
                 out.push(ColumnInfo {
-                    name: row
-                        .get::<String>(0)
-                        .map_err(|e| ora_err(e))?,
-                    data_type: row
-                        .get::<String>(1)
-                        .map_err(|e| ora_err(e))?,
+                    name: row.get::<String>(0).map_err(|e| ora_err(e))?,
+                    data_type: row.get::<String>(1).map_err(|e| ora_err(e))?,
                     nullable: nullable == "Y",
                 });
             }
@@ -236,11 +222,7 @@ impl TargetDb for OracleTarget {
     ) -> Result<Vec<Value>, AppError> {
         let schema = schema.unwrap_or("");
         for ident in [schema, table, column] {
-            if !ident.is_empty()
-                && !ident
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
-            {
+            if !ident.is_empty() && !ident.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
                 return Err(AppError::Validation("invalid identifier".into()));
             }
         }
@@ -263,12 +245,8 @@ impl TargetDb for OracleTarget {
 }
 
 fn run_select(pool: &Pool, sql: &str) -> Result<QueryResult, AppError> {
-    let conn = pool
-        .acquire()
-        .map_err(|e| ora_err(e))?;
-    let cursor = conn
-        .query(sql, &[])
-        .map_err(|e| ora_err(e))?;
+    let conn = pool.acquire().map_err(|e| ora_err(e))?;
+    let cursor = conn.query(sql, &[]).map_err(|e| ora_err(e))?;
     let mut columns: Vec<String> = Vec::new();
     let mut out_rows: Vec<Vec<Value>> = Vec::new();
     for row in cursor {

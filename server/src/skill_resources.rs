@@ -30,7 +30,11 @@ fn collect_files(dir: &Dir<'_>, prefix: &str, out: &mut Vec<Resource>) {
         push_file(file, prefix, out);
     }
     for child in dir.dirs() {
-        let name = child.path().file_name().and_then(|s| s.to_str()).unwrap_or("");
+        let name = child
+            .path()
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
         let child_prefix = if prefix.is_empty() {
             name.to_string()
         } else {
@@ -41,7 +45,11 @@ fn collect_files(dir: &Dir<'_>, prefix: &str, out: &mut Vec<Resource>) {
 }
 
 fn push_file(file: &File<'_>, prefix: &str, out: &mut Vec<Resource>) {
-    let name = file.path().file_name().and_then(|s| s.to_str()).unwrap_or("");
+    let name = file
+        .path()
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
     let rel = if prefix.is_empty() {
         name.to_string()
     } else {
@@ -79,15 +87,21 @@ mod tests {
         let list = list_skill_resources();
         assert!(list.len() >= 4, "got {} resources", list.len());
         let uris: Vec<_> = list.iter().map(|r| r.uri.as_str()).collect();
-        assert!(uris.iter().any(|u| u.ends_with("semantic-register/SKILL.md")));
+        assert!(uris
+            .iter()
+            .any(|u| u.ends_with("semantic-register/SKILL.md")));
         assert!(uris
             .iter()
             .any(|u| u.ends_with("semantic-table-view/SKILL.md")));
         assert!(uris
             .iter()
             .any(|u| u.ends_with("semantic-cube-metric-segment/SKILL.md")));
-        assert!(uris.iter().any(|u| u.ends_with("semantic-from-qa/SKILL.md")));
-        assert!(uris.iter().any(|u| u.ends_with("semantic-from-eval/SKILL.md")));
+        assert!(uris
+            .iter()
+            .any(|u| u.ends_with("semantic-from-qa/SKILL.md")));
+        assert!(uris
+            .iter()
+            .any(|u| u.ends_with("semantic-from-eval/SKILL.md")));
     }
 
     #[test]

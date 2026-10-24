@@ -14,11 +14,11 @@ use crate::expr_guard::{
     assert_scalar_expr, extract_idents,
 };
 
+use super::view_prune::view_physical_expr;
 use super::{
     apply_binds, check_member_role, check_role_access, collect_table_filters, find_doc,
     physical_from, quote_ident, table_column_names, view_column_name_set,
 };
-use super::view_prune::view_physical_expr;
 
 /// Step 7: wrap aggregated SELECT with LEFT JOINs to as_code dictionaries.
 pub fn wrap_as_code_joins(
@@ -29,10 +29,7 @@ pub fn wrap_as_code_joins(
     inner_sql: &str,
     role: Option<&str>,
 ) -> Result<String, AppError> {
-    let pairs: Vec<(String, String)> = dim_names
-        .iter()
-        .map(|d| (d.clone(), d.clone()))
-        .collect();
+    let pairs: Vec<(String, String)> = dim_names.iter().map(|d| (d.clone(), d.clone())).collect();
     wrap_as_code_joins_with_aliases(docs, cube, view, &pairs, inner_sql, role, None)
 }
 
@@ -173,11 +170,13 @@ pub(crate) fn find_dimension<'a>(cube: &'a Value, name: &str) -> Option<&'a Valu
 
 pub(crate) fn find_cube_member<'a>(cube: &'a Value, name: &str) -> Option<&'a Value> {
     find_dimension(cube, name).or_else(|| {
-        cube.get("facts").and_then(|v| v.as_array()).and_then(|items| {
-            items
-                .iter()
-                .find(|item| item.get("name").and_then(|v| v.as_str()) == Some(name))
-        })
+        cube.get("facts")
+            .and_then(|v| v.as_array())
+            .and_then(|items| {
+                items
+                    .iter()
+                    .find(|item| item.get("name").and_then(|v| v.as_str()) == Some(name))
+            })
     })
 }
 
@@ -295,10 +294,7 @@ fn non_additive_fact_names(cube: &Value) -> HashSet<String> {
 }
 
 /// D28: SUM/AVG/COUNT(col) over `additive: false` facts is invalid.
-pub(crate) fn assert_additive_aggregates(
-    select: &Select,
-    cube: &Value,
-) -> Result<(), AppError> {
+pub(crate) fn assert_additive_aggregates(select: &Select, cube: &Value) -> Result<(), AppError> {
     let names = non_additive_fact_names(cube);
     if names.is_empty() {
         return Ok(());
@@ -504,7 +500,10 @@ pub(crate) fn rewrite_member_or_view_idents(
     crate::ast_rewrite::rewrite_idents(&resolved, &map)
 }
 
-pub(crate) fn expr_references_any_metric(expr: &str, rewritten_metrics: &HashMap<String, String>) -> bool {
+pub(crate) fn expr_references_any_metric(
+    expr: &str,
+    rewritten_metrics: &HashMap<String, String>,
+) -> bool {
     if rewritten_metrics.is_empty() {
         return false;
     }
@@ -567,9 +566,7 @@ pub(crate) fn parse_order_by_item(ob: &str) -> Result<sqlparser::ast::OrderByExp
         return Err(AppError::Validation("ORDER BY: missing clause".into()));
     };
     let OrderByKind::Expressions(mut exprs) = order_by.kind else {
-        return Err(AppError::Validation(
-            "ORDER BY ALL is not supported".into(),
-        ));
+        return Err(AppError::Validation("ORDER BY ALL is not supported".into()));
     };
     if exprs.len() != 1 {
         return Err(AppError::Validation(
@@ -783,7 +780,9 @@ pub(crate) fn inject_filter_into_aggregates(
         return Err(AppError::Validation("inject_filter: expected query".into()));
     };
     let SetExpr::Select(sel) = q.body.as_mut() else {
-        return Err(AppError::Validation("inject_filter: expected select".into()));
+        return Err(AppError::Validation(
+            "inject_filter: expected select".into(),
+        ));
     };
     let Some(SelectItem::UnnamedExpr(e)) = sel.projection.get_mut(0) else {
         return Err(AppError::Validation("inject_filter: bad projection".into()));
@@ -814,4 +813,3 @@ pub(crate) fn rewrite_view_idents(
 pub(crate) fn is_ident_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
-

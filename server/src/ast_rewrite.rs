@@ -121,8 +121,7 @@ pub fn rewrite_idents(expr: &str, map: &HashMap<String, String>) -> Result<Strin
     let sqlparser::ast::SetExpr::Select(select) = q.body.as_mut() else {
         return Err(AppError::Validation("rewrite: expected select".into()));
     };
-    let Some(sqlparser::ast::SelectItem::ExprWithAlias { expr, .. }) =
-        select.projection.get_mut(0)
+    let Some(sqlparser::ast::SelectItem::ExprWithAlias { expr, .. }) = select.projection.get_mut(0)
     else {
         // UnnamedExpr path
         match select.projection.get_mut(0) {

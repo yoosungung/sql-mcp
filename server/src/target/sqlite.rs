@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use libsql::{Builder, Connection};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
 use crate::dialect::DialectProfile;
@@ -24,9 +24,7 @@ impl SqliteTarget {
             .build()
             .await
             .map_err(|e| AppError::Connection(e.into()))?;
-        let conn = db
-            .connect()
-            .map_err(|e| AppError::Connection(e.into()))?;
+        let conn = db.connect().map_err(|e| AppError::Connection(e.into()))?;
         if readonly {
             conn.execute("PRAGMA query_only=ON;", ())
                 .await
@@ -105,7 +103,11 @@ impl TargetDb for SqliteTarget {
         {
             // cid, name, type, notnull, dflt_value, pk
             let name: String = row.get(1).map_err(|e| AppError::Connection(e.into()))?;
-            let type_name: String = row.get::<Option<String>>(2).ok().flatten().unwrap_or_default();
+            let type_name: String = row
+                .get::<Option<String>>(2)
+                .ok()
+                .flatten()
+                .unwrap_or_default();
             let notnull: i64 = row.get(3).map_err(|e| AppError::Connection(e.into()))?;
             cols.push(ColumnInfo {
                 name,
@@ -140,11 +142,7 @@ impl TargetDb for SqliteTarget {
             });
         }
         let columns: Vec<String> = (0..col_count)
-            .map(|i| {
-                rows.column_name(i)
-                    .unwrap_or("?")
-                    .to_string()
-            })
+            .map(|i| rows.column_name(i).unwrap_or("?").to_string())
             .collect();
         let mut out_rows = Vec::new();
         while let Some(row) = rows
@@ -182,9 +180,7 @@ impl TargetDb for SqliteTarget {
         let d = DialectProfile::Sqlite;
         let table_q = d.quote_ident(table)?;
         let column_q = d.quote_ident(column)?;
-        let sql = format!(
-            r#"SELECT {column_q} AS v FROM {table_q} WHERE {column_q} IS NOT NULL"#
-        );
+        let sql = format!(r#"SELECT {column_q} AS v FROM {table_q} WHERE {column_q} IS NOT NULL"#);
         let result = self.execute_select(&sql, limit).await?;
         Ok(result
             .rows
@@ -196,9 +192,9 @@ impl TargetDb for SqliteTarget {
 
 /// `sqlite:<path>?mode=ro` (sqlx 호환 DSN). `mode=ro`면 `PRAGMA query_only=ON`.
 fn parse_sqlite_url(url: &str) -> Result<(String, bool), AppError> {
-    let rest = url.strip_prefix("sqlite:").ok_or_else(|| {
-        AppError::Validation("sqlite DSN must start with sqlite:".into())
-    })?;
+    let rest = url
+        .strip_prefix("sqlite:")
+        .ok_or_else(|| AppError::Validation("sqlite DSN must start with sqlite:".into()))?;
     let (path, query) = match rest.split_once('?') {
         Some((p, q)) => (p, Some(q)),
         None => (rest, None),
@@ -328,10 +324,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_non_select() {
         let (_dir, t) = sample_db().await;
-        let err = t
-            .execute_select("DELETE FROM hero", 10)
-            .await
-            .unwrap_err();
+        let err = t.execute_select("DELETE FROM hero", 10).await.unwrap_err();
         assert!(matches!(err, AppError::NotSelect), "{err}");
     }
 }
