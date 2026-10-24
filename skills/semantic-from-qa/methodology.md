@@ -23,8 +23,9 @@
 
 - 조인·필터에 쓰인 **물리 컬럼** → 기존 view 컬럼/`mappings`와 대조해 누락 dim·fact 후보
 - WHERE/HAVING의 **비교·AND·재사용 가능한 서브쿼리 필터(`IN (SELECT …)`/`EXISTS (SELECT …)`)** → segment 후보 (식별자를 cube 멤버명으로 번역)
-- SELECT의 **집계·비율·윈도우 연산** (`sum`/`count`/`avg`, `OVER (...)`, 비율 서브쿼리 등) → metric `expression` 초안
-- CASE/IIF의 **반복 분기 키** → code dimension 또는 segment 분열 힌트
+- SELECT의 **그룹 집계·비율·윈도우** (`SUM(a)/SUM(b)`, `OVER (...)`) → metric `expression` 초안(D26 examples)
+- 행 그레인 비율(`col_a / col_b`를 SELECT/ORDER BY) → fact `expression` + `additive: false`(D28)
+- CASE/IIF의 **반복 분기 키** → flag/code dimension. 에이전트가 `WHERE name`을 쓰면 segment 이름 대신 flag dim
 
 금지:
 

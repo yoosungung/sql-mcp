@@ -43,9 +43,10 @@ agent가 실패인데 컴파일 테이블은 gold와 같으면, 표면이 질문
 | 신호 | 승격 | 금지 |
 |------|------|------|
 | `X refers to Y` / 코드 리터럴 | 해당 dim/fact `description` | 생성 출처(`from table.col`) |
-| 이름 붙은 비율·합 | metric `expression` (`(a)/(b)`, `DIVIDE` 별칭) | 같은 식을 fact 컬럼으로 추가 |
-| YEAR/나이/날짜 잘림이 **축** | dimension `expression` (`EXTRACT`, `date_trunc`, `DATEDIFF`) | 물리 별칭 `T1` |
-| 여러 질문에 재등장하는 코호트 | segment `filter` (cube 멤버 이름) | 질문마다 다른 사람 이름 |
+| 행 그레인 비율 (`SELECT`/`ORDER BY` 이름) | fact `expression` + `additive: false` | 같은 이름을 metric에도 쓰기; `SUM(rate)` |
+| 그룹 `SUM(a)/SUM(b)` KPI | metric `expression` (`examples`만, D26) | 행 비율 fact와 동명 |
+| YEAR/나이/날짜 잘림이 **축** | dimension `expression` (`EXTRACT`, `date_trunc`, `DATEDIFF`) | 물리 별칭 `T1`; 집계를 dim expression에 |
+| 에이전트가 `WHERE name`을 쓰는 코호트 | flag dim (`IIF`/`CASE`) | 질문마다 다른 사람 이름. segment 이름을 SQL 식별자로 |
 | full name = 두 컬럼 | 두 dim description | concat dim (결과 열 수가 바뀜) |
 | 미생성 SQL / 파서 오해 | cube `description` + 유효 시맨틱 SELECT 스니펫 | 물리 테이블명을 cube 식에 |
 

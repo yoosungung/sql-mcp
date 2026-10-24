@@ -690,6 +690,9 @@ fn project_dim_fact_members(
                     }
                 }
             }
+            if !include_as_code && m.get("additive").and_then(|v| v.as_bool()) == Some(false) {
+                out["additive"] = json!(false);
+            }
             out
         })
         .collect()

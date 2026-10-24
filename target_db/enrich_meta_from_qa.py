@@ -502,22 +502,26 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
         "cube_descriptions": {
             "tox_molecule": (
                 "One row per molecule. Copy: SELECT molecule_id, label FROM tox_molecule. "
-                "Use for label ('+' carcinogenic / '-' non-carcinogenic) only."
+                "Use for label ('+' carcinogenic / '-' non-carcinogenic) only. "
+                "Never JOIN tox_atom or tox_bond for label-only. Atom counts are tox_atom; bonds are tox_bond."
             ),
             "tox_atom": (
                 "One row per atom. Copy: SELECT atom_id, element FROM tox_atom. "
-                "Never FROM tox_connected for atom-only counts. "
-                "Element codes are lowercase ('c','o','h','f','cl'). Molecule label is available; do not join bond."
+                "Atom counts and element lists: this cube only. Never JOIN tox_connected or tox_bond. "
+                "Element codes are lowercase ('c','o','h','f','cl'). "
+                "Molecule label is on this cube; do not join tox_molecule for a single-molecule filter."
             ),
             "tox_bond": (
                 "One row per bond. Copy: SELECT bond_id, bond_type FROM tox_bond. "
-                "Never FROM tox_connected for bond-only counts. "
-                "bond_type '-' single, '=' double, '#' triple. Molecule label available; do not join atom/connected."
+                "Bond-type counts and percentages: this cube only (molecule_id is already here). "
+                "Never JOIN tox_molecule, tox_atom, or tox_connected. "
+                "bond_type '-' single, '=' double, '#' triple."
             ),
             "tox_connected": (
                 "One row per atom-bond connection. Copy: SELECT atom_id, atom_id2, bond_id FROM tox_connected. "
+                "Use only when both atom_id and atom_id2 are needed (bridge). "
                 "Never FROM tox_connected for atom-only or bond-only (use tox_atom / tox_bond). "
-                "Not a molecule-grain cube."
+                "Not a molecule-grain cube. Ungrouped cube JOIN is rejected."
             ),
         },
         "descriptions": {
@@ -628,17 +632,22 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
                 "One row per patient. Copy: SELECT ID, Birthday, SEX FROM throm_patient. "
                 "Identifier is Birthday (not birthday / BIRTHDAY). "
                 "Age = DATEDIFF or EXTRACT(YEAR FROM …) - birth_year. "
+                "Birthday/sex/Admission: this cube only. Never JOIN throm_laboratory or throm_examination. "
                 "Laboratory (T_CHO, GLU, PLT) is throm_laboratory; KCT/Symptoms/Thrombosis is throm_examination."
             ),
             "throm_laboratory": (
                 "One lab draw per patient-date. Copy: SELECT ID, T_CHO, GLU, PLT FROM throm_laboratory. "
+                "Blood markers (T_CHO, GLU, PLT, GPT, CPK, RNP) and lab Date: this cube only. "
+                "Never JOIN throm_examination or throm_patient. "
                 "KCT/Symptoms/Thrombosis are throm_examination. Ungrouped cube JOIN is rejected. "
                 "Abnormal platelets: PLT<=100 OR PLT>=400; abnormal IGM: IGM<=40 OR IGM>=400; high GPT: GPT>=60."
             ),
             "throm_examination": (
                 "One examination per patient. Copy: SELECT ID, KCT, Symptoms, Thrombosis FROM throm_examination. "
+                "KCT/Symptoms/Thrombosis: this cube only. Never JOIN throm_laboratory or throm_patient. "
                 "KCT/RVVT/LAC live here (not laboratory). Thrombosis: 2=severe, 1=most serious. "
-                "Diagnosis on this cube is examination diagnosis; patient diagnosis is Patient_Diagnosis."
+                "Diagnosis on this cube is examination diagnosis; patient diagnosis is Patient_Diagnosis. "
+                "Ungrouped cube JOIN is rejected."
             ),
         },
         "descriptions": {
@@ -871,12 +880,14 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
         "cube_descriptions": {
             "schools_frpm": (
                 "One FRPM row with school attributes. Copy: SELECT CDSCode, Enrollment_K_12 FROM schools_frpm. "
-                "SAT-only questions: FROM schools_sat. Ungrouped cube JOIN is rejected. "
+                "FRPM eligibility and enrollment: this cube only. Never JOIN schools_sat. "
+                "SAT scores and test takers are schools_sat. Ungrouped cube JOIN is rejected. "
                 "Row rates are facts eligible_frpm_rate_k12 / eligible_free_rate_k12 (not additive)."
             ),
             "schools_sat": (
                 "One SAT score row with school attributes. Copy: SELECT cds, NumTstTakr, NumGE1500 FROM schools_sat. "
-                "FRPM-only questions: FROM schools_frpm. Ungrouped cube JOIN is rejected. "
+                "SAT scores, test takers, and school address: this cube only. Never JOIN schools_frpm. "
+                "FRPM eligibility/enrollment is schools_frpm. Ungrouped cube JOIN is rejected. "
                 "Row excellence_rate is a non-additive fact. Address is Street, City, State, Zip (four columns)."
             ),
         },
@@ -1510,21 +1521,26 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
             "club_event": (
                 "One event. Copy: SELECT event_id, event_name, type FROM club_event. "
                 "cost is on club_expense; amount is on club_income or club_budget — never FROM club_event for money. "
-                "`type` is event type (Meeting, etc.). Attendance is club_attendance."
+                "Never JOIN club_expense for type/location. Attendance counts: club_attendance. "
+                "`type` is event type (Meeting, etc.). Ungrouped cube JOIN is rejected."
             ),
             "club_attendance": (
                 "One attendance link (event × member). Copy: SELECT event_id, member_id FROM club_attendance. "
-                "Full name = first_name AND last_name."
+                "Headcount/who attended: this cube only. Never JOIN club_expense (cost is club_expense). "
+                "Full name = first_name AND last_name. Ungrouped cube JOIN is rejected."
             ),
             "club_budget": (
                 "One budget line for an event. Copy: SELECT event_name, category, amount, spent FROM club_budget. "
+                "Spend-to-budget is this cube only (spent/amount). Never JOIN club_event. "
                 "`category` is budget category (Food); `event_status` is budget/event status (Closed); "
-                "`type` is the event type."
+                "`type` is the event type. Ungrouped cube JOIN is rejected."
             ),
             "club_expense": (
                 "One expense. Copy: SELECT expense_description, cost FROM club_expense. "
-                "`approved` True/False. Full name = first_name AND last_name. "
-                "Do not pull income into expense queries."
+                "Total/event cost: this cube only. Never JOIN club_event or club_attendance. "
+                "event_name is already on this cube. `approved` True/False. "
+                "Full name = first_name AND last_name. Do not pull income into expense queries. "
+                "Ungrouped cube JOIN is rejected."
             ),
             "club_income": (
                 "One income row linked to a member (not an event). "

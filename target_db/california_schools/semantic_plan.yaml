@@ -1,0 +1,10 @@
+# Fact hubs for generate_meta (change_semantic.md §4.3 / §4.6).
+hubs:
+  - table: frpm
+    cube: schools_frpm
+    dimensions:
+      - schools
+  - table: satscores
+    cube: schools_sat
+    dimensions:
+      - schools

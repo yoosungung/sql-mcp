@@ -126,6 +126,66 @@ mod tests {
         ));
     }
 
+    fn identity_view_json() -> Value {
+        json!({
+            "kind": "view",
+            "name": "tox_molecule_view",
+            "target": "toxicology",
+            "combine": "join",
+            "sources": [{"kind": "table", "table": "molecule"}],
+            "joins": [],
+            "columns": [{
+                "name": "molecule_id",
+                "mappings": [{"source": "molecule", "column": "molecule_id"}]
+            }]
+        })
+    }
+
+    #[test]
+    fn accepts_identity_join_view_one_source() {
+        validate_document(&identity_view_json()).unwrap();
+    }
+
+    #[test]
+    fn rejects_two_source_join_view_without_joins() {
+        let mut body = identity_view_json();
+        body["sources"] = json!([
+            {"kind": "table", "table": "molecule"},
+            {"kind": "table", "table": "atom"}
+        ]);
+        assert!(
+            matches!(validate_document(&body), Err(AppError::Validation(_))),
+            "two-source join view must require joins"
+        );
+    }
+
+    #[test]
+    fn accepts_non_additive_expression_fact() {
+        let body = json!({
+            "kind": "cube",
+            "name": "sales",
+            "target": "dw",
+            "view": "orders_customer",
+            "description": "",
+            "dimensions": [{
+                "name": "order_date",
+                "description": "",
+                "type": "date",
+                "column": "order_date",
+                "encryption": false
+            }],
+            "facts": [{
+                "name": "eligible_frpm_rate_k12",
+                "description": "row rate",
+                "type": "quantity",
+                "expression": "sale_amount / fx_rate",
+                "additive": false,
+                "encryption": false
+            }]
+        });
+        validate_document(&body).unwrap();
+    }
+
     #[test]
     fn rejects_physical_ident_with_quote_or_semicolon() {
         let mut body = json!({

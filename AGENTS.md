@@ -19,7 +19,8 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
 | `.github/workflows/ci.yml` | CI: PR/push `cargo test -p sql-mcp --locked` | `.github/workflows/` |
 | `.github/workflows/cd.yml` | CD: master CI 성공 후 linux/windows/macos release → GitHub Release `current` | `.github/workflows/` |
 | `deploy/k8s/base/` | Kustomize 베이스 | `deploy/k8s/base/` |
-| `target_db/README.md` | BIRD Mini-Dev SQLite 로컬 타깃 + Q-SQL(`bird_qa/`) · meta JSON · `semantic_plan.yaml` 허브 · `semantic-map.md` 생성 | `target_db/` |
+| `target_db/README.md` | BIRD Mini-Dev SQLite 로컬 타깃 + Q-SQL(`bird_qa/`) · meta JSON · `semantic-map.md` 생성 | `target_db/` |
+| `target_db/<db>/semantic_plan.yaml` | 허브(팩트) 정본 — `generate_meta`가 이 목록만 view+cube로 만듦 (`{db}_all` 없음). git 추적 | `target_db/` |
 | `client/DESIGN.md` · `client/README.md` | LangChain v1 `create_agent` + sql-mcp 예제 (BIRD 질문) | `client/` |
 | `client/docs/eval_report.md` · `client/docs/eval.md` | BIRD eval **요약** / **문항별**(Gold SQL·rows vs Agent SQL·rows) | `client/docs/` |
 | `server/spec.md` | 시맨틱 SQL 6단계 컴파일·타입별 `meta_*` 상세 | `server/` |
@@ -45,4 +46,4 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
  
 ## 3. Status
  
-M0–M5 완료 + **D26:** metric/segment는 cube 컬럼이 아님(`describe_table.examples`만) · `execute_sql`은 dim/fact ad-hoc · 읽기 ANSI SELECT(서브쿼리·CTE·윈도우·집합연산) · FROM `cube.physical`/`AS alias`는 첫 식별자를 큐브로 라우팅. **D27:** 리터럴-only 프로젝션 → existence dim rewrite · `SELECT *` 거절. 타입별 `meta_*` · 요약뷰/join·union pruning · 전 계층 RBAC · transport=HTTP+stdio. table/view/cube `target` · DW 표면 `list_databases`/`list_tables`/`describe_table`=cube(D20) · `search_columns`는 dim/fact만. 타깃: Postgres·MySQL·SQLite·Oracle. **D21** DialectProfile · **D22** physical_ident · **D23** Grouped/Ungrouped · **D24** metric `group_by`=기본 grain(allowlist 폐기) · **D25** 표준 날짜 편의(`CURRENT_DATE`/`NOW`/`DATEDIFF`/`EXTRACT`). 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 파이프라인 [server/spec.md](server/spec.md).
+M0–M5 완료 + **D26:** metric/segment는 cube 컬럼이 아님(`describe_table.examples`만) · `execute_sql`은 dim/fact ad-hoc · 읽기 ANSI SELECT(서브쿼리·CTE·윈도우·집합연산) · FROM `cube.physical`/`AS alias`는 첫 식별자를 큐브로 라우팅. **D27:** 리터럴-only 프로젝션 → existence dim rewrite · `SELECT *` 거절. **D28:** dim/fact `expression`=스칼라 · fact `additive: false`는 SUM/AVG/COUNT(col) 거절. 타입별 `meta_*` · 요약뷰/join·union pruning · 전 계층 RBAC · transport=HTTP+stdio. table/view/cube `target` · DW 표면 `list_databases`/`list_tables`/`describe_table`=cube(D20) · `search_columns`는 dim/fact만. 타깃: Postgres·MySQL·SQLite·Oracle. **D21** DialectProfile · **D22** physical_ident · **D23** Grouped/Ungrouped · **D24** metric `group_by`=기본 grain(allowlist 폐기) · **D25** 표준 날짜 편의(`CURRENT_DATE`/`NOW`/`DATEDIFF`/`EXTRACT`). 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 파이프라인 [server/spec.md](server/spec.md).

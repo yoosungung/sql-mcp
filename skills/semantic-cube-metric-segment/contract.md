@@ -39,7 +39,7 @@
 
 - `description` 필드 필수, **내용**은 메타 사용용(검색·동의어·업무 의미). 없으면 `""`. 생성 출처(`from {table}.{column}` 등) 금지. 동명 컬럼 구분은 `name` 접두·view 매핑으로 하고 description에 물리 출처를 쓰지 않는다.
 - `type`: `code` | `date` | `time` | `datetime` | `string`
-- `column`(view 컬럼) **또는** `expression`(view 컬럼명을 쓰는 스칼라) — 둘 중 하나만
+- `column`(view 컬럼) **또는** `expression`(view 컬럼명을 쓰는 **스칼라**, 집계 금지 D28) — 둘 중 하나만
 - `encryption`, `role`
 - 선택 `as_code`: `{ table, key_column, value_column, where? }` 코드사전(집계 후 바깥에서 `LEFT JOIN`하여 `{dim}__value` 컬럼을 **추가 프로젝션**함; 주의: `{dim}` 조회 시 반환 컬럼 수가 늘어나며 WHERE에서 `{dim}__value` 직접 필터링은 불가하므로, 값 자체로 WHERE 필터링하거나 반환 컬럼 수를 유지해야 하는 룩업은 `view.joins`의 룩업/역할 테이블 조인으로 노출하는 것이 유리함)
 
@@ -47,7 +47,8 @@
 
 - `description` 필드 필수, **내용**은 메타 사용용(단위·업무 의미). 없으면 `""`. 생성 출처 금지.
 - `type`: `amount` | `fx` | `quantity` (취급 방식 — dim `type`과 같은 축)
-- `column` XOR `expression`
+- `column` XOR `expression` (`expression`은 스칼라만, D28)
+- `additive`: 기본 `true`. `false`는 행 그레인 비율 등 비가산 — `SUM`/`AVG`/`COUNT(col)` 거절, ungrouped `SELECT`/`WHERE`/`ORDER BY`/`MIN`/`MAX` 허용
 - `encryption`, `role`
 
 `expression`으로 만든 dimension/fact는 **저장 시** view 컬럼 연결 검사를 하지 않는다(식 식별자는 컴파일 단계).
@@ -63,7 +64,7 @@
 | `aggregation` | `group` \| `rollup` \| `cube` \| `grouping_sets` |
 | `group_by` | `aggregation=group`일 때 필수: 명명 metric을 컴파일할 때 축이 없으면 쓰는 **기본 GROUP BY 축**(view 컬럼 배열, D24). 허용목록이 아니다. `execute_sql`은 metric 이름을 쓰지 않으므로(D26) **기본으로 쓰고 싶은 축만** 넣는다. |
 | `filter` | `{ expression }` 또는 `null` |
-| `name` | 같은 cube의 dimension·fact 이름과 **겹치면 안 됨** |
+| `name` | 같은 cube의 dimension·fact 이름과 **겹치면 안 됨**(행 비율 fact와 그룹 KPI metric은 다른 이름) |
 
 ## segment
 

@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS meta_cube_facts (
   expression TEXT,
   encryption INTEGER NOT NULL,
   role_json TEXT NOT NULL DEFAULT '"all"',
+  additive INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (cube_name, name)
 ) STRICT;
 

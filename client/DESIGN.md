@@ -94,6 +94,10 @@ write_eval_md(d, Path('docs/eval.md'), score_doc=s)"
 
 # EX FAIL SQL + execute_sql dry_run 물리 SQL → eval/eval_sql.json
 python write_eval_sql.py --url http://127.0.0.1:8090/mcp
+# 허브 분할 후: FROM {db}를 gold 팩트 허브 큐브로만 바꿔 dry_run (에이전트 재실행 아님)
+python write_eval_sql.py --url http://127.0.0.1:8090/mcp --remap-cubes --output eval/eval_sql.hub.json
+# 등록 큐브 그레인: 컴파일 테이블 ⊆ yaml 허브+차원
+python ../target_db/hub_grain.py --url http://127.0.0.1:8090/mcp
 
 # Cursor/VS Code 디버그 (.vscode/launch.json)
 # - Debug sql-mcp (BIRD)              — :8090

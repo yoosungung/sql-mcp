@@ -40,7 +40,7 @@ Progress:
 - [examples/segments/paid.json](examples/segments/paid.json)
 
 파생·고급 식 예:
-- dimension/fact `expression`: `date_trunc('year', order_date)`, `YEAR(order_date)`, `SUBSTR(order_date, 1, 4)`, `sale_amount * fx_rate`, `a / b`(emit이 0-안전 실수 나눗셈), `IIF(cond, t, f)`
+- dimension/fact `expression`(스칼라만, D28): `date_trunc('year', order_date)`, `YEAR(order_date)`, `SUBSTR(order_date, 1, 4)`, `sale_amount * fx_rate`, 행 비율 `a / b`(`additive: false`), `IIF(cond, t, f)` 플래그. **집계를 dim/fact expression에 넣지 않는다.** 그룹 `SUM(a)/SUM(b)`는 metric.
 - metric `expression` (집계·윈도우·서브쿼리 허용):
   - 기본 집계/비율: `SUM(sale_amount)`, `SUM(IIF(status_code = 'PAID', 1, 0)) * 100 / COUNT(*)`(권장; `DIVIDE(…)`는 호환 별칭)
   - 윈도우 함수: `RANK() OVER (PARTITION BY region_code ORDER BY SUM(sale_amount) DESC)`, `SUM(sale_amount) / SUM(SUM(sale_amount)) OVER ()`

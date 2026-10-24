@@ -8,6 +8,7 @@ target_db/**
 !target_db/**/
 !target_db/**/*.sh
 !target_db/**/*.py
+!target_db/**/semantic_plan.yaml
 !target_db/README.md
 !target_db/env.bird.example
 client/.venv/

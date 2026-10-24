@@ -32,7 +32,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `pipeline/mod` | 엔트리·단일 큐브·집합 연산(UNION/INTERSECT/EXCEPT) 오케스트레이션. FROM `relation_alias_cube`는 첫 식별자를 큐브로 정규화(`cube`·`cube.phys`·`AS alias`) |
 | `pipeline/existence` | **D27** 리터럴-only 프로젝션 → existence dim rewrite (`SELECT *` 불허) |
 | `pipeline/join` | 다중 큐브 JOIN · ON 검증/리라이트 |
-| `pipeline/clauses` | SELECT 프로젝션 분류·adhoc 집계·WHERE 세그먼트·GROUP BY/HAVING/ORDER BY/LIMIT |
+| `pipeline/clauses` | SELECT 프로젝션 분류·adhoc 집계·WHERE 세그먼트·GROUP BY/HAVING/ORDER BY/LIMIT. **D28** 비가산 fact `SUM`/`AVG`/`COUNT(col)` 가드는 `compile/rewrite` |
 | `semantic/typed` | JSON ↔ 타입별 `meta_*` 분해/재조립 |
 | `semantic` | 스키마·연결 검증 · libSQL CRUD · 검색 인덱스 재구축 |
 | `search` | BM25(FTS5) · 벡터 · hybrid(RRF) |

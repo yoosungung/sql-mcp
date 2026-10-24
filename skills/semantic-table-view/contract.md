@@ -35,11 +35,11 @@
 
 ## view
 
-필수: `kind`, `name`, `combine`, `sources`, `columns`. `join`/`union`/`minus`의 `sources`는 **테이블 2개 이상**. 단일 물리 테이블만 있으면 view를 만들지 않고 table만 둔다.
+필수: `kind`, `name`, `combine`, `sources`, `columns`. cube는 view 하나에 연결되므로, 단일 물리 테이블 허브도 **identity view**(`combine: join`, source 1, `joins: []`)로 둔다.
 
 | combine | sources | 추가 |
 |---------|---------|------|
-| `join` | table (≥2) | `joins`(≥1): `left`, `right`, `type`(`inner`/`left`/`right`/`full`), `on[]`(`left_column`, `right_column`) |
+| `join` | table (≥1) | source 1개면 `joins: []`(identity). 2개 이상이면 `joins`(≥1): `left`, `right`, `type`(`inner`/`left`/`right`/`full`), `on[]`(`left_column`, `right_column`) |
 | `union` / `minus` | table | 첫 source가 기준; 각 view 컬럼의 `mappings`가 **모든** source를 가리킴 |
 | `select` | **view** | 선택 `prefer`; 질의에 필요한 컬럼을 모두 가진 source 중 `summary: true` view를 우선. 없으면 나머지. 어느 source도 덮지 못하면 거절 |
 

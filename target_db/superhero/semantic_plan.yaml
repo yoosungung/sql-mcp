@@ -1,0 +1,30 @@
+# Fact hubs for generate_meta (change_semantic.md §4.6 / §6).
+hubs:
+  - table: superhero
+    cube: superhero
+    dimensions:
+      - alignment
+      - gender
+      - publisher
+      - race
+      - colour
+  - table: hero_attribute
+    cube: hero_attribute
+    dimensions:
+      - superhero
+      - attribute
+      - alignment
+      - gender
+      - publisher
+      - race
+      - colour
+  - table: hero_power
+    cube: hero_power
+    dimensions:
+      - superhero
+      - superpower
+      - alignment
+      - gender
+      - publisher
+      - race
+      - colour

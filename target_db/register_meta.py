@@ -7,7 +7,7 @@ view 교체 후 다시 넣는다.
 
 예:
   SQL_MCP_URL=http://127.0.0.1:8090/mcp python3 target_db/register_meta.py
-  python3 target_db/register_meta.py --db superhero
+  python3 target_db/register_meta.py --db superhero --prune
 """
 
 from __future__ import annotations
@@ -23,6 +23,71 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parent
 KIND_ORDER = {"table": 0, "view": 1, "cube": 2, "metric": 3, "segment": 4}
+PRUNE_KINDS = ("segment", "metric", "cube", "view")
+
+
+def _item_target(item: dict, catalog: list[dict]) -> str | None:
+    target = item.get("target")
+    if isinstance(target, str) and target:
+        return target
+    cube_name = item.get("cube")
+    if not isinstance(cube_name, str) or not cube_name:
+        return None
+    for other in catalog:
+        if other.get("kind") == "cube" and other.get("name") == cube_name:
+            t = other.get("target")
+            return t if isinstance(t, str) else None
+    return None
+
+
+def stale_docs_to_prune(catalog: list[dict], local: list[dict]) -> list[dict]:
+    """Catalog docs on local targets that are not in the new meta set.
+
+    Views still referenced by a kept cube are skipped until that cube is updated.
+    Metrics/segments whose catalog cube is itself stale are detached even if the
+    same name exists locally (it will be recreated on the new cube).
+    """
+    local_keys = {
+        (d.get("kind"), d.get("name"))
+        for d in local
+        if d.get("kind") and d.get("name")
+    }
+    targets = {d.get("target") for d in local if isinstance(d.get("target"), str)}
+    stale_cube_names = {
+        c.get("name")
+        for c in catalog
+        if c.get("kind") == "cube"
+        and c.get("name")
+        and ("cube", c.get("name")) not in local_keys
+        and _item_target(c, catalog) in targets
+    }
+    held_views = {
+        c.get("view")
+        for c in catalog
+        if c.get("kind") == "cube"
+        and ("cube", c.get("name")) in local_keys
+        and isinstance(c.get("view"), str)
+    }
+    stale: list[dict] = []
+    for item in catalog:
+        kind = item.get("kind")
+        name = item.get("name")
+        if kind not in PRUNE_KINDS or not name:
+            continue
+        if kind in ("metric", "segment") and item.get("cube") in stale_cube_names:
+            stale.append(item)
+            continue
+        if (kind, name) in local_keys:
+            continue
+        if _item_target(item, catalog) not in targets:
+            continue
+        if kind == "view" and name in held_views:
+            continue
+        stale.append(item)
+    stale.sort(
+        key=lambda d: (PRUNE_KINDS.index(d["kind"]), d.get("name") or "")
+    )
+    return stale
 
 
 def mcp_call(url: str, name: str, arguments: dict) -> dict:
@@ -107,6 +172,24 @@ def delete_doc(url: str, kind: str, name: str, keys: set[tuple[str, str]]) -> No
     print(f"delete {kind}/{name}")
 
 
+def prepare_cube_replace(
+    url: str, cube_name: str, all_items: list[dict], keys: set[tuple[str, str]]
+) -> None:
+    """Detach metrics/segments so metadata_update can replace the cube row."""
+    metrics = [
+        d
+        for d in all_items
+        if d.get("kind") == "metric" and d.get("cube") == cube_name
+    ]
+    segments = [
+        d
+        for d in all_items
+        if d.get("kind") == "segment" and d.get("cube") == cube_name
+    ]
+    for d in segments + metrics:
+        delete_doc(url, d["kind"], d["name"], keys)
+
+
 def prepare_view_replace(
     url: str, view_name: str, all_items: list[dict], keys: set[tuple[str, str]]
 ) -> tuple[list[dict], list[dict], list[dict]]:
@@ -136,6 +219,11 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--url", default=None)
     p.add_argument("--db", help="only this db_id folder under target_db/")
+    p.add_argument(
+        "--prune",
+        action="store_true",
+        help="delete catalog segment/metric/cube/view on the same target that are not in local meta",
+    )
     args = p.parse_args()
     url = args.url or os.environ.get("SQL_MCP_URL") or "http://127.0.0.1:8090/mcp"
 
@@ -184,6 +272,26 @@ def main() -> int:
         except Exception as e:
             print(f"FAIL table/{doc['name']} (fk update): {e}", file=sys.stderr)
             return 1
+
+    def run_prune() -> int:
+        if not args.prune:
+            return 0
+        items_now = list_all(url)
+        n = 0
+        for stale in stale_docs_to_prune(items_now, docs):
+            try:
+                delete_doc(url, stale["kind"], stale["name"], keys)
+                n += 1
+            except Exception as e:
+                print(
+                    f"FAIL prune {stale['kind']}/{stale['name']}: {e}",
+                    file=sys.stderr,
+                )
+                return -1
+        return n
+
+    if run_prune() < 0:
+        return 1
 
     # Pass 2: views (detach dependent cubes first)
     items = list_all(url)
@@ -237,6 +345,8 @@ def main() -> int:
     keys = {(i["kind"], i["name"]) for i in items if i.get("kind") and i.get("name")}
     for doc in ordered:
         try:
+            if doc["kind"] == "cube" and ("cube", doc["name"]) in keys:
+                prepare_cube_replace(url, doc["name"], items, keys)
             op = upsert(url, doc, keys)
             created += op == "create"
             updated += op == "update"
@@ -244,6 +354,11 @@ def main() -> int:
         except Exception as e:
             print(f"FAIL {doc['kind']}/{doc['name']}: {e}", file=sys.stderr)
             return 1
+
+    items = list_all(url)
+    keys = {(i["kind"], i["name"]) for i in items if i.get("kind") and i.get("name")}
+    if run_prune() < 0:
+        return 1
 
     print(f"done: created={created} updated={updated} url={url}")
     return 0

@@ -1,0 +1,29 @@
+# Fact hubs for generate_meta (change_semantic.md §4.4 / §4.6).
+hubs:
+  - table: event
+    cube: club_event
+    dimensions: []
+  - table: attendance
+    cube: club_attendance
+    dimensions:
+      - event
+      - member
+  - table: budget
+    cube: club_budget
+    dimensions:
+      - event
+  - table: expense
+    cube: club_expense
+    dimensions:
+      - budget
+      - event
+      - member
+  - table: income
+    cube: club_income
+    dimensions:
+      - member
+  - table: member
+    cube: club_member
+    dimensions:
+      - zip_code
+      - major

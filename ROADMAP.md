@@ -62,6 +62,7 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 | D25 | 표준 날짜/시간 함수 | **결정: D21 emit 확장.** metric/dimension/filter 식에서 `CURRENT_DATE`·`CURRENT_TIMESTAMP`·`NOW()`·`DATEDIFF(end,start)`(일수)·`EXTRACT(YEAR\|MONTH\|DAY\|HOUR FROM x)` 공식 허용. `YEAR`/`MONTH`/`DAY`는 PG/Oracle도 `EXTRACT`로 rewrite. 산술 `/`는 emit에서 0-안전 실수 나눗셈(`NULLIF`). **비범위:** `DATEADD`/`TIMESTAMPDIFF`/3인자 `DATEDIFF`/임의 interval. 상세 [ARCHITECTURE.md](ARCHITECTURE.md) §5.1 · [server/spec.md](server/spec.md) |
 | D26 | metric/segment DW 표면 · ad-hoc SELECT | **결정:** metric·segment는 cube **컬럼이 아님**. `describe_table`은 expression/filter를 **`examples`로만** 제시하고, `execute_sql`은 명명 metric/segment 식별자를 **해석하지 않음**(에이전트가 dim/fact로 ad-hoc SELECT 작성). `search_columns` 인덱스에서 metric/segment 제외. 시맨틱 SQL은 **읽기 전용 ANSI SELECT 전체** 허용(서브쿼리·읽기 CTE·윈도우·UNION/EXCEPT/INTERSECT 등). FROM `cube.physical`·`AS alias`는 첫 식별자를 큐브로 라우팅. INSERT/UPDATE/DELETE/DDL/다중 문장/쓰기 CTE만 거절. 자유 물리 SELECT 경로 없음(D19). |
 | D27 | 리터럴 existence 프로젝션 | **결정:** `SELECT 1`/`true`/문자열 등 **리터럴-only** 프로젝션은 classify 전에 cube **existence 차원**(leaf `table.pk`에 매핑된 dim, 없으면 `dimensions[0]`)으로 AST rewrite. **`SELECT *`는 거절**(시맨틱 큐브에 all-columns 없음). 스칼라 서브쿼리는 D26 재귀 컴파일 유지(2-query 분할 없음). |
+| D28 | 행 그레인 가상 dim/fact | **결정:** dimension/fact `expression`은 **스칼라만**(`assert_scalar_expr`). 행 파생은 cube expression 멤버. 비가산 비율은 fact `additive: false`(기본 true) — `SUM`/`AVG`/`COUNT(col)` 거절, ungrouped SELECT/WHERE/ORDER BY/MIN/MAX 허용. 그룹 `SUM(a)/SUM(b)`는 metric(D26)이며 fact와 이름을 겹치지 않는다. 코호트 WHERE 식별자는 flag dim(`IIF`/`CASE`). `{db}_all`·질문 1건=멤버 1개 금지. |
 
 (제거: D5 세션형 Streamable HTTP, D10/D11 Frontend. stdio는 로컬용으로 복원)
 
@@ -177,6 +178,12 @@ Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는
 - [x] `SELECT 1`/`true` 등 리터럴-only → existence dim AST rewrite (`pipeline/existence`)
 - [x] `SELECT *` 거절 유지 · `EXISTS (SELECT 1 …)` 경로 · q1457형 Ungrouped AVG 서브쿼리 회귀
 - [x] 계약·스펙·DESIGN · client `SYSTEM` · TDD
+
+### 후속 — 행 그레인 가상 멤버 (D28)
+
+- [x] cube dim/fact `expression` = 스칼라(`assert_scalar_expr`)
+- [x] fact `additive`(기본 true) · grouped `SUM`/`AVG`/`COUNT(col)` 거절 · ungrouped SELECT/ORDER BY 통과
+- [x] 계약·스키마·skills · enrich 승격(행 비율 fact / 나이 dim / flag dim)
 
 ## 구현 시 작업 규칙
 

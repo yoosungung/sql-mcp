@@ -372,6 +372,61 @@ def test_round3_f1_homonym_search_text():
     assert "GROUP BY" in throm_mets["avg_acl_igm"]
 
 
+def test_p1_single_cube_tox_club():
+    """§10 P1: atom/bond/cost는 한 큐브. connected는 atom_id2 브릿지만. JOIN ON 레시피 없음."""
+    tox = DOMAIN_SPECS["toxicology"]["cube_descriptions"]
+    atom, bond, conn, mol = (
+        tox["tox_atom"],
+        tox["tox_bond"],
+        tox["tox_connected"],
+        tox["tox_molecule"],
+    )
+    assert "tox_connected" in atom and "tox_bond" in atom
+    assert "never" in atom.lower()
+    assert "tox_molecule" in bond and "tox_atom" in bond and "tox_connected" in bond
+    assert "never" in bond.lower()
+    assert "atom_id2" in conn
+    assert "tox_atom" in conn and "tox_bond" in conn
+    assert "tox_atom" in mol and "tox_bond" in mol
+    club = DOMAIN_SPECS["student_club"]["cube_descriptions"]
+    exp, ev, att, bud = (
+        club["club_expense"],
+        club["club_event"],
+        club["club_attendance"],
+        club["club_budget"],
+    )
+    assert "club_event" in exp and "club_attendance" in exp
+    assert "never" in exp.lower()
+    assert "club_expense" in ev
+    assert "club_expense" in att
+    assert "club_event" in bud and "never" in bud.lower()
+    join_on = re.compile(r"\bJOIN\s+\w+\s+ON\b", re.I)
+    for text in (atom, bond, conn, mol, exp, ev, att, bud):
+        assert join_on.search(text) is None
+        assert "GROUP BY" not in text
+
+
+def test_p1_single_cube_ca_throm():
+    """§10 P1: SAT-only는 schools_sat, 혈액은 throm_laboratory. JOIN ON 레시피 없음."""
+    ca = DOMAIN_SPECS["california_schools"]["cube_descriptions"]
+    frpm, sat = ca["schools_frpm"], ca["schools_sat"]
+    assert "schools_sat" in frpm and "never" in frpm.lower()
+    assert "schools_frpm" in sat and "never" in sat.lower()
+    throm = DOMAIN_SPECS["thrombosis_prediction"]["cube_descriptions"]
+    lab, exam, pat = (
+        throm["throm_laboratory"],
+        throm["throm_examination"],
+        throm["throm_patient"],
+    )
+    assert "throm_examination" in lab and "never" in lab.lower()
+    assert "throm_laboratory" in exam and "never" in exam.lower()
+    assert "throm_laboratory" in pat and "throm_examination" in pat
+    join_on = re.compile(r"\bJOIN\s+\w+\s+ON\b", re.I)
+    for text in (frpm, sat, lab, exam, pat):
+        assert join_on.search(text) is None
+        assert "GROUP BY" not in text
+
+
 def test_round4_logic_filter_confusion_text():
     """§10 P0 잔여: execute-OK 로직/필터 혼동 쌍 (빈 칸 + GPT≠GLU 등 overwrite)."""
     ca = DOMAIN_SPECS["california_schools"]["descriptions"]

@@ -67,6 +67,7 @@ impl SemanticStore {
         migrate_add_column_index_target(&conn).await?;
         migrate_add_member_descriptions(&conn).await?;
         migrate_add_view_source_catalog(&conn).await?;
+        migrate_add_fact_additive(&conn).await?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             embedder: None,
@@ -386,6 +387,19 @@ async fn migrate_add_view_source_catalog(conn: &Connection) -> Result<(), AppErr
 }
 
 /// Older catalogs lack required `description` on dim/fact; metric/segment may be NULL.
+async fn migrate_add_fact_additive(conn: &Connection) -> Result<(), AppError> {
+    if table_has_column(conn, "meta_cube_facts", "additive").await? {
+        return Ok(());
+    }
+    conn.execute(
+        "ALTER TABLE meta_cube_facts ADD COLUMN additive INTEGER NOT NULL DEFAULT 1",
+        (),
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(())
+}
+
 async fn migrate_add_member_descriptions(conn: &Connection) -> Result<(), AppError> {
     for table in ["meta_cube_dimensions", "meta_cube_facts"] {
         if table_has_column(conn, table, "description").await? {

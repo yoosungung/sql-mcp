@@ -1,7 +1,11 @@
 //! Step 5–7: cube member→physical map, semantic subquery expand, HAVING/ORDER BY rewrite, filter inject, as_code JOIN wrap.
 use std::collections::{HashMap, HashSet};
+use std::ops::ControlFlow;
 
 use serde_json::Value;
+use sqlparser::ast::{
+    Expr, FunctionArg, FunctionArgExpr, FunctionArguments, Select, Visit, Visitor,
+};
 
 use crate::dialect::DialectProfile;
 use crate::error::AppError;
@@ -261,11 +265,90 @@ pub(crate) fn validate_cube_member_expressions(
         if let Some(items) = cube.get(key).and_then(|v| v.as_array()) {
             for item in items {
                 if let Some(expr) = item.get("expression").and_then(|v| v.as_str()) {
-                    assert_metric_expr(expr)?;
+                    assert_scalar_expr(expr)?;
                     let _ = view_cols;
                 }
             }
         }
+    }
+    Ok(())
+}
+
+fn non_additive_fact_names(cube: &Value) -> HashSet<String> {
+    let mut out = HashSet::new();
+    let Some(facts) = cube.get("facts").and_then(|v| v.as_array()) else {
+        return out;
+    };
+    for item in facts {
+        let additive = item
+            .get("additive")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        if additive {
+            continue;
+        }
+        if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
+            out.insert(name.to_string());
+        }
+    }
+    out
+}
+
+/// D28: SUM/AVG/COUNT(col) over `additive: false` facts is invalid.
+pub(crate) fn assert_additive_aggregates(
+    select: &Select,
+    cube: &Value,
+) -> Result<(), AppError> {
+    let names = non_additive_fact_names(cube);
+    if names.is_empty() {
+        return Ok(());
+    }
+    struct Guard<'a> {
+        names: &'a HashSet<String>,
+        err: Option<String>,
+    }
+    impl Visitor for Guard<'_> {
+        type Break = ();
+        fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<()> {
+            let Expr::Function(func) = expr else {
+                return ControlFlow::Continue(());
+            };
+            let fname = func.name.to_string().to_ascii_lowercase();
+            if !matches!(fname.as_str(), "sum" | "avg" | "count") {
+                return ControlFlow::Continue(());
+            }
+            let FunctionArguments::List(list) = &func.args else {
+                return ControlFlow::Continue(());
+            };
+            for arg in &list.args {
+                let (FunctionArg::Unnamed(FunctionArgExpr::Expr(inner))
+                | FunctionArg::Named {
+                    arg: FunctionArgExpr::Expr(inner),
+                    ..
+                }) = arg
+                else {
+                    continue;
+                };
+                let Ok(idents) = extract_idents(&inner.to_string()) else {
+                    continue;
+                };
+                if let Some(id) = idents.iter().find(|id| self.names.contains(*id)) {
+                    self.err = Some(format!(
+                        "non-additive fact {id} cannot be used with {fname}()"
+                    ));
+                    return ControlFlow::Break(());
+                }
+            }
+            ControlFlow::Continue(())
+        }
+    }
+    let mut guard = Guard {
+        names: &names,
+        err: None,
+    };
+    let _ = select.visit(&mut guard);
+    if let Some(msg) = guard.err {
+        return Err(AppError::Validation(msg));
     }
     Ok(())
 }

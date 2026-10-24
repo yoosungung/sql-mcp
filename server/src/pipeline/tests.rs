@@ -849,3 +849,106 @@
         );
         assert_select_only(&sql).unwrap();
     }
+
+    fn docs_with_non_additive_rate() -> Vec<Value> {
+        let mut docs = example_docs();
+        for d in &mut docs {
+            if d.get("kind").and_then(|v| v.as_str()) == Some("cube")
+                && d.get("name").and_then(|v| v.as_str()) == Some("sales")
+            {
+                d["facts"].as_array_mut().unwrap().push(json!({
+                    "name": "eligible_frpm_rate_k12",
+                    "description": "row rate",
+                    "type": "quantity",
+                    "expression": "sale_amount / fx_rate",
+                    "additive": false,
+                    "encryption": false,
+                    "role": ["finance"]
+                }));
+            }
+        }
+        docs
+    }
+
+    #[test]
+    fn compiles_ungrouped_select_and_order_by_non_additive_fact() {
+        let docs = docs_with_non_additive_rate();
+        let sql = compile_semantic_sql(
+            &docs,
+            "SELECT eligible_frpm_rate_k12 FROM sales ORDER BY eligible_frpm_rate_k12 DESC",
+            Some("finance"),
+        )
+        .unwrap();
+        assert!(
+            sql.to_ascii_lowercase().contains("sale_amount")
+                && sql.to_ascii_lowercase().contains("fx_rate"),
+            "expected rate expression in {sql}"
+        );
+        assert_select_only(&sql).unwrap();
+    }
+
+    #[test]
+    fn compiles_min_max_of_non_additive_fact() {
+        let docs = docs_with_non_additive_rate();
+        for agg in ["MAX", "MIN"] {
+            let sql = compile_semantic_sql(
+                &docs,
+                &format!("SELECT {agg}(eligible_frpm_rate_k12) FROM sales"),
+                Some("finance"),
+            )
+            .unwrap();
+            assert!(
+                sql.to_ascii_uppercase().contains(agg),
+                "expected {agg} in {sql}"
+            );
+            assert_select_only(&sql).unwrap();
+        }
+    }
+
+    #[test]
+    fn rejects_sum_avg_count_of_non_additive_fact() {
+        let docs = docs_with_non_additive_rate();
+        for sql in [
+            "SELECT SUM(eligible_frpm_rate_k12) FROM sales",
+            "SELECT AVG(eligible_frpm_rate_k12) FROM sales",
+            "SELECT COUNT(eligible_frpm_rate_k12) FROM sales",
+        ] {
+            let err = compile_semantic_sql(&docs, sql, Some("finance")).unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("non-additive") || msg.contains("additive"),
+                "expected additive rejection for {sql}, got: {msg}"
+            );
+        }
+        compile_semantic_sql(
+            &docs,
+            "SELECT SUM(sale_amount) FROM sales",
+            Some("finance"),
+        )
+        .unwrap();
+        compile_semantic_sql(&docs, "SELECT COUNT(*) FROM sales", Some("finance")).unwrap();
+    }
+
+    #[test]
+    fn rejects_aggregate_in_cube_member_expression() {
+        let mut docs = example_docs();
+        for d in &mut docs {
+            if d.get("kind").and_then(|v| v.as_str()) == Some("cube")
+                && d.get("name").and_then(|v| v.as_str()) == Some("sales")
+            {
+                d["facts"][0]["expression"] = json!("SUM(sale_amount)");
+                d["facts"][0].as_object_mut().unwrap().remove("column");
+            }
+        }
+        let err = compile_semantic_sql(
+            &docs,
+            "SELECT customer_id FROM sales",
+            Some("finance"),
+        )
+        .unwrap_err();
+        let msg = err.to_string().to_ascii_lowercase();
+        assert!(
+            msg.contains("aggregate") || msg.contains("scalar"),
+            "expected scalar member rejection, got: {err}"
+        );
+    }

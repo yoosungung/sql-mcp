@@ -7,8 +7,8 @@ use sqlparser::ast::{
 };
 
 use crate::compile::{
-    apply_binds, check_role_access, compile_cube_query, quote_ident, CubeProjection,
-    CubeQuerySpec,
+    apply_binds, assert_additive_aggregates, check_role_access, compile_cube_query, quote_ident,
+    CubeProjection, CubeQuerySpec,
 };
 use crate::error::AppError;
 use crate::expr_guard::assert_scalar_expr;
@@ -40,6 +40,10 @@ pub(crate) fn compile_cube_join(
     for j in &tw.joins {
         let (alias, cube) = relation_alias_cube(&j.relation)?;
         sides.push((alias, cube));
+    }
+    for (_, cube_name) in &sides {
+        let cube = find_doc(docs, "cube", cube_name)?;
+        assert_additive_aggregates(select, cube)?;
     }
 
     // Validate and rewrite JOIN ON clauses first, recording dimensions needed from each side.

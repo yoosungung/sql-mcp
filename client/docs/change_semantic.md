@@ -1,7 +1,7 @@
 # 시맨틱 수정 계획
 
-> **상태**: 라운드 3 P0 로직/필터 패치 적용 — 빈 dim/fact description + GPT≠GLU 등 혼동 overwrite (`data/semantic.hub.d28.db`). 베이스라인 R2 EX **110/286**, 그레인 28, 지식 116. 재eval 전. 같은 큐브 Copy SELECT 반복 금지. 장기 게이트 유지.
-> **근거(계획 베이스라인)**: [`eval_sql.json`](../eval/eval_sql.json) EX FAIL — **잘못된 시멘틱 정의 59** + **agent가 실패 110**. 최신 런은 [`eval_report.md`](eval_report.md) (EX 110/286, [`eval_sql.r2.json`](../eval/eval_sql.r2.json)).
+> **상태**: P1 CA/throm 한 큐브 **게이트 실패**. 80문항 EX **16/80**(R3 23) · 그레인 **10**(R3 8). 286 재eval 안 함. `Never JOIN` 문구 추가 금지. 정본 카탈로그는 R3 `semantic.hub.d28.eval.db`. F1 description 반복 금지. 장기 게이트 유지.
+> **근거(계획 베이스라인)**: [`eval_sql.json`](../eval/eval_sql.json) EX FAIL — **잘못된 시멘틱 정의 59** + **agent가 실패 110**. 최신 런은 [`eval_report.md`](eval_report.md) (EX 116/286, [`eval_sql.d28.json`](../eval/eval_sql.d28.json)).
 > **범위**: **시맨틱 메타(table/view/cube/dimension/fact/metric/segment)와 생성기**. sql-mcp 버그 0건·LLM 교체는 [§6](#6-범위-밖-별도-트랙).
 
 분류 규칙: 그레인 FAIL = 컴파일 물리 SQL이 gold에 **없는 테이블을 JOIN**(또는 gold 식별자 미등록). 그 외 EX FAIL은 **agent가 실패**. CTE 별칭(`avg_diff`, `rankedschools`, `topdriver`)은 물리 팩트 조인만 본선.
@@ -199,7 +199,7 @@ generate_meta → enrich_meta_from_qa(description/segment/metric 확장) → reg
 
 ## 8. 참조
 
-- SQL 비교: [eval_sql.hub.json](../eval/eval_sql.hub.json) (허브 런) · [eval_sql.json](../eval/eval_sql.json) (One-Big-View) · 요약 [eval_report.md](eval_report.md)
+- SQL 비교: [eval_sql.d28.json](../eval/eval_sql.d28.json) (R3) · [eval_sql.r2.json](../eval/eval_sql.r2.json) · [eval_sql.hub.json](../eval/eval_sql.hub.json) · [eval_sql.json](../eval/eval_sql.json) (One-Big-View) · 요약 [eval_report.md](eval_report.md)
 - 분류: [client/DESIGN.md](../DESIGN.md) (`cause` = gold vs `agent_db_sql` 테이블)
 - Meta 생성: [target_db/README.md](../../target_db/README.md)
 - 계약: [semantic-from-eval](../../skills/semantic-from-eval/) (일반화 루프) · [semantic-table-view](../../skills/semantic-table-view/) · [semantic-cube-metric-segment/contract.md](../../skills/semantic-cube-metric-segment/contract.md) · [semantic-from-qa](../../skills/semantic-from-qa/)
@@ -313,13 +313,15 @@ DB별 (대표 qid, 이미 있는 metric/segment는 expression 덮지 않음):
 - **california 13:** 행 비율은 비가산 fact `eligible_*`/`excellence_rate`(Q12, 32, 40). `Phone`은 schools, SOC/DOC 코드. 그룹 share는 metric.
 - **student_club 10:** `category`(budget)≠`type`(event)(Q1422). full name 두 컬럼. `spend_to_budget_ratio`는 `(SUM(spent)) / (SUM(amount))` 식. `source`는 `club_income`.
 
-**P1 — tox/club “한 큐브”.** `tox_connected`는 atom_id2 브릿지일 때만. atom 카운트는 `tox_atom`만(Q201). club `cost`는 `club_expense`만, attendance를 붙이지 않음(Q1339).
+**P1 — tox/club “한 큐브”.** `tox_connected`는 atom_id2 브릿지일 때만. atom 카운트는 `tox_atom`만(Q201). club `cost`는 `club_expense`만, attendance를 붙이지 않음(Q1339). **적용됨 (d28):** cube description overwrite — tox atom/bond는 형제 JOIN 금지, club expense/budget/event/attendance는 한 큐브 + ungrouped JOIN 거절 문구. JOIN ON 레시피 없음. 게이트는 재eval.
+
+**P1 — CA/throm “한 큐브”.** SAT-only는 `schools_sat`(Q27·39·82), 혈액은 `throm_laboratory`(Q1187·1265). **게이트 실패 (80문항):** EX 23→16, 그레인 8→10. CA 11/30→5/30(lost 23·26·28·31·47·79), throm 12/50→11/50. `Never JOIN`이 형제 JOIN을 막지 못했고(Q24·25·1187) schools-only를 `schools_frpm`으로 밀어 EX를 깎음. 이 레버 정지. 286 안 함.
 
 **하지 않음.** 큐브 Copy SELECT 추가, drivers-only 큐브, `{db}_all`, yaml에서 `races`/`colour`/`circuits` 삭제(R2에서 해당 EX가 회복됨), SYSTEM, ORDER BY 파서 완화(sql-mcp), 질문마다 metric.
 
 ### 10.3 검증
 
-enrich 테스트(동명 멤버 문장 · cube description에 `JOIN schools_sat` 없음 · eligible metric 식에 이름 식별자 없음 · 나이 examples에 `YEAR(` 없음) → generate+enrich → register → **재eval 286**. 같은 agent SQL dry_run은 게이트 아님.
+enrich 테스트 → generate+enrich → register → **변경 DB 80문항**. CA/throm `Never JOIN`은 **미달**(EX 16/80, 그레인 10). 286 재eval은 이 레버로 돌리지 않음. 같은 agent SQL dry_run은 게이트 아님.
 
 | 체크포인트 | 장기 |
 |------------|------|

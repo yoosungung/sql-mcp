@@ -21,7 +21,8 @@ use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
 use crate::compile::{
-    check_role_access, compile_cube_query, expand_semantic_subqueries, CubeQuerySpec,
+    assert_additive_aggregates, check_role_access, compile_cube_query, expand_semantic_subqueries,
+    CubeQuerySpec,
 };
 use crate::dialect::DialectProfile;
 use crate::error::AppError;
@@ -401,6 +402,8 @@ pub(crate) fn compile_single_cube(
     let select = &select;
     let distinct = select.distinct.is_some();
     let (cube_alias, cube_name) = relation_alias_cube(&select.from[0].relation)?;
+    let cube = find_doc(docs, "cube", &cube_name)?;
+    assert_additive_aggregates(select, cube)?;
     let classified =
         classify_projection_for_cube(select, docs, &cube_name, Some(&cube_alias), true, None)?;
     ensure_projection_mode(&classified)?;

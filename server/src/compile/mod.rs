@@ -7,6 +7,7 @@ mod view_prune;
 mod tests;
 
 pub use rewrite::{expand_semantic_subqueries, resolve_dim_as_code, wrap_as_code_joins};
+pub(crate) use rewrite::assert_additive_aggregates;
 pub use view_prune::{
     compile_view_from, compile_view_from_opts, resolve_view_for_cube, resolve_view_for_cube_opts,
 };

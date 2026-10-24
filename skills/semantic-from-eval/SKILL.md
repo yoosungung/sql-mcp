@@ -59,7 +59,7 @@ Progress:
 ### 1. Scope
 
 고칠 것: table/view/cube/dimension/fact/metric/segment JSON.  
-**비목표:** Soft-F1, LLM, SYSTEM 프롬프트, 일회성 고유명 segment, 비율 KPI를 fact 컬럼으로 올리기.
+**비목표:** Soft-F1, LLM, SYSTEM 프롬프트, 일회성 고유명 segment, 그룹 비율을 가산 fact로 올리기.
 
 게이트를 숫자로 적는다. 예: 그레인 FAIL → 0, 지식 FAIL → 0. **라운드 사이에 분류 규칙을 바꿔 숫자를 맞추지 않는다.**
 
@@ -97,9 +97,10 @@ CTE·인라인 별칭은 물리 테이블이 아니다. sql-mcp 버그는 이 �
 | 신호 | 산출 |
 |------|------|
 | 동의어·코드값·혼동 금지 | dim/fact `description` (생성 출처 문구 금지) |
-| 연·나이 등 그룹/필터 축 | dimension `expression` |
-| 이름 있는 비율·KPI | **metric** (`examples`만. fact 컬럼 아님) |
-| 재사용 코호트 | **segment** |
+| 연·나이 등 그룹/필터 축 | dimension `expression`(스칼라) |
+| 행 그레인 비율 (`ORDER BY`/`SELECT` 컬럼) | fact `expression` + `additive: false` |
+| 그룹 `SUM(a)/SUM(b)` KPI | **metric** (`examples`만. fact와 **다른 이름**) |
+| 에이전트가 `WHERE name`을 쓰는 코호트 | flag dim (`IIF`/`CASE`). segment는 examples 보조 |
 | 사람 이름 등 일회성 리터럴 | description만 (segment 금지) |
 
 질문 1건 = metric/segment 1개 금지. **멱등:** 빈 `description`만 채움, 같은 이름 metric/segment는 expression/filter를 덮어쓰지 않음, 이미 있는 expression dim은 스킵.
@@ -120,7 +121,7 @@ CTE·인라인 별칭은 물리 테이블이 아니다. sql-mcp 버그는 이 �
 - 에이전트 SYSTEM·모델·재시도 한도를 이 스킬에서 고치지 않는다.
 - gold 물리 SQL을 `execute_sql`에 넣거나 metric/segment에 복붙하지 않는다.
 - One-Big-View로 형제 팩트를 다시 묶지 않는다.
-- 비율을 fact/dim 컬럼으로 올리지 않는다.
+- 그룹 비율을 가산 fact로 올리지 않는다(`SUM(rate)` 함정). 행 비율만 `additive: false` fact.
 - 일회성 고유명을 segment로 하드코딩하지 않는다.
 - 특정 벤치 경로·DB 목록을 전제로 두지 않는다.
 - 사용자 요청 전 `metadata_*` 등록 금지.

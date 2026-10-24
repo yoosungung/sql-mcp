@@ -3,6 +3,7 @@
 
 예:
   python write_eval_sql.py --url http://127.0.0.1:8090/mcp
+  python write_eval_sql.py --url http://127.0.0.1:8090/mcp --remap-cubes
 """
 
 from __future__ import annotations
@@ -21,6 +22,11 @@ from bird_eval import (
     parse_dry_run_result,
     write_eval_sql_json,
 )
+
+_TARGET_DB = Path(__file__).resolve().parents[1] / "target_db"
+if str(_TARGET_DB) not in sys.path:
+    sys.path.insert(0, str(_TARGET_DB))
+from hub_grain import remap_agent_sql  # noqa: E402
 
 
 async def wait_for_mcp(url: str, *, timeout_s: float = 60.0) -> None:
@@ -52,17 +58,24 @@ async def run(args: argparse.Namespace) -> int:
     async with MCPAdapter(url) as adapter:
         execute_sql = _tool_named(await adapter.list_tools(), "execute_sql")
         todo = [
-            (row.get("db_id"), row.get("agent_sql"))
+            (row.get("db_id"), row.get("agent_sql"), row.get("gold_sql"))
             for row in preview["items"]
             if isinstance(row.get("db_id"), str)
             and isinstance(row.get("agent_sql"), str)
             and row.get("agent_sql")
         ]
-        for i, (db_id, agent_sql) in enumerate(todo, start=1):
+        for i, (db_id, agent_sql, gold_sql) in enumerate(todo, start=1):
             assert isinstance(db_id, str) and isinstance(agent_sql, str)
+            sql = agent_sql
+            if args.remap_cubes:
+                sql = remap_agent_sql(
+                    agent_sql,
+                    db_id,
+                    gold_sql if isinstance(gold_sql, str) else "",
+                )
             try:
                 result = await execute_sql.ainvoke(
-                    {"database": db_id, "sql": agent_sql, "dry_run": True}
+                    {"database": db_id, "sql": sql, "dry_run": True}
                 )
                 compiled[(db_id, agent_sql)] = parse_dry_run_result(result)
             except Exception as e:  # noqa: BLE001
@@ -86,6 +99,11 @@ def main() -> int:
     p.add_argument("--input", help="eval.json path (default client/eval/eval.json)")
     p.add_argument("--output", help="eval_sql.json path (default client/eval/eval_sql.json)")
     p.add_argument("--url", help="sql-mcp Streamable HTTP URL")
+    p.add_argument(
+        "--remap-cubes",
+        action="store_true",
+        help="dry_run with FROM {db}/{db}_all remapped to the yaml hub cube matching gold tables",
+    )
     args = p.parse_args()
     return asyncio.run(run(args))
 

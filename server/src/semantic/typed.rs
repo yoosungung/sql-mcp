@@ -534,9 +534,13 @@ async fn insert_cube_member(
         .map_err(|e| AppError::Internal(e.into()))?;
     } else {
         let ftype = str_field(item, "type")?;
+        let additive = item
+            .get("additive")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
         conn.execute(
-            "INSERT INTO meta_cube_facts (cube_name, name, description, type, column_ref, expression, encryption, role_json)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+            "INSERT INTO meta_cube_facts (cube_name, name, description, type, column_ref, expression, encryption, role_json, additive)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
             params![
                 cube,
                 name,
@@ -545,7 +549,8 @@ async fn insert_cube_member(
                 column_ref,
                 expression,
                 encryption as i32,
-                role
+                role,
+                additive as i32
             ],
         )
         .await
@@ -593,7 +598,7 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut facts = Vec::new();
     let mut frows = conn
         .query(
-            "SELECT name, description, type, column_ref, expression, encryption, role_json
+            "SELECT name, description, type, column_ref, expression, encryption, role_json, additive
              FROM meta_cube_facts WHERE cube_name = ?1 ORDER BY name",
             params![name],
         )
@@ -663,6 +668,7 @@ fn load_member_fact(r: &libsql::Row) -> Result<Value, AppError> {
     let expression: Option<String> = r.get(4).ok();
     let encryption: i32 = r.get(5).map_err(|e| AppError::Internal(e.into()))?;
     let role_s: String = r.get(6).map_err(|e| AppError::Internal(e.into()))?;
+    let additive: i32 = r.get(7).unwrap_or(1);
     let mut out = json!({
         "name": name,
         "description": description,
@@ -675,6 +681,9 @@ fn load_member_fact(r: &libsql::Row) -> Result<Value, AppError> {
     }
     if let Some(e) = expression {
         out["expression"] = json!(e);
+    }
+    if additive == 0 {
+        out["additive"] = json!(false);
     }
     Ok(out)
 }
