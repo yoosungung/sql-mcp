@@ -1,7 +1,7 @@
 # 시맨틱 수정 계획
 
-> **상태**: P1 CA/throm 한 큐브 **게이트 실패**. 80문항 EX **16/80**(R3 23) · 그레인 **10**(R3 8). 286 재eval 안 함. `Never JOIN` 문구 추가 금지. 정본 카탈로그는 R3 `semantic.hub.d28.eval.db`. F1 description 반복 금지. 장기 게이트 유지.
-> **근거(계획 베이스라인)**: [`eval_sql.json`](../eval/eval_sql.json) EX FAIL — **잘못된 시멘틱 정의 59** + **agent가 실패 110**. 최신 런은 [`eval_report.md`](eval_report.md) (EX 116/286, [`eval_sql.d28.json`](../eval/eval_sql.d28.json)).
+> **상태**: D29 카탈로그로 286 재eval. EX **116/286** (R3 동률) · 그레인 **30**(R3 34) · 지식 **112**(R3 106). `SQL_MCP_GRAIN_GUARD` 끔. `Never JOIN` 문구 추가 금지. 정본 카탈로그 `data/semantic.d29.eval.db`. F1 description 반복 금지. 장기 게이트 유지.
+> **근거(계획 베이스라인)**: [`eval_sql.json`](../eval/eval_sql.json) EX FAIL — **잘못된 시멘틱 정의 59** + **agent가 실패 110**. 최신 런은 [`eval_report.md`](eval_report.md) (EX 116/286, [`eval_sql.d29.json`](../eval/eval_sql.d29.json)).
 > **범위**: **시맨틱 메타(table/view/cube/dimension/fact/metric/segment)와 생성기**. sql-mcp 버그 0건·LLM 교체는 [§6](#6-범위-밖-별도-트랙).
 
 분류 규칙: 그레인 FAIL = 컴파일 물리 SQL이 gold에 **없는 테이블을 JOIN**(또는 gold 식별자 미등록). 그 외 EX FAIL은 **agent가 실패**. CTE 별칭(`avg_diff`, `rankedschools`, `topdriver`)은 물리 팩트 조인만 본선.

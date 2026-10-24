@@ -57,7 +57,8 @@ Rust MCP(`rmcp`) 서버: **임베디드 시맨틱 DB** + **복수 타깃 DB** �
 - [x] 팬아웃·캐즘 `validation` 거절 테스트 → 컴파일러. 심바가 재작성 없음
 - [x] 거절 플래그 `SQL_MCP_GRAIN_GUARD`. 켠 DB 없음. 조회는 `execute_sql`(D19)
 - [x] dry_run 그레인 골든(뷰 소스·컴파일 테이블 ⊆ 허브, `many_to_one` 물리 SQL 유지)
-- [ ] 변경 DB BIRD. 플래그가 꺼져 있어 아직 돌리지 않음. 286 전체는 DB별 게이트 뒤. `pk`가 비어 grain을 못 단 큐브: `throm_examination`, `hero_attribute`, `hero_power`
+- [x] 플래그 끈 채 SMALL_DBS 286 재eval (카탈로그 `data/semantic.d29.eval.db`, EX **116/286** R3 동률, 그레인 34→30). 보고 [`client/docs/eval_report.md`](client/docs/eval_report.md)
+- [ ] 거절 켠 DB별 게이트. 그레인 FAIL이 줄고 해당 DB EX ≥ R3일 때만 유지. `pk`가 비어 grain을 못 단 큐브: `throm_examination`, `hero_attribute`, `hero_power`
 
 ## 구현 시 작업 규칙
 
