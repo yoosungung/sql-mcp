@@ -6,14 +6,8 @@ use serde_json::Value;
 use crate::error::AppError;
 
 use super::{
-    check_role_access,
-    collect_table_filters,
-    filter_expr,
-    find_doc,
-    physical_from,
-    quote_ident,
-    table_column_names,
-    view_column_name_set,
+    check_role_access, collect_table_filters, filter_expr, find_doc, physical_from, quote_ident,
+    table_column_names, view_column_name_set,
 };
 
 pub fn compile_view_from(docs: &[Value], view: &Value) -> Result<String, AppError> {
@@ -235,11 +229,11 @@ pub fn resolve_view_for_cube_opts(
     };
     for src in order {
         let catalog = source_catalog(src)?;
-        let skind = src
-            .get("kind")
-            .and_then(|v| v.as_str())
-            .unwrap_or("view");
-        let is_summary = src.get("summary").and_then(|v| v.as_bool()).unwrap_or(false);
+        let skind = src.get("kind").and_then(|v| v.as_str()).unwrap_or("view");
+        let is_summary = src
+            .get("summary")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         if is_summary && !allow_summary {
             continue;
         }
@@ -319,6 +313,46 @@ pub(crate) fn included_tables_for_join_view(
     steiner_nodes(&joins, &t_req, &all_names)
 }
 
+/// D29. Rejects included `one_to_many` joins. Missing `relationship` is not a guess.
+/// Does not rewrite aggregates.
+pub(crate) fn assert_no_fanout_or_chasm(
+    view: &Value,
+    included: &HashSet<String>,
+    aggregating: bool,
+) -> Result<(), AppError> {
+    let Some(joins) = view.get("joins").and_then(|v| v.as_array()) else {
+        return Ok(());
+    };
+    let mut one_to_many: Vec<(String, String)> = Vec::new();
+    for join in joins {
+        let left = join.get("left").and_then(|v| v.as_str()).unwrap_or("");
+        let right = join.get("right").and_then(|v| v.as_str()).unwrap_or("");
+        if left.is_empty() || right.is_empty() {
+            continue;
+        }
+        if !included.contains(left) || !included.contains(right) {
+            continue;
+        }
+        if join.get("relationship").and_then(|v| v.as_str()) == Some("one_to_many") {
+            one_to_many.push((left.to_string(), right.to_string()));
+        }
+    }
+    if one_to_many.len() >= 2 {
+        let (a, b) = &one_to_many[0];
+        let (c, d) = &one_to_many[1];
+        return Err(AppError::Validation(format!(
+            "Joins {a} to {b} and {c} to {d} are both one_to_many, so two fact grains meet in one view. Query each fact cube on its own, then join the aggregated results. Chasm rejected."
+        )));
+    }
+    if aggregating && one_to_many.len() == 1 {
+        let (left, right) = &one_to_many[0];
+        return Err(AppError::Validation(format!(
+            "Join {left} to {right} is one_to_many, so the fact grain is repeated before the aggregate. Aggregate that cube alone or drop the join. Fan-out rejected."
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) fn compile_join_view(
     docs: &[Value],
     view: &Value,
@@ -347,7 +381,9 @@ pub(crate) fn compile_join_view(
         .filter(|n| included.contains(n))
         .collect();
     if ordered.is_empty() {
-        return Err(AppError::Validation("no tables left after join prune".into()));
+        return Err(AppError::Validation(
+            "no tables left after join prune".into(),
+        ));
     }
 
     let first = ordered.remove(0);
@@ -440,7 +476,9 @@ pub(crate) fn format_join_fragment(
         ("right", false) | ("left", true) => "RIGHT JOIN",
         ("full", _) => "FULL JOIN",
         (other, _) => {
-            return Err(AppError::Validation(format!("unsupported join type {other}")));
+            return Err(AppError::Validation(format!(
+                "unsupported join type {other}"
+            )));
         }
     };
     let mut ons = Vec::new();
@@ -737,4 +775,3 @@ pub(crate) fn view_physical_expr(view: &Value, view_col: &str) -> Result<String,
         .ok_or_else(|| AppError::Validation("mapping.column".into()))?;
     Ok(format!("{}.{}", quote_ident(source)?, quote_ident(column)?))
 }
-

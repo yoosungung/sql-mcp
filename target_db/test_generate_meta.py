@@ -9,10 +9,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from generate_meta import (
     ROOT,
+    annotate_hub_relationships,
+    resolve_catalog_table,
     apply_name_priority,
+    classify_join_relationship,
     collect_join_edges,
     cube_and_metric_from_view,
     default_group_by,
+    edge_is_key_relationship,
     infer_table_id_fks,
     load_semantic_plan,
     parse_semantic_plan,
@@ -657,6 +661,238 @@ def test_hub_plan_single_table_and_bridge_reuse() -> None:
     assert "molecule" not in conn_src
     assert by["club_event"]["joins"] == []
     assert {s["table"] for s in by["club_event"]["sources"]} == {"event"}
+    atom_join = by["tox_atom"]["joins"][0]
+    assert atom_join["relationship"] == "many_to_one"
+    assert {j["relationship"] for j in by["tox_connected"]["joins"]} == {"many_to_one"}
+    assert "molecule" not in conn_src
+
+
+def test_hub_fk_to_dimension_is_many_to_one_and_sibling_is_not_absorbed() -> None:
+    tables = {
+        "results": _table(
+            "results",
+            ["resultId", "raceId", "time"],
+            ["resultId"],
+            fk=[{"columns": ["raceId"], "references": {"table": "races", "columns": ["raceId"]}}],
+        ),
+        "races": _table(
+            "races",
+            ["raceId", "year", "circuitId"],
+            ["raceId"],
+            fk=[
+                {
+                    "columns": ["circuitId"],
+                    "references": {"table": "circuits", "columns": ["circuitId"]},
+                }
+            ],
+        ),
+        "circuits": _table("circuits", ["circuitId", "name"], ["circuitId"]),
+        "lapTimes": _table(
+            "lapTimes",
+            ["raceId", "lap", "milliseconds"],
+            ["raceId", "lap"],
+            fk=[{"columns": ["raceId"], "references": {"table": "races", "columns": ["raceId"]}}],
+        ),
+    }
+    plan = {
+        "hubs": [
+            {
+                "table": "results",
+                "cube": "f1_race_results",
+                "dimensions": ["races", "circuits", "lapTimes"],
+            },
+            {"table": "lapTimes", "cube": "f1_lap_times", "dimensions": ["races"]},
+        ]
+    }
+    views = views_from_tables(tables, "formula_1", plan=plan)
+    by = {v["name"]: v for v in views}
+    assert "lapTimes" not in {s["table"] for s in by["f1_race_results"]["sources"]}
+    rels = {j["relationship"] for j in by["f1_race_results"]["joins"]}
+    assert rels == {"many_to_one"}
+    cube, _metric = cube_and_metric_from_view(
+        by["f1_race_results"], tables, set(), "formula_1"
+    )
+    assert cube["grain"] == ["resultId"]
+
+
+def test_non_pk_link_is_not_one_join_and_unspecified_relationship_is_unset() -> None:
+    tables = {
+        "orders": _table("orders", ["order_id", "note"], ["order_id"]),
+        "items": _table(
+            "items",
+            ["item_id", "note"],
+            ["item_id"],
+            fk=[{"columns": ["note"], "references": {"table": "orders", "columns": ["note"]}}],
+        ),
+    }
+    assert not edge_is_key_relationship(
+        tables, "items", "orders", [("note", "note")]
+    )
+    plan = {
+        "hubs": [
+            {"table": "orders", "cube": "orders_hub", "dimensions": ["items"]},
+        ]
+    }
+    views = views_from_tables(tables, "shop", plan=plan)
+    assert views[0]["joins"] == []
+    assert (
+        classify_join_relationship(tables, "orders", "items", [("note", "note")])
+        is None
+    )
+    both_pk = {
+        "frpm": _table("frpm", ["CDSCode"], ["CDSCode"]),
+        "schools": _table("schools", ["CDSCode"], ["CDSCode"]),
+    }
+    assert (
+        classify_join_relationship(
+            both_pk, "frpm", "schools", [("CDSCode", "CDSCode")]
+        )
+        == "one_to_one"
+    )
+    frpm_fk = {
+        "frpm": _table(
+            "frpm",
+            ["CDSCode"],
+            ["CDSCode"],
+            fk=[
+                {
+                    "columns": ["CDSCode"],
+                    "references": {"table": "schools", "columns": ["CDSCode"]},
+                }
+            ],
+        ),
+        "schools": _table("schools", ["CDSCode"], ["CDSCode"]),
+    }
+    assert (
+        classify_join_relationship(
+            frpm_fk,
+            "frpm",
+            "schools",
+            [("CDSCode", "CDSCode")],
+            hub_dimensions={"schools"},
+        )
+        == "many_to_one"
+    )
+    child = {
+        "orders": _table("orders", ["order_id"], ["order_id"]),
+        "items": _table(
+            "items",
+            ["item_id", "order_id"],
+            ["item_id"],
+            fk=[
+                {
+                    "columns": ["order_id"],
+                    "references": {"table": "orders", "columns": ["order_id"]},
+                }
+            ],
+        ),
+    }
+    assert (
+        classify_join_relationship(
+            child, "orders", "items", [("order_id", "order_id")]
+        )
+        == "one_to_many"
+    )
+
+
+def test_annotate_adds_relationship_and_grain_without_unlinking(tmp_path: Path) -> None:
+    db = tmp_path / "toy"
+    meta = db / "meta"
+    meta.mkdir(parents=True)
+    (db / "semantic_plan.yaml").write_text(
+        "hubs:\n  - table: orders\n    cube: orders_hub\n    dimensions:\n      - customer\n",
+        encoding="utf-8",
+    )
+    orders = _table(
+        "orders",
+        ["order_id", "customer_id"],
+        ["order_id"],
+        fk=[
+            {
+                "columns": ["customer_id"],
+                "references": {"table": "customer", "columns": ["customer_id"]},
+            }
+        ],
+    )
+    customer = _table("customer", ["customer_id", "name"], ["customer_id"])
+    view = {
+        "kind": "view",
+        "name": "orders_hub_view",
+        "target": "toy",
+        "combine": "join",
+        "description": "keep me",
+        "sources": [
+            {"kind": "table", "table": "orders"},
+            {"kind": "table", "table": "customer"},
+        ],
+        "joins": [
+            {
+                "left": "orders",
+                "right": "customer",
+                "type": "inner",
+                "on": [{"left_column": "customer_id", "right_column": "customer_id"}],
+            }
+        ],
+        "columns": [
+            {
+                "name": "order_id",
+                "mappings": [{"source": "orders", "column": "order_id"}],
+            }
+        ],
+    }
+    locked = {
+        "kind": "view",
+        "name": "locked_view",
+        "joins": [
+            {
+                "left": "orders",
+                "right": "customer",
+                "type": "left",
+                "relationship": "one_to_one",
+                "on": [{"left_column": "customer_id", "right_column": "customer_id"}],
+            }
+        ],
+    }
+    cube = {
+        "kind": "cube",
+        "name": "orders_hub",
+        "target": "toy",
+        "view": "orders_hub_view",
+        "description": "keep cube",
+        "dimensions": [],
+        "facts": [],
+    }
+    extra = meta / "note.json"
+    extra.write_text("{}\n", encoding="utf-8")
+    for name, doc in {
+        "orders.json": orders,
+        "customer.json": customer,
+        "orders_hub_view.json": view,
+        "orders_hub.json": cube,
+        "locked_view.json": locked,
+    }.items():
+        (meta / name).write_text(
+            __import__("json").dumps(doc, indent=2) + "\n", encoding="utf-8"
+        )
+    changed = annotate_hub_relationships(db)
+    assert extra.read_text(encoding="utf-8") == "{}\n"
+    assert {p.name for p in changed} == {"orders_hub.json", "orders_hub_view.json"}
+    view_out = __import__("json").loads((meta / "orders_hub_view.json").read_text())
+    assert view_out["description"] == "keep me"
+    assert view_out["joins"][0]["type"] == "inner"
+    assert view_out["joins"][0]["relationship"] == "many_to_one"
+    cube_out = __import__("json").loads((meta / "orders_hub.json").read_text())
+    assert cube_out["description"] == "keep cube"
+    assert cube_out["grain"] == ["order_id"]
+    locked_out = __import__("json").loads((meta / "locked_view.json").read_text())
+    assert locked_out["joins"][0]["relationship"] == "one_to_one"
+    again = annotate_hub_relationships(db)
+    assert again == []
+    renamed = {
+        "customer_table": _table("customer_table", ["customer_id"], ["customer_id"])
+    }
+    renamed["customer_table"]["table"] = "customer"
+    assert resolve_catalog_table(renamed, "customer") == "customer_table"
 
 
 if __name__ == "__main__":

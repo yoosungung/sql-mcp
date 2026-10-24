@@ -10,14 +10,14 @@ use crate::compile::{
     apply_binds, assert_additive_aggregates, check_role_access, compile_cube_query, quote_ident,
     CubeProjection, CubeQuerySpec,
 };
-use crate::error::AppError;
+use crate::error::{unknown_member_message, AppError};
 use crate::expr_guard::assert_scalar_expr;
 
 use super::clauses::{
     classify_projection_for_cube, collect_expr_quals_and_idents,
-    expand_segments_and_strip_qualifier,
-    extract_limit, extract_offset, extract_order_by, extract_where_for_cube,
-    materialize_adhoc_metrics, member_on_cube, resolve_member_side, ClassifiedProjection,
+    expand_segments_and_strip_qualifier, extract_limit, extract_offset, extract_order_by,
+    extract_where_for_cube, materialize_adhoc_metrics, member_on_cube, resolve_member_side,
+    ClassifiedProjection,
 };
 use super::existence::rewrite_literal_existence_projection;
 use super::{find_doc, relation_alias_cube};
@@ -52,14 +52,8 @@ pub(crate) fn compile_cube_join(
     for join in &tw.joins {
         let (alias, _) = relation_alias_cube(&join.relation)?;
         let join_kw = join_keyword(&join.join_operator)?;
-        let on_sql = rewrite_and_validate_join_on(
-            docs,
-            &sides,
-            join,
-            role,
-            binds,
-            &mut on_dims_per_side,
-        )?;
+        let on_sql =
+            rewrite_and_validate_join_on(docs, &sides, join, role, binds, &mut on_dims_per_side)?;
         rewritten_joins.push((alias, join_kw, on_sql));
     }
 
@@ -85,7 +79,8 @@ pub(crate) fn compile_cube_join(
         side_class.push((alias.clone(), cube_name.clone(), classified));
     }
 
-    let has_explicit_gb = matches!(&select.group_by, GroupByExpr::Expressions(exprs, _) if !exprs.is_empty());
+    let has_explicit_gb =
+        matches!(&select.group_by, GroupByExpr::Expressions(exprs, _) if !exprs.is_empty());
     let mode_ungrouped = !any_named && !any_adhoc && !has_explicit_gb;
 
     if mode_ungrouped {
@@ -146,10 +141,7 @@ pub(crate) fn compile_cube_join(
 
         let mut sub_projs = classified.projections.clone();
         for d in &dims {
-            if !sub_projs
-                .iter()
-                .any(|p| p.member == *d || p.alias == *d)
-            {
+            if !sub_projs.iter().any(|p| p.member == *d || p.alias == *d) {
                 sub_projs.push(CubeProjection {
                     member: d.clone(),
                     alias: d.clone(),
@@ -222,7 +214,11 @@ pub(crate) fn compile_cube_join(
         ));
     }
 
-    let select_kw = if distinct { "SELECT DISTINCT" } else { "SELECT" };
+    let select_kw = if distinct {
+        "SELECT DISTINCT"
+    } else {
+        "SELECT"
+    };
     let mut sql = format!("{select_kw} {} FROM {}", proj_parts.join(", "), from_sql);
     let order_by = extract_order_by(query, None, &sides)?;
     if !order_by.is_empty() {
@@ -333,9 +329,7 @@ pub(crate) fn join_keyword(op: &JoinOperator) -> Result<&'static str, AppError> 
         JoinOperator::CrossJoin => Err(AppError::Validation(
             "CROSS JOIN of cubes is not supported".into(),
         )),
-        _ => Err(AppError::Validation(
-            "unsupported cube join type".into(),
-        )),
+        _ => Err(AppError::Validation("unsupported cube join type".into())),
     }
 }
 
@@ -402,10 +396,8 @@ pub(crate) fn rewrite_join_on_expr(
             | BinaryOperator::LtEq
             | BinaryOperator::Gt
             | BinaryOperator::GtEq => {
-                let l =
-                    rewrite_join_on_operand(docs, sides, left, role, binds, on_dims_per_side)?;
-                let r =
-                    rewrite_join_on_operand(docs, sides, right, role, binds, on_dims_per_side)?;
+                let l = rewrite_join_on_operand(docs, sides, left, role, binds, on_dims_per_side)?;
+                let r = rewrite_join_on_operand(docs, sides, right, role, binds, on_dims_per_side)?;
                 Ok(format!("{l} {op} {r}"))
             }
             other => Err(AppError::Validation(format!(
@@ -442,9 +434,9 @@ pub(crate) fn rewrite_join_on_operand(
             let mem = &parts[1].value;
             let (side_alias, cube_name) = resolve_member_side(docs, sides, Some(qual), mem)?;
             if !member_on_cube(docs, &cube_name, mem)? {
-                return Err(AppError::Validation(format!(
+                return Err(AppError::Validation(unknown_member_message(&format!(
                     "unknown semantic member {mem} on cube {cube_name}"
-                )));
+                ))));
             }
             validate_join_member(docs, &cube_name, mem, role)?;
             record_on_dim(docs, &cube_name, &side_alias, mem, on_dims_per_side)?;
@@ -454,7 +446,7 @@ pub(crate) fn rewrite_join_on_operand(
                 quote_ident(mem)?
             ))
         }
-        Expr::Value(_) => Ok( apply_binds(&expr.to_string(), binds) ),
+        Expr::Value(_) => Ok(apply_binds(&expr.to_string(), binds)),
         other => Err(AppError::Validation(format!(
             "unsupported operand in cube JOIN ON: {other}"
         ))),
@@ -521,4 +513,3 @@ pub(crate) fn record_on_dim(
     }
     Ok(())
 }
-

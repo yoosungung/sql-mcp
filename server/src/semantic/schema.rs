@@ -54,6 +54,24 @@ mod tests {
     }
 
     #[test]
+    fn accepts_relationship_and_cube_grain() {
+        let mut view: Value = serde_json::from_str(include_str!(
+            "../../../semantic/examples/views/orders_customer.json"
+        ))
+        .unwrap();
+        view["joins"][0]["relationship"] = json!("many_to_one");
+        validate_document(&view).unwrap();
+        view["joins"][0]["relationship"] = json!("many_to_many");
+        assert!(validate_document(&view).is_err());
+
+        let mut cube: Value =
+            serde_json::from_str(include_str!("../../../semantic/examples/cubes/sales.json"))
+                .unwrap();
+        cube["grain"] = json!(["order_id"]);
+        validate_document(&cube).unwrap();
+    }
+
+    #[test]
     fn accepts_example_cube_metric_segment() {
         for raw in [
             include_str!("../../../semantic/examples/cubes/sales.json"),

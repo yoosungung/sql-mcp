@@ -2,12 +2,13 @@ use sqlparser::ast::Statement;
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
-use crate::error::AppError;
+use crate::error::{clarify_sql_parse, AppError};
 
 /// Accept a single read-only SELECT (including read WITH/CTE). Reject writes and multi-statement.
 pub fn assert_select_only(sql: &str) -> Result<(), AppError> {
     let dialect = GenericDialect {};
-    let stmts = Parser::parse_sql(&dialect, sql).map_err(|e| AppError::SqlParse(e.to_string()))?;
+    let stmts = Parser::parse_sql(&dialect, sql)
+        .map_err(|e| AppError::SqlParse(clarify_sql_parse(&e.to_string())))?;
     if stmts.len() != 1 {
         return Err(AppError::NotSelect);
     }

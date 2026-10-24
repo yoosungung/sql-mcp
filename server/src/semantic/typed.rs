@@ -1,7 +1,7 @@
 //! Persist / load registration JSON as typed meta_* rows.
 
-use libsql::{Connection, params};
-use serde_json::{Value, json};
+use libsql::{params, Connection};
+use serde_json::{json, Value};
 
 use crate::error::AppError;
 
@@ -296,10 +296,7 @@ async fn insert_view(conn: &Connection, body: &Value) -> Result<(), AppError> {
                     .and_then(|v| v.as_str())
                     .or_else(|| s.get("name").and_then(|v| v.as_str()))
                     .ok_or_else(|| AppError::Validation("source.table".into()))?;
-                let alias = s
-                    .get("alias")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(catalog);
+                let alias = s.get("alias").and_then(|v| v.as_str()).unwrap_or(catalog);
                 (
                     s.get("kind").and_then(|v| v.as_str()).unwrap_or("table"),
                     catalog,
@@ -320,15 +317,19 @@ async fn insert_view(conn: &Connection, body: &Value) -> Result<(), AppError> {
             let left = str_field(j, "left")?;
             let right = str_field(j, "right")?;
             let jtype = j.get("type").and_then(|v| v.as_str()).unwrap_or("inner");
-            let on = j
-                .get("on")
-                .cloned()
-                .unwrap_or(json!([]))
-                .to_string();
+            let on = j.get("on").cloned().unwrap_or(json!([])).to_string();
+            let relationship = opt_str(j, "relationship");
+            if let Some(rel) = relationship.as_deref() {
+                if !matches!(rel, "many_to_one" | "one_to_one" | "one_to_many") {
+                    return Err(AppError::Validation(format!(
+                        "viewJoin.relationship must be many_to_one, one_to_one, or one_to_many, got: {rel}"
+                    )));
+                }
+            }
             conn.execute(
-                "INSERT INTO meta_view_joins (view_name, left_source, right_source, join_type, on_conditions_json)
-                 VALUES (?1,?2,?3,?4,?5)",
-                params![name, left, right, jtype, on],
+                "INSERT INTO meta_view_joins (view_name, left_source, right_source, join_type, on_conditions_json, relationship)
+                 VALUES (?1,?2,?3,?4,?5,?6)",
+                params![name, left, right, jtype, on, relationship],
             )
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
@@ -337,11 +338,7 @@ async fn insert_view(conn: &Connection, body: &Value) -> Result<(), AppError> {
     if let Some(cols) = body.get("columns").and_then(|v| v.as_array()) {
         for c in cols {
             let cname = str_field(c, "name")?;
-            let mappings = c
-                .get("mappings")
-                .cloned()
-                .unwrap_or(json!([]))
-                .to_string();
+            let mappings = c.get("mappings").cloned().unwrap_or(json!([])).to_string();
             conn.execute(
                 "INSERT INTO meta_view_columns (view_name, name, mappings_json) VALUES (?1,?2,?3)",
                 params![name, cname, mappings],
@@ -405,7 +402,7 @@ async fn load_view(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut joins = Vec::new();
     let mut jrows = conn
         .query(
-            "SELECT left_source, right_source, join_type, on_conditions_json FROM meta_view_joins WHERE view_name = ?1",
+            "SELECT left_source, right_source, join_type, on_conditions_json, relationship FROM meta_view_joins WHERE view_name = ?1",
             params![name],
         )
         .await
@@ -419,12 +416,17 @@ async fn load_view(conn: &Connection, name: &str) -> Result<Value, AppError> {
         let right: String = r.get(1).map_err(|e| AppError::Internal(e.into()))?;
         let jtype: String = r.get(2).map_err(|e| AppError::Internal(e.into()))?;
         let on_s: String = r.get(3).map_err(|e| AppError::Internal(e.into()))?;
-        joins.push(json!({
+        let relationship: Option<String> = r.get(4).ok();
+        let mut join = json!({
             "left": left,
             "right": right,
             "type": jtype,
             "on": serde_json::from_str::<Value>(&on_s).unwrap_or(json!([])),
-        }));
+        });
+        if let Some(rel) = relationship.filter(|s| !s.is_empty()) {
+            join["relationship"] = json!(rel);
+        }
+        joins.push(join);
     }
 
     let mut columns = Vec::new();
@@ -473,9 +475,13 @@ async fn insert_cube(conn: &Connection, body: &Value) -> Result<(), AppError> {
     let target = str_field(body, "target")?;
     let view = str_field(body, "view")?;
     let description = str_field(body, "description")?;
+    let grain_json = body
+        .get("grain")
+        .filter(|v| v.as_array().is_some_and(|a| !a.is_empty()))
+        .map(|v| v.to_string());
     conn.execute(
-        "INSERT INTO meta_cubes (name, target, view_name, description, role_json) VALUES (?1,?2,?3,?4,?5)",
-        params![name, target, view, description, role_json(body)],
+        "INSERT INTO meta_cubes (name, target, view_name, description, role_json, grain_json) VALUES (?1,?2,?3,?4,?5,?6)",
+        params![name, target, view, description, role_json(body), grain_json],
     )
     .await
     .map_err(|e| AppError::Internal(e.into()))?;
@@ -563,7 +569,7 @@ async fn insert_cube_member(
 async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut rows = conn
         .query(
-            "SELECT target, view_name, description, role_json FROM meta_cubes WHERE name = ?1",
+            "SELECT target, view_name, description, role_json, grain_json FROM meta_cubes WHERE name = ?1",
             params![name],
         )
         .await
@@ -577,6 +583,7 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let view: String = row.get(1).map_err(|e| AppError::Internal(e.into()))?;
     let description: String = row.get(2).map_err(|e| AppError::Internal(e.into()))?;
     let role_s: String = row.get(3).unwrap_or_else(|_| "\"all\"".to_string());
+    let grain_s: Option<String> = row.get(4).ok();
 
     let mut dimensions = Vec::new();
     let mut drows = conn
@@ -624,6 +631,13 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let role_val = serde_json::from_str::<Value>(&role_s).unwrap_or(json!("all"));
     if role_val != json!("all") {
         out["role"] = role_val;
+    }
+    if let Some(raw) = grain_s.filter(|s| !s.is_empty()) {
+        if let Ok(grain) = serde_json::from_str::<Value>(&raw) {
+            if grain.as_array().is_some_and(|a| !a.is_empty()) {
+                out["grain"] = grain;
+            }
+        }
     }
     Ok(out)
 }
@@ -730,9 +744,7 @@ async fn load_metric(conn: &Connection, name: &str) -> Result<Value, AppError> {
         .map_err(|e| AppError::Internal(e.into()))?
         .ok_or_else(|| AppError::NotFound(format!("metric/{name}")))?;
     let cube: String = row.get(0).map_err(|e| AppError::Internal(e.into()))?;
-    let description: String = row
-        .get::<String>(1)
-        .unwrap_or_else(|_| name.to_string());
+    let description: String = row.get::<String>(1).unwrap_or_else(|_| name.to_string());
     let expression: String = row.get(2).map_err(|e| AppError::Internal(e.into()))?;
     let aggregation: Option<String> = row.get(3).ok();
     let group_by_json: Option<String> = row.get(4).ok();
@@ -760,9 +772,8 @@ async fn insert_segment(conn: &Connection, body: &Value) -> Result<(), AppError>
     let name = str_field(body, "name")?;
     let cube = str_field(body, "cube")?;
     let description = str_field(body, "description")?;
-    let filter_expression = filter_expr(body.get("filter")).ok_or_else(|| {
-        AppError::Validation("segment.filter.expression required".into())
-    })?;
+    let filter_expression = filter_expr(body.get("filter"))
+        .ok_or_else(|| AppError::Validation("segment.filter.expression required".into()))?;
     conn.execute(
         "INSERT INTO meta_segments (name, cube_name, description, filter_expression, role_json)
          VALUES (?1,?2,?3,?4,?5)",
@@ -787,9 +798,7 @@ async fn load_segment(conn: &Connection, name: &str) -> Result<Value, AppError> 
         .map_err(|e| AppError::Internal(e.into()))?
         .ok_or_else(|| AppError::NotFound(format!("segment/{name}")))?;
     let cube: String = row.get(0).map_err(|e| AppError::Internal(e.into()))?;
-    let description: String = row
-        .get::<String>(1)
-        .unwrap_or_else(|_| name.to_string());
+    let description: String = row.get::<String>(1).unwrap_or_else(|_| name.to_string());
     let filter_expression: String = row.get(2).map_err(|e| AppError::Internal(e.into()))?;
     let role_s: String = row.get(3).map_err(|e| AppError::Internal(e.into()))?;
     Ok(json!({

@@ -40,14 +40,11 @@ impl SemanticStore {
             }
             path.to_string_lossy().into_owned()
         };
-        let db = Builder::new_local(&path_str)
-            .build()
-            .await
-            .map_err(|e| {
-                AppError::Connection(anyhow::anyhow!(
-                    "cannot open semantic DB at {path_str}: {e}"
-                ))
-            })?;
+        let db = Builder::new_local(&path_str).build().await.map_err(|e| {
+            AppError::Connection(anyhow::anyhow!(
+                "cannot open semantic DB at {path_str}: {e}"
+            ))
+        })?;
         let conn = db.connect().map_err(|e| {
             AppError::Connection(anyhow::anyhow!(
                 "cannot connect to semantic DB at {path_str}: {e}"
@@ -68,6 +65,8 @@ impl SemanticStore {
         migrate_add_member_descriptions(&conn).await?;
         migrate_add_view_source_catalog(&conn).await?;
         migrate_add_fact_additive(&conn).await?;
+        migrate_add_view_join_relationship(&conn).await?;
+        migrate_add_cube_grain(&conn).await?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             embedder: None,
@@ -229,7 +228,8 @@ impl SemanticStore {
         mode: &str,
         limit: usize,
     ) -> Result<Vec<SearchHit>, AppError> {
-        self.search_columns_for_target(query, None, mode, limit).await
+        self.search_columns_for_target(query, None, mode, limit)
+            .await
     }
 
     pub async fn search_columns_for_target(
@@ -327,9 +327,7 @@ async fn migrate_add_target_columns(conn: &Connection) -> Result<(), AppError> {
             continue;
         }
         // SQLite: ADD COLUMN with NOT NULL requires DEFAULT for existing rows.
-        let sql = format!(
-            "ALTER TABLE {table} ADD COLUMN target TEXT NOT NULL DEFAULT 'dw'"
-        );
+        let sql = format!("ALTER TABLE {table} ADD COLUMN target TEXT NOT NULL DEFAULT 'dw'");
         conn.execute(&sql, ())
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
@@ -387,6 +385,29 @@ async fn migrate_add_view_source_catalog(conn: &Connection) -> Result<(), AppErr
 }
 
 /// Older catalogs lack required `description` on dim/fact; metric/segment may be NULL.
+async fn migrate_add_view_join_relationship(conn: &Connection) -> Result<(), AppError> {
+    if table_has_column(conn, "meta_view_joins", "relationship").await? {
+        return Ok(());
+    }
+    conn.execute(
+        "ALTER TABLE meta_view_joins ADD COLUMN relationship TEXT",
+        (),
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(())
+}
+
+async fn migrate_add_cube_grain(conn: &Connection) -> Result<(), AppError> {
+    if table_has_column(conn, "meta_cubes", "grain_json").await? {
+        return Ok(());
+    }
+    conn.execute("ALTER TABLE meta_cubes ADD COLUMN grain_json TEXT", ())
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(())
+}
+
 async fn migrate_add_fact_additive(conn: &Connection) -> Result<(), AppError> {
     if table_has_column(conn, "meta_cube_facts", "additive").await? {
         return Ok(());
@@ -405,9 +426,7 @@ async fn migrate_add_member_descriptions(conn: &Connection) -> Result<(), AppErr
         if table_has_column(conn, table, "description").await? {
             continue;
         }
-        let sql = format!(
-            "ALTER TABLE {table} ADD COLUMN description TEXT NOT NULL DEFAULT ''"
-        );
+        let sql = format!("ALTER TABLE {table} ADD COLUMN description TEXT NOT NULL DEFAULT ''");
         conn.execute(&sql, ())
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
@@ -467,11 +486,7 @@ async fn migrate_as_code_json(conn: &Connection) -> Result<(), AppError> {
     Ok(())
 }
 
-async fn table_has_column(
-    conn: &Connection,
-    table: &str,
-    column: &str,
-) -> Result<bool, AppError> {
+async fn table_has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, AppError> {
     let mut rows = conn
         .query(&format!("PRAGMA table_info({table})"), ())
         .await
@@ -522,9 +537,10 @@ mod tests {
     #[tokio::test]
     async fn create_get_list_update_delete() {
         let store = mem().await;
-        let customer: Value =
-            serde_json::from_str(include_str!("../../../semantic/examples/tables/customer.json"))
-                .unwrap();
+        let customer: Value = serde_json::from_str(include_str!(
+            "../../../semantic/examples/tables/customer.json"
+        ))
+        .unwrap();
         store.create(customer.clone()).await.unwrap();
         let got = store.get("table", "customer").await.unwrap();
         assert_eq!(got["name"], "customer");
@@ -550,9 +566,10 @@ mod tests {
     #[tokio::test]
     async fn create_rejects_broken_fk_without_writing() {
         let store = mem().await;
-        let orders: Value =
-            serde_json::from_str(include_str!("../../../semantic/examples/tables/orders.json"))
-                .unwrap();
+        let orders: Value = serde_json::from_str(include_str!(
+            "../../../semantic/examples/tables/orders.json"
+        ))
+        .unwrap();
         assert!(matches!(
             store.create(orders).await,
             Err(AppError::Validation(_))
@@ -577,7 +594,9 @@ mod tests {
                 .unwrap();
         }
         let hits = store.search_columns("region", "keyword", 10).await.unwrap();
-        assert!(hits.iter().any(|h| h.field_name == "region_code" && h.field_role == "dimension"));
+        assert!(hits
+            .iter()
+            .any(|h| h.field_name == "region_code" && h.field_role == "dimension"));
     }
 
     #[tokio::test]

@@ -49,6 +49,19 @@ def resolve_table_name(tables: dict[str, dict], ref: str) -> str | None:
     return lower.get(ref.lower())
 
 
+def resolve_catalog_table(tables: dict[str, dict], ref: str) -> str | None:
+    """Document name for a hub/dimension, including `{name}_table` after cube rename."""
+    hit = resolve_table_name(tables, ref)
+    if hit:
+        return hit
+    want = ref.lower()
+    for name, doc in tables.items():
+        phys = str(doc.get("table") or "").lower()
+        if phys == want or name.lower() == f"{want}_table":
+            return name
+    return None
+
+
 def is_ident(name: str) -> bool:
     return bool(NAME_RE.match(name))
 
@@ -529,6 +542,11 @@ def cube_and_metric_from_view(
         "dimensions": dimensions,
         "facts": facts,
     }
+    root_src = (view.get("sources") or [{}])[0]
+    root_name = root_src.get("table") if isinstance(root_src, dict) else root_src
+    grain = list((tables.get(root_name) or {}).get("pk") or [])
+    if grain:
+        cube["grain"] = grain
 
     member_names = {m["name"] for m in dimensions} | {m["name"] for m in facts}
     metric: dict | None = None
@@ -943,12 +961,197 @@ def spanning_joins(
     return root, tree_steps + extra_steps
 
 
+def _norm_ident(name: object) -> str:
+    return str(name or "").lower()
+
+
+def _resolved_table(graph: dict[str, dict], vertex: str) -> dict:
+    doc = graph.get(vertex) or {}
+    catalog = doc.get("catalog")
+    if catalog and catalog in graph and catalog != vertex:
+        return graph[catalog]
+    if doc:
+        return doc
+    resolved = resolve_catalog_table(graph, vertex)
+    if resolved and resolved in graph:
+        return graph[resolved]
+    return doc
+
+
+def _names_for(graph: dict[str, dict], vertex: str) -> set[str]:
+    names = {_norm_ident(vertex)}
+    doc = _resolved_table(graph, vertex)
+    for key in ("table", "catalog", "name"):
+        if doc.get(key):
+            names.add(_norm_ident(doc[key]))
+    resolved = resolve_catalog_table(graph, vertex)
+    if resolved:
+        names.add(_norm_ident(resolved))
+    return {n for n in names if n}
+
+
+def _ref_hits(graph: dict[str, dict], ref: str, dst: str) -> bool:
+    return bool(_names_for(graph, ref) & _names_for(graph, dst))
+
+
+def _catalog_name(graph: dict[str, dict], vertex: str) -> str:
+    doc = graph.get(vertex) or {}
+    return str(doc.get("catalog") or doc.get("table") or vertex)
+
+
+def _covers_pk(doc: dict, cols: list[str]) -> bool:
+    pk = [str(c) for c in (doc.get("pk") or [])]
+    if not pk:
+        return False
+    have = {_norm_ident(c) for c in cols}
+    return all(_norm_ident(p) in have for p in pk)
+
+
+def _pairs_eq(a: list[tuple[str, str]], b: list[tuple[str, str]]) -> bool:
+    left = {(_norm_ident(x), _norm_ident(y)) for x, y in a}
+    right = {(_norm_ident(x), _norm_ident(y)) for x, y in b}
+    return bool(left) and left == right
+
+
+def _fk_matches(
+    graph: dict[str, dict], src: dict, dst: str, pairs: list[tuple[str, str]]
+) -> bool:
+    for fk in src.get("fk") or []:
+        ref = fk.get("references") or {}
+        if not _ref_hits(graph, str(ref.get("table") or ""), dst):
+            continue
+        fk_pairs = list(zip(fk.get("columns") or [], ref.get("columns") or []))
+        if _pairs_eq([(str(c), str(p)) for c, p in fk_pairs], pairs):
+            return True
+    return False
+
+
+def edge_is_key_relationship(
+    graph: dict[str, dict],
+    child: str,
+    parent: str,
+    on: list[tuple[str, str]],
+) -> bool:
+    """True when the ON columns cover either side's pk. A many-to-many link does not."""
+    child_cols = [c for c, _ in on]
+    parent_cols = [p for _, p in on]
+    if _covers_pk(_resolved_table(graph, parent), parent_cols):
+        return True
+    if _covers_pk(_resolved_table(graph, child), child_cols):
+        return True
+    return False
+
+
+def classify_join_relationship(
+    graph: dict[str, dict],
+    left: str,
+    right: str,
+    on: list[tuple[str, str]],
+    hub_dimensions: set[str] | None = None,
+) -> str | None:
+    """Cardinality beside SQL type. None when pk/fk do not decide — do not guess.
+
+    An fk from ``left`` onto a hub dimension's pk is ``many_to_one`` (fact grain
+    stays). The reverse fk is ``one_to_many``. Matching pks with no fk are
+    ``one_to_one``.
+    """
+    left_doc = _resolved_table(graph, left)
+    right_doc = _resolved_table(graph, right)
+    dims = {_norm_ident(d) for d in (hub_dimensions or set())}
+
+    if _fk_matches(graph, left_doc, right, on) and _covers_pk(
+        right_doc, [col for _, col in on]
+    ):
+        if hub_dimensions is None or _names_for(graph, right) & dims:
+            return "many_to_one"
+        return None
+    flipped = [(b, a) for a, b in on]
+    if _fk_matches(graph, right_doc, left, flipped) and _covers_pk(
+        left_doc, [col for col, _ in on]
+    ):
+        return "one_to_many"
+    if _covers_pk(left_doc, [a for a, _ in on]) and _covers_pk(
+        right_doc, [b for _, b in on]
+    ):
+        return "one_to_one"
+    return None
+
+
+def annotate_hub_relationships(db_dir: Path) -> list[Path]:
+    """Add missing ``relationship`` and cube ``grain``. Never unlink or overwrite."""
+    meta = db_dir / "meta"
+    plan = load_semantic_plan(db_dir)
+    if not plan or not meta.is_dir():
+        return []
+    docs: dict[Path, dict] = {}
+    for path in meta.glob("*.json"):
+        docs[path] = json.loads(path.read_text(encoding="utf-8"))
+    tables = {
+        doc["name"]: doc
+        for doc in docs.values()
+        if doc.get("kind") == "table" and doc.get("name")
+    }
+    changed: list[Path] = []
+    for spec in plan["hubs"]:
+        cube_path = meta / f"{spec['cube']}.json"
+        cube = docs.get(cube_path)
+        if not cube or cube.get("kind") != "cube":
+            continue
+        fact = resolve_catalog_table(tables, spec.get("table"))
+        dims: set[str] = set()
+        for dim in spec.get("dimensions") or []:
+            resolved = resolve_catalog_table(tables, dim)
+            if resolved and resolved != fact:
+                dims.add(resolved)
+        if fact and "grain" not in cube:
+            pk = list((tables.get(fact) or {}).get("pk") or [])
+            if pk:
+                cube["grain"] = pk
+                changed.append(cube_path)
+        view_path = meta / f"{cube.get('view')}.json"
+        view = docs.get(view_path)
+        if not view or view.get("kind") != "view":
+            continue
+
+        def catalog_of(alias: str) -> str:
+            for src in view.get("sources") or []:
+                if (src.get("alias") or src.get("table")) == alias:
+                    return str(src.get("table") or alias)
+            return alias
+
+        touched = False
+        for join in view.get("joins") or []:
+            if join.get("relationship"):
+                continue
+            on = [
+                (pair.get("left_column"), pair.get("right_column"))
+                for pair in join.get("on") or []
+                if pair.get("left_column") and pair.get("right_column")
+            ]
+            rel = classify_join_relationship(
+                tables,
+                catalog_of(str(join.get("left"))),
+                catalog_of(str(join.get("right"))),
+                on,
+                hub_dimensions=dims,
+            )
+            if rel:
+                join["relationship"] = rel
+                touched = True
+        if touched:
+            changed.append(view_path)
+    for path in changed:
+        write_json(path, docs[path])
+    return changed
+
+
 def build_component_view(
     tables: dict[str, dict],
     root: str,
     join_steps: list[tuple[str, str, list[tuple[str, str]]]],
     view_name: str,
     role_nodes: dict[str, dict] | None = None,
+    hub_dimensions: set[str] | None = None,
 ) -> dict:
     role_nodes = role_nodes or {}
     source_order = [root]
@@ -972,16 +1175,18 @@ def build_component_view(
 
     joins = []
     for left, right, on in join_steps:
-        joins.append(
-            {
-                "left": left,
-                "right": right,
-                "type": "inner",
-                "on": [
-                    {"left_column": lc, "right_column": rc} for lc, rc in on
-                ],
-            }
+        join = {
+            "left": left,
+            "right": right,
+            "type": "inner",
+            "on": [{"left_column": lc, "right_column": rc} for lc, rc in on],
+        }
+        rel = classify_join_relationship(
+            tables, left, right, on, hub_dimensions=hub_dimensions
         )
+        if rel:
+            join["relationship"] = rel
+        joins.append(join)
 
     # Build join key equivalence classes over (table, col) pairs linked by join_steps
     uf_parent: dict[tuple[str, str], tuple[str, str]] = {}
@@ -1278,6 +1483,25 @@ def views_from_hubs(
             resolved = resolve_table_name(tables, dim)
             if resolved:
                 allowed_tables.add(resolved)
+        sibling_facts = {
+            resolved
+            for other in hubs
+            if (resolved := resolve_table_name(tables, other.get("table")))
+            and resolved != hub
+        }
+        # Keep a listed sibling only when this hub's fk points at its pk
+        # (bridge → atom/bond). A child fact or a sibling on a shared key stays out.
+        direct_fk_parents = {
+            catalog_of(parent)
+            for child, parent, on in edges
+            if child == hub
+            and edge_is_key_relationship(graph, child, parent, on)
+            and _covers_pk(
+                _resolved_table(graph, parent), [col for _, col in on]
+            )
+        }
+        allowed_tables -= sibling_facts - direct_fk_parents
+        allowed_tables.add(hub)
         allowed_vertices = {
             n
             for n in graph_names
@@ -1288,7 +1512,9 @@ def views_from_hubs(
         hub_edges = [
             e
             for e in edges
-            if e[0] in allowed_vertices and e[1] in allowed_vertices
+            if e[0] in allowed_vertices
+            and e[1] in allowed_vertices
+            and edge_is_key_relationship(graph, e[0], e[1], e[2])
         ]
         comp = [n for n in graph_names if n in allowed_vertices]
         if hub not in comp:
@@ -1304,7 +1530,14 @@ def views_from_hubs(
             n += 1
         used_names.add(view_name)
         views.append(
-            build_component_view(graph, hub, steps, view_name, role_nodes)
+            build_component_view(
+                graph,
+                hub,
+                steps,
+                view_name,
+                role_nodes,
+                hub_dimensions=allowed_tables - {hub},
+            )
         )
     return views
 

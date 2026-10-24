@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS meta_view_joins (
   left_source TEXT NOT NULL,
   right_source TEXT NOT NULL,
   join_type TEXT NOT NULL CHECK (join_type IN ('inner', 'left', 'right', 'full')),
-  on_conditions_json TEXT NOT NULL
+  on_conditions_json TEXT NOT NULL,
+  relationship TEXT CHECK (relationship IS NULL OR relationship IN ('many_to_one', 'one_to_one', 'one_to_many'))
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS meta_view_columns (
@@ -69,7 +70,8 @@ CREATE TABLE IF NOT EXISTS meta_cubes (
   target TEXT NOT NULL,
   view_name TEXT NOT NULL REFERENCES meta_views(name),
   description TEXT NOT NULL,
-  role_json TEXT NOT NULL DEFAULT '"all"'
+  role_json TEXT NOT NULL DEFAULT '"all"',
+  grain_json TEXT
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS meta_cube_dimensions (

@@ -352,6 +352,10 @@
         "left": { "$ref": "#/$defs/name" },
         "right": { "$ref": "#/$defs/name" },
         "type": { "enum": ["inner", "left", "right", "full"] },
+        "relationship": {
+          "enum": ["many_to_one", "one_to_one", "one_to_many"],
+          "description": "D29 카디널리티. SQL type(inner/left/right/full)과 별개. 없으면 그레인 거절은 이 조인을 보지 않는다."
+        },
         "on": {
           "type": "array",
           "minItems": 1,
@@ -414,7 +418,13 @@
           "type": "array",
           "items": { "$ref": "#/$defs/fact" }
         },
-        "role": { "$ref": "#/$defs/role" }
+        "role": { "$ref": "#/$defs/role" },
+        "grain": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/physical_ident" },
+          "description": "D29 큐브 그레인. 허브 table.pk. 집계 전 이 키가 조인으로 복제되면 팬아웃이다."
+        }
       }
     },
     "dimension": {

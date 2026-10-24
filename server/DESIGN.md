@@ -31,7 +31,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `pipeline/` | 시맨틱 SQL AST → `compile_*` → 물리 SELECT. 공개 API는 `crate::pipeline::*` 유지 |
 | `pipeline/mod` | 엔트리·단일 큐브·집합 연산(UNION/INTERSECT/EXCEPT) 오케스트레이션. FROM `relation_alias_cube`는 첫 식별자를 큐브로 정규화(`cube`·`cube.phys`·`AS alias`) |
 | `pipeline/existence` | **D27** 리터럴-only 프로젝션 → existence dim rewrite (`SELECT *` 불허) |
-| `pipeline/join` | 다중 큐브 JOIN · ON 검증/리라이트 |
+| `pipeline/join` | 다중 큐브 JOIN · ON 검증/리라이트. **D29** 뷰 안 `one_to_many` 팬아웃·캐즘은 `compile` `assert_no_fanout_or_chasm` (`SQL_MCP_GRAIN_GUARD`, 기본 끔). 합계 재작성 없음 |
 | `pipeline/clauses` | SELECT 프로젝션 분류·adhoc 집계·WHERE 세그먼트·GROUP BY/HAVING/ORDER BY/LIMIT. **D28** 비가산 fact `SUM`/`AVG`/`COUNT(col)` 가드는 `compile/rewrite` |
 | `semantic/typed` | JSON ↔ 타입별 `meta_*` 분해/재조립 |
 | `semantic` | 스키마·연결 검증 · libSQL CRUD · 검색 인덱스 재구축 |
@@ -86,6 +86,7 @@ Cube.js `*Query` 어댑터와 같은 역할: **생성기 쪽 방언**, 자유 SQ
 | `SQL_MCP_TRANSPORT` | `stdio`면 stdio 모드(`--stdio`와 동일). 미설정·기타는 HTTP |
 | `SQL_MCP_MAX_ROWS` / `SQL_MCP_SAMPLE_LIMIT` / `SQL_MCP_TIMEOUT_MS` | 상한 및 쿼리 타임아웃 |
 | `SQL_MCP_MODE` | `query`(기본)=DW 질의 · 메타 변경 금지 · `author`=메타 CRUD 허용 |
+| `SQL_MCP_GRAIN_GUARD` | 쉼표로 구분한 cube `target`. 그 타깃만 D29 팬아웃·캐즘 거절. 미설정이면 꺼짐 |
 | `SQL_MCP_DEFAULT_ROLE` | `caller_role` 미지정 시 기본 적용할 역할 |
 | `SQL_MCP_EMBEDDING_URL` / `SQL_MCP_EMBEDDING_API_KEY` | 둘 다 있으면 임베딩·vector/hybrid. 없으면 keyword(BM25)만(D14) |
 | `SQL_MCP_EMBEDDING_MODEL` | 기본 `text-embedding-3-small` |

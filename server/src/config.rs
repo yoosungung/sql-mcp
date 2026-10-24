@@ -54,12 +54,8 @@ impl Config {
                 path.display()
             ))
         })?;
-        let mut cfg: Config = toml::from_str(&raw).map_err(|e| {
-            AppError::Validation(format!(
-                "invalid config {}: {e}",
-                path.display()
-            ))
-        })?;
+        let mut cfg: Config = toml::from_str(&raw)
+            .map_err(|e| AppError::Validation(format!("invalid config {}: {e}", path.display())))?;
         if let Ok(listen) = env::var("SQL_MCP_LISTEN") {
             cfg.listen = listen;
         }
@@ -139,6 +135,17 @@ impl McpMode {
     pub fn allows_metadata_mutation(self) -> bool {
         matches!(self, Self::Author)
     }
+}
+
+/// D29: comma-separated cube `target` ids. Unset or empty keeps fan-out/chasm checks off.
+pub fn grain_guard_on(target: &str) -> bool {
+    let Ok(raw) = env::var("SQL_MCP_GRAIN_GUARD") else {
+        return false;
+    };
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .any(|s| s == target)
 }
 
 #[cfg(test)]

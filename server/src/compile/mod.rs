@@ -6,19 +6,20 @@ mod view_prune;
 #[cfg(test)]
 mod tests;
 
-pub use rewrite::{expand_semantic_subqueries, resolve_dim_as_code, wrap_as_code_joins};
 pub(crate) use rewrite::assert_additive_aggregates;
+pub use rewrite::{expand_semantic_subqueries, resolve_dim_as_code, wrap_as_code_joins};
+pub(crate) use view_prune::catalog_for_alias;
 pub use view_prune::{
     compile_view_from, compile_view_from_opts, resolve_view_for_cube, resolve_view_for_cube_opts,
 };
-pub(crate) use view_prune::catalog_for_alias;
 
 use rewrite::{
-    collect_member_view_cols, collect_order_by_req_cols, cube_member_to_physical_map, expr_references_any_metric, find_cube_member, find_dimension,
-    inject_filter_into_aggregates, is_ident_char, member_encrypted, output_col_expr,
-    rewrite_composite_metric_projection, rewrite_having_expr, rewrite_member_or_view_idents,
-    rewrite_metric_expression, rewrite_order_by_clauses, rewrite_view_idents,
-    validate_cube_member_expressions, wrap_as_code_joins_with_aliases,
+    collect_member_view_cols, collect_order_by_req_cols, cube_member_to_physical_map,
+    expr_references_any_metric, find_cube_member, find_dimension, inject_filter_into_aggregates,
+    is_ident_char, member_encrypted, output_col_expr, rewrite_composite_metric_projection,
+    rewrite_having_expr, rewrite_member_or_view_idents, rewrite_metric_expression,
+    rewrite_order_by_clauses, rewrite_view_idents, validate_cube_member_expressions,
+    wrap_as_code_joins_with_aliases,
 };
 use view_prune::pin_view_mappings_to_included;
 
@@ -26,9 +27,9 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
-use crate::ast_select::{SelectClauses, assemble_select_with_clauses};
+use crate::ast_select::{assemble_select_with_clauses, SelectClauses};
 use crate::dialect::DialectProfile;
-use crate::error::AppError;
+use crate::error::{unknown_member_message, AppError};
 use crate::expr_guard::{
     assert_filter_expr, assert_having_expr, assert_idents_known, assert_metadata_metric_expr,
     assert_metric_expr, assert_scalar_expr, assert_segment_filter_expr, contains_window_sql,
@@ -79,11 +80,7 @@ pub fn physical_from(table_doc: &Value) -> Result<String, AppError> {
         .get("table")
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("table.table required".into()))?;
-    Ok(format!(
-        "{}.{}",
-        quote_ident(schema)?,
-        quote_ident(table)?
-    ))
+    Ok(format!("{}.{}", quote_ident(schema)?, quote_ident(table)?))
 }
 
 /// Compile `SELECT <cols> FROM physical` with AND-ed table filters (ARCHITECTURE §1).
@@ -143,7 +140,10 @@ pub(crate) fn collect_table_filters(
         filters.push(format!("({resolved})"));
     }
     if let Some(role) = role {
-        if let Some(pfs) = table_doc.get("permission_filters").and_then(|v| v.as_array()) {
+        if let Some(pfs) = table_doc
+            .get("permission_filters")
+            .and_then(|v| v.as_array())
+        {
             for pf in pfs {
                 if pf.get("role").and_then(|v| v.as_str()) == Some(role) {
                     if let Some(expr) = pf.get("expression").and_then(|v| v.as_str()) {
@@ -316,9 +316,9 @@ pub(crate) fn validate_member_or_scalar_expr(
     }
     let trimmed = expr.trim();
     if !trimmed.is_empty() && trimmed.chars().all(is_ident_char) {
-        return Err(AppError::Validation(format!(
+        return Err(AppError::Validation(unknown_member_message(&format!(
             "unknown semantic member: {trimmed}"
-        )));
+        ))));
     }
     assert_scalar_expr(expr)?;
     assert_idents_known(expr, members)?;
@@ -453,12 +453,12 @@ pub(crate) fn compile_cube_query_ungrouped(
     let view = resolve_view_for_cube_opts(docs, cube, &req_cols, false, spec.distinct)?;
     let combine = view.get("combine").and_then(|v| v.as_str()).unwrap_or("");
     let set_alias = matches!(combine, "union" | "minus").then_some("_sem_uv");
-    let mut from =
-        compile_view_from_opts(docs, &view, role, Some(&req_cols), &query_preds, binds)?;
+    let mut from = compile_view_from_opts(docs, &view, role, Some(&req_cols), &query_preds, binds)?;
     if let Some(a) = set_alias {
         from = format!("{from} AS {}", quote_ident(a)?);
     }
     let view = pin_view_mappings_to_included(&view, &req_cols)?;
+    apply_grain_guard(cube, &view, &req_cols, false)?;
 
     let view_cols = view_column_name_set(&view);
     validate_cube_member_expressions(cube, &view_cols)?;
@@ -560,6 +560,24 @@ pub(crate) fn compile_cube_query_ungrouped(
     }
     assert_select_only(&sql)?;
     Ok(sql)
+}
+
+/// D29 runs only when `SQL_MCP_GRAIN_GUARD` lists this cube's target. Off by default.
+fn apply_grain_guard(
+    cube: &Value,
+    view: &Value,
+    req_cols: &HashSet<String>,
+    aggregating: bool,
+) -> Result<(), AppError> {
+    let target = cube.get("target").and_then(|v| v.as_str()).unwrap_or("");
+    if !crate::config::grain_guard_on(target) {
+        return Ok(());
+    }
+    if view.get("combine").and_then(|v| v.as_str()) != Some("join") {
+        return Ok(());
+    }
+    let included = view_prune::included_tables_for_join_view(view, Some(req_cols))?;
+    view_prune::assert_no_fanout_or_chasm(view, &included, aggregating)
 }
 
 pub fn compile_cube_query(
@@ -756,7 +774,8 @@ pub fn compile_cube_query(
             validate_member_or_scalar_expr(cube, &members, &p.member, role)?;
         }
     }
-    let mut proj_aliases: HashSet<String> = spec.projections.iter().map(|p| p.alias.clone()).collect();
+    let mut proj_aliases: HashSet<String> =
+        spec.projections.iter().map(|p| p.alias.clone()).collect();
     for gname in &active_gb {
         proj_aliases.insert(gname.clone());
     }
@@ -874,12 +893,12 @@ pub fn compile_cube_query(
     let view = resolve_view_for_cube(docs, cube, &req_cols, is_semi)?;
     let combine = view.get("combine").and_then(|v| v.as_str()).unwrap_or("");
     let set_alias = matches!(combine, "union" | "minus").then_some("_sem_uv");
-    let mut from =
-        compile_view_from_opts(docs, &view, role, Some(&req_cols), &query_preds, binds)?;
+    let mut from = compile_view_from_opts(docs, &view, role, Some(&req_cols), &query_preds, binds)?;
     if let Some(a) = set_alias {
         from = format!("{from} AS {}", quote_ident(a)?);
     }
     let view = pin_view_mappings_to_included(&view, &req_cols)?;
+    apply_grain_guard(cube, &view, &req_cols, true)?;
 
     let view_cols = view_column_name_set(&view);
     validate_cube_member_expressions(cube, &view_cols)?;
@@ -890,8 +909,9 @@ pub fn compile_cube_query(
             rewrite_metric_expression(m_expr, docs, cube, &view, set_alias, role, binds)?;
         if !shared_metric_filter {
             if let Some(f_expr) = filter_expr(m_doc.get("filter")) {
-                let f_rewritten =
-                    rewrite_member_or_view_idents(f_expr, docs, cube, &view, set_alias, role, binds)?;
+                let f_rewritten = rewrite_member_or_view_idents(
+                    f_expr, docs, cube, &view, set_alias, role, binds,
+                )?;
                 rewritten = inject_filter_into_aggregates(&rewritten, &f_rewritten)?;
             }
         }
@@ -1071,7 +1091,11 @@ pub fn compile_cube_query(
     Ok(sql)
 }
 
-pub(crate) fn check_member_role(cube: &Value, name: &str, role: Option<&str>) -> Result<(), AppError> {
+pub(crate) fn check_member_role(
+    cube: &Value,
+    name: &str,
+    role: Option<&str>,
+) -> Result<(), AppError> {
     for key in ["dimensions", "facts"] {
         if let Some(items) = cube.get(key).and_then(|v| v.as_array()) {
             for item in items {
@@ -1117,4 +1141,3 @@ pub(crate) fn compile_dimension_group_expr(
     let map = cube_member_to_physical_map(cube, view, set_alias)?;
     crate::ast_rewrite::rewrite_idents(dim_name, &map)
 }
-

@@ -25,7 +25,7 @@ use crate::compile::{
     CubeQuerySpec,
 };
 use crate::dialect::DialectProfile;
-use crate::error::AppError;
+use crate::error::{clarify_sql_parse, select_star_message, AppError};
 use crate::expr_guard::contains_aggregate_sql;
 use crate::select_guard::assert_select_only;
 
@@ -93,8 +93,8 @@ pub fn compile_semantic_sql_with_binds(
 pub(crate) fn parse_query(sql: &str) -> Result<Query, AppError> {
     assert_select_only(sql)?;
     let dialect = GenericDialect {};
-    let stmts =
-        Parser::parse_sql(&dialect, sql).map_err(|e| AppError::SqlParse(e.to_string()))?;
+    let stmts = Parser::parse_sql(&dialect, sql)
+        .map_err(|e| AppError::SqlParse(clarify_sql_parse(&e.to_string())))?;
     let Statement::Query(query) = stmts
         .into_iter()
         .next()
@@ -327,9 +327,7 @@ fn compile_passthrough_select(
             item,
             SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(_, _)
         ) {
-            return Err(AppError::Validation(
-                "SELECT * not allowed in semantic SQL".into(),
-            ));
+            return Err(AppError::Validation(select_star_message()));
         }
         projs.push(maybe_expand_expr(&item.to_string(), docs, role, binds)?);
     }
@@ -604,7 +602,11 @@ pub(crate) fn assert_same_cube_target(docs: &[Value], cubes: &[String]) -> Resul
     Ok(())
 }
 
-pub(crate) fn find_doc<'a>(docs: &'a [Value], kind: &str, name: &str) -> Result<&'a Value, AppError> {
+pub(crate) fn find_doc<'a>(
+    docs: &'a [Value],
+    kind: &str,
+    name: &str,
+) -> Result<&'a Value, AppError> {
     docs.iter()
         .find(|d| {
             d.get("kind").and_then(|v| v.as_str()) == Some(kind)

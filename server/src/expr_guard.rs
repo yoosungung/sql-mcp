@@ -9,24 +9,85 @@ use sqlparser::ast::{
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
-use crate::error::AppError;
+use crate::error::{forbidden_function_message, unknown_member_message, AppError};
 
 const METRIC_FUNCS: &[&str] = &[
-    "sum", "count", "avg", "min", "max", "coalesce", "nullif", "greatest", "least", "abs", "round",
-    "date_trunc", "lower", "upper", "trim", "substr", "substring", "length", "replace", "instr",
-    "ifnull", "iif", "date", "datetime", "strftime", "year", "month", "day", "divide",
-    "current_date", "current_timestamp", "now", "datediff",
+    "sum",
+    "count",
+    "avg",
+    "min",
+    "max",
+    "coalesce",
+    "nullif",
+    "greatest",
+    "least",
+    "abs",
+    "round",
+    "date_trunc",
+    "lower",
+    "upper",
+    "trim",
+    "substr",
+    "substring",
+    "length",
+    "replace",
+    "instr",
+    "ifnull",
+    "iif",
+    "date",
+    "datetime",
+    "strftime",
+    "year",
+    "month",
+    "day",
+    "divide",
+    "current_date",
+    "current_timestamp",
+    "now",
+    "datediff",
 ];
 
 const WINDOW_ONLY_FUNCS: &[&str] = &[
-    "row_number", "rank", "dense_rank", "ntile", "percent_rank", "cume_dist", "lag", "lead",
-    "first_value", "last_value", "nth_value",
+    "row_number",
+    "rank",
+    "dense_rank",
+    "ntile",
+    "percent_rank",
+    "cume_dist",
+    "lag",
+    "lead",
+    "first_value",
+    "last_value",
+    "nth_value",
 ];
 
 const FILTER_FUNCS: &[&str] = &[
-    "coalesce", "nullif", "lower", "upper", "trim", "abs", "round", "date_trunc", "substr",
-    "substring", "length", "replace", "instr", "ifnull", "iif", "date", "datetime", "strftime",
-    "year", "month", "day", "divide", "current_date", "current_timestamp", "now", "datediff",
+    "coalesce",
+    "nullif",
+    "lower",
+    "upper",
+    "trim",
+    "abs",
+    "round",
+    "date_trunc",
+    "substr",
+    "substring",
+    "length",
+    "replace",
+    "instr",
+    "ifnull",
+    "iif",
+    "date",
+    "datetime",
+    "strftime",
+    "year",
+    "month",
+    "day",
+    "divide",
+    "current_date",
+    "current_timestamp",
+    "now",
+    "datediff",
 ];
 
 const EXTRACT_FIELDS: &[DateTimeField] = &[
@@ -124,8 +185,12 @@ fn contains_aggregate(expr: &Expr) -> bool {
             ..
         } => {
             contains_aggregate(expr)
-                || substring_from.as_ref().is_some_and(|e| contains_aggregate(e))
-                || substring_for.as_ref().is_some_and(|e| contains_aggregate(e))
+                || substring_from
+                    .as_ref()
+                    .is_some_and(|e| contains_aggregate(e))
+                || substring_for
+                    .as_ref()
+                    .is_some_and(|e| contains_aggregate(e))
         }
         Expr::Trim {
             expr,
@@ -147,12 +212,10 @@ fn contains_aggregate(expr: &Expr) -> bool {
             ..
         } => {
             operand.as_ref().is_some_and(|o| contains_aggregate(o))
-                || conditions.iter().any(|cw| {
-                    contains_aggregate(&cw.condition) || contains_aggregate(&cw.result)
-                })
-                || else_result
-                    .as_ref()
-                    .is_some_and(|e| contains_aggregate(e))
+                || conditions
+                    .iter()
+                    .any(|cw| contains_aggregate(&cw.condition) || contains_aggregate(&cw.result))
+                || else_result.as_ref().is_some_and(|e| contains_aggregate(e))
         }
         _ => false,
     }
@@ -247,9 +310,9 @@ pub fn assert_idents_known(expr: &str, known: &HashSet<String>) -> Result<(), Ap
     let found = extract_idents(expr)?;
     for id in &found {
         if !known.contains(id) {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::Validation(unknown_member_message(&format!(
                 "unknown identifier in expression: {id}"
-            )));
+            ))));
         }
     }
     Ok(())
@@ -311,8 +374,8 @@ fn replace_binds(expr: &str) -> (String, HashSet<String>) {
 fn parse_as_select_expr(expr: &str) -> Result<Expr, AppError> {
     let sql = format!("SELECT ({expr})");
     let dialect = GenericDialect {};
-    let stmts =
-        Parser::parse_sql(&dialect, &sql).map_err(|e| AppError::Validation(format!("expr: {e}")))?;
+    let stmts = Parser::parse_sql(&dialect, &sql)
+        .map_err(|e| AppError::Validation(format!("expr: {e}")))?;
     if stmts.len() != 1 {
         return Err(AppError::Validation(
             "expression must be a single expr".into(),
@@ -356,13 +419,9 @@ fn parse_as_where_expr(expr: &str) -> Result<Expr, AppError> {
                 .selection
                 .clone()
                 .ok_or_else(|| AppError::Validation("filter required".into())),
-            _ => Err(AppError::Validation(
-                "filter must be a boolean expr".into(),
-            )),
+            _ => Err(AppError::Validation("filter must be a boolean expr".into())),
         },
-        _ => Err(AppError::Validation(
-            "filter must be a boolean expr".into(),
-        )),
+        _ => Err(AppError::Validation("filter must be a boolean expr".into())),
     }
 }
 
@@ -510,8 +569,9 @@ fn walk_value_expr_opts(
                     )));
                 }
                 if !METRIC_FUNCS.contains(&lower.as_str()) {
-                    return Err(AppError::Validation(format!(
-                        "function not allowed in metric expr: {name}"
+                    return Err(AppError::Validation(forbidden_function_message(
+                        "metric expr",
+                        &name,
                     )));
                 }
                 if lower == "iif" {
@@ -527,11 +587,7 @@ fn walk_value_expr_opts(
     }
 }
 
-fn walk_bool_expr_full(
-    expr: &Expr,
-    allow_agg: bool,
-    allow_subquery: bool,
-) -> Result<(), AppError> {
+fn walk_bool_expr_full(expr: &Expr, allow_agg: bool, allow_subquery: bool) -> Result<(), AppError> {
     if !allow_subquery {
         reject_subquery(expr)?;
     }
@@ -591,8 +647,8 @@ fn walk_bool_expr_full(
             let name = func.name.to_string();
             let lower = name.to_ascii_lowercase();
             if !FILTER_FUNCS.contains(&lower.as_str()) {
-                return Err(AppError::Validation(format!(
-                    "function not allowed in filter: {name}"
+                return Err(AppError::Validation(forbidden_function_message(
+                    "filter", &name,
                 )));
             }
             if lower == "iif" {
@@ -669,9 +725,7 @@ fn walk_function_args_opts(
                     FunctionArg::Unnamed(FunctionArgExpr::Wildcard)
                     | FunctionArg::Unnamed(FunctionArgExpr::QualifiedWildcard(_)) => {}
                     _ => {
-                        return Err(AppError::Validation(
-                            "unsupported function argument".into(),
-                        ));
+                        return Err(AppError::Validation("unsupported function argument".into()));
                     }
                 }
             }
@@ -853,11 +907,15 @@ mod tests {
 
     #[test]
     fn metadata_metric_and_segment_filter_allow_subqueries() {
-        assert_metadata_metric_expr("sum(sale_amount) * 100.0 / (SELECT sum(sale_amount) FROM sales)")
-            .unwrap();
+        assert_metadata_metric_expr(
+            "sum(sale_amount) * 100.0 / (SELECT sum(sale_amount) FROM sales)",
+        )
+        .unwrap();
         assert_segment_filter_expr("sale_amount > (SELECT avg(sale_amount) FROM sales)").unwrap();
-        assert_segment_filter_expr("customer_id IN (SELECT customer_id FROM sales WHERE status_code = 'PAID')")
-            .unwrap();
+        assert_segment_filter_expr(
+            "customer_id IN (SELECT customer_id FROM sales WHERE status_code = 'PAID')",
+        )
+        .unwrap();
         assert_segment_filter_expr("EXISTS (SELECT 1 FROM sales WHERE sale_amount > 1000)")
             .unwrap();
 
@@ -871,8 +929,10 @@ mod tests {
 
     #[test]
     fn accepts_window_functions_and_collects_over_idents() {
-        assert_scalar_expr("ROW_NUMBER() OVER (PARTITION BY region_code ORDER BY sale_amount DESC)")
-            .unwrap();
+        assert_scalar_expr(
+            "ROW_NUMBER() OVER (PARTITION BY region_code ORDER BY sale_amount DESC)",
+        )
+        .unwrap();
         assert_scalar_expr("SUM(sale_amount) OVER (PARTITION BY region_code)").unwrap();
         assert_scalar_expr("LAG(sale_amount, 1, 0) OVER (ORDER BY order_date)").unwrap();
         assert_adhoc_agg_expr("RANK() OVER (ORDER BY SUM(sale_amount) DESC)").unwrap();

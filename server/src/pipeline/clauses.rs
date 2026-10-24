@@ -3,17 +3,19 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::{json, Value};
 use sqlparser::ast::{
-    BinaryOperator, Expr, GroupByExpr, Ident, LimitClause, OrderByExpr, OrderByKind, Query,
-    Select, SelectItem, SetExpr, Statement, Value as SqlValue,
+    BinaryOperator, Expr, GroupByExpr, Ident, LimitClause, OrderByExpr, OrderByKind, Query, Select,
+    SelectItem, SetExpr, Statement, Value as SqlValue,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
-use crate::compile::{check_role_access, CubeProjection, quote_ident};
-use crate::error::AppError;
+use crate::compile::{check_role_access, quote_ident, CubeProjection};
+use crate::error::{
+    order_by_not_alias_message, select_star_message, unknown_member_message, AppError,
+};
 use crate::expr_guard::{
-    assert_adhoc_agg_expr, assert_idents_known, assert_scalar_expr,
-    contains_aggregate_sql, contains_window_sql, extract_idents,
+    assert_adhoc_agg_expr, assert_idents_known, assert_scalar_expr, contains_aggregate_sql,
+    contains_window_sql, extract_idents,
 };
 
 use super::find_doc;
@@ -126,9 +128,9 @@ pub(crate) fn try_projection_member(
             parts[1].value.clone(),
             alias.value.clone(),
         ))),
-        SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(_, _) => Err(
-            AppError::Validation("SELECT * not allowed in semantic SQL".into()),
-        ),
+        SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(_, _) => {
+            Err(AppError::Validation(select_star_message()))
+        }
         _ => Ok(None),
     }
 }
@@ -151,10 +153,7 @@ pub(crate) fn sanitize_adhoc_alias(expr: &str) -> String {
     if s.is_empty() {
         return "adhoc".into();
     }
-    if s.chars()
-        .next()
-        .is_some_and(|c| c.is_ascii_digit())
-    {
+    if s.chars().next().is_some_and(|c| c.is_ascii_digit()) {
         s = format!("m_{s}");
     }
     s
@@ -170,9 +169,9 @@ pub(crate) fn resolve_member_side(
         for (alias, cube) in sides {
             if alias == q || cube == q {
                 if !member_on_cube(docs, cube, member)? {
-                    return Err(AppError::Validation(format!(
+                    return Err(AppError::Validation(unknown_member_message(&format!(
                         "unknown semantic member: {q}.{member}"
-                    )));
+                    ))));
                 }
                 return Ok((alias.clone(), cube.clone()));
             }
@@ -189,16 +188,20 @@ pub(crate) fn resolve_member_side(
     }
     match hits.len() {
         1 => Ok(hits.remove(0)),
-        0 => Err(AppError::Validation(format!(
+        0 => Err(AppError::Validation(unknown_member_message(&format!(
             "unknown semantic member: {member}"
-        ))),
+        )))),
         _ => Err(AppError::Validation(format!(
             "ambiguous member {member}; qualify with cube alias"
         ))),
     }
 }
 
-pub(crate) fn member_on_cube(docs: &[Value], cube_name: &str, member: &str) -> Result<bool, AppError> {
+pub(crate) fn member_on_cube(
+    docs: &[Value],
+    cube_name: &str,
+    member: &str,
+) -> Result<bool, AppError> {
     if docs.iter().any(|d| {
         d.get("kind").and_then(|v| v.as_str()) == Some("metric")
             && d.get("cube").and_then(|v| v.as_str()) == Some(cube_name)
@@ -277,9 +280,9 @@ pub(crate) fn complex_expr_for_join_side(
         }
     }
     match matching_sides.len() {
-        0 => Err(AppError::Validation(format!(
+        0 => Err(AppError::Validation(unknown_member_message(&format!(
             "unknown semantic member in expression: {raw_expr}"
-        ))),
+        )))),
         1 => {
             if matching_sides[0] == side_alias {
                 Ok(Some(expr))
@@ -478,7 +481,12 @@ pub(crate) fn replace_agg_calls_with_adhoc(
                             arg: sqlparser::ast::FunctionArgExpr::Expr(e),
                             ..
                         } => {
-                            replace_agg_calls_with_adhoc(e, member_names, adhoc_idx, adhoc_metrics)?;
+                            replace_agg_calls_with_adhoc(
+                                e,
+                                member_names,
+                                adhoc_idx,
+                                adhoc_metrics,
+                            )?;
                         }
                         _ => {}
                     }
@@ -489,7 +497,12 @@ pub(crate) fn replace_agg_calls_with_adhoc(
                     replace_agg_calls_with_adhoc(e, member_names, adhoc_idx, adhoc_metrics)?;
                 }
                 for ob in &mut spec.order_by {
-                    replace_agg_calls_with_adhoc(&mut ob.expr, member_names, adhoc_idx, adhoc_metrics)?;
+                    replace_agg_calls_with_adhoc(
+                        &mut ob.expr,
+                        member_names,
+                        adhoc_idx,
+                        adhoc_metrics,
+                    )?;
                 }
             }
             Ok(())
@@ -534,7 +547,6 @@ pub(crate) fn replace_agg_calls_with_adhoc(
         _ => Ok(()),
     }
 }
-
 
 pub(crate) fn classify_projection_for_cube(
     select: &Select,
@@ -586,8 +598,7 @@ pub(crate) fn classify_projection_for_cube(
                     }
                     None if !is_single_cube => {
                         if let Some(sides) = join_sides {
-                            let (owner_alias, _) =
-                                resolve_member_side(docs, sides, None, &member)?;
+                            let (owner_alias, _) = resolve_member_side(docs, sides, None, &member)?;
                             if owner_alias != only {
                                 continue;
                             }
@@ -617,9 +628,9 @@ pub(crate) fn classify_projection_for_cube(
                 });
                 out.attributed_items.push((idx, out_alias));
             } else if is_single_cube || qual.is_some() {
-                return Err(AppError::Validation(format!(
+                return Err(AppError::Validation(unknown_member_message(&format!(
                     "unknown semantic member: {member}"
-                )));
+                ))));
             }
             continue;
         }
@@ -628,20 +639,13 @@ pub(crate) fn classify_projection_for_cube(
             SelectItem::UnnamedExpr(e) => (e, None),
             SelectItem::ExprWithAlias { expr, alias } => (expr, Some(alias.value.clone())),
             SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(_, _) => {
-                return Err(AppError::Validation(
-                    "SELECT * not allowed in semantic SQL".into(),
-                ));
+                return Err(AppError::Validation(select_star_message()));
             }
         };
 
         let mut stripped_expr = if is_single_cube {
             expand_segments_and_strip_qualifier(
-                raw_expr,
-                &empty_seg,
-                cube_name,
-                only_alias,
-                true,
-                None,
+                raw_expr, &empty_seg, cube_name, only_alias, true, None,
             )?
         } else {
             let Some(alias) = only_alias else {
@@ -842,7 +846,11 @@ pub(crate) fn expr_belongs_to_cube(
     Ok(!bare.is_empty() && bare.iter().all(|b| known.contains(b)))
 }
 
-pub(crate) fn collect_expr_quals_and_idents(expr: &Expr, quals: &mut Vec<String>, bare: &mut Vec<String>) {
+pub(crate) fn collect_expr_quals_and_idents(
+    expr: &Expr,
+    quals: &mut Vec<String>,
+    bare: &mut Vec<String>,
+) {
     match expr {
         Expr::Identifier(id) => bare.push(id.value.clone()),
         Expr::CompoundIdentifier(parts) if parts.len() == 2 => {
@@ -1024,7 +1032,14 @@ pub(crate) fn rewrite_where_ast(
             expr: e, pattern, ..
         } => {
             rewrite_where_ast(e, seg_map, cube_name, only_alias, is_single_cube, role)?;
-            rewrite_where_ast(pattern, seg_map, cube_name, only_alias, is_single_cube, role)
+            rewrite_where_ast(
+                pattern,
+                seg_map,
+                cube_name,
+                only_alias,
+                is_single_cube,
+                role,
+            )
         }
         Expr::Function(func) => {
             if let sqlparser::ast::FunctionArguments::List(list) = &mut func.args {
@@ -1052,14 +1067,7 @@ pub(crate) fn rewrite_where_ast(
             }
             if let Some(sqlparser::ast::WindowType::WindowSpec(spec)) = &mut func.over {
                 for e in &mut spec.partition_by {
-                    rewrite_where_ast(
-                        e,
-                        seg_map,
-                        cube_name,
-                        only_alias,
-                        is_single_cube,
-                        role,
-                    )?;
+                    rewrite_where_ast(e, seg_map, cube_name, only_alias, is_single_cube, role)?;
                 }
                 for ob in &mut spec.order_by {
                     rewrite_where_ast(
@@ -1365,8 +1373,8 @@ pub(crate) fn extract_order_by(
                 }
                 Expr::Value(v) if v.to_string().parse::<usize>().is_ok() => v.to_string(),
                 other => {
-                    return Err(AppError::Validation(format!(
-                        "ORDER BY must reference a semantic column or alias, got: {other}"
+                    return Err(AppError::Validation(order_by_not_alias_message(
+                        &other.to_string(),
                     )));
                 }
             }
@@ -1466,4 +1474,3 @@ pub(crate) fn parse_non_negative_int_expr(
         ))),
     }
 }
-

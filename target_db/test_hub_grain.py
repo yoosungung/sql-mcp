@@ -20,6 +20,21 @@ def test_local_hub_views_stay_inside_plan() -> None:
     assert local_view_grain_failures() == []
 
 
+def test_dry_run_tables_stay_inside_hub_and_flag_a_sibling() -> None:
+    hub = {
+        "table": "results",
+        "cube": "f1_race_results",
+        "dimensions": ["races", "circuits"],
+    }
+    inside = (
+        'SELECT "resultId" FROM "results" '
+        'INNER JOIN "races" ON "results"."raceId" = "races"."raceId"'
+    )
+    assert extra_compiled_tables(inside, hub) == set()
+    outside = inside + ' JOIN "lapTimes" ON "lapTimes"."raceId" = "races"."raceId"'
+    assert "laptimes" in extra_compiled_tables(outside, hub)
+
+
 def test_allowed_tables_include_hub_and_dims() -> None:
     names = allowed_tables(
         {"table": "results", "cube": "f1_race_results", "dimensions": ["races", "drivers"]}

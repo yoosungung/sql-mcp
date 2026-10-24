@@ -1,189 +1,63 @@
 # ROADMAP.md
 
-수행 계획·순서·미결정 항목. 일정(일/주) 추정은 두지 않는다 — 마일스톤과 의존성으로만 나눈다.
+수행 계획·순서·미결정 항목. 일정(일/주) 추정은 두지 않는다 — 마일스톤과 의존성으로만 나눈다. 완료는 한 줄, 남은 일만 상세. 계약 본문은 [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## 목표
 
-Rust MCP(`rmcp`) 서버: **임베디드 시맨틱 DB** + **복수 타깃 DB** 조회(SELECT) + **메타데이터 CRUD(JSON)**.  
-Frontend / Admin API / **세션형 Streamable HTTP**는 **취소**. Transport는 **일반 HTTP**(기본) + **stdio**(로컬).
+Rust MCP(`rmcp`) 서버: **임베디드 시맨틱 DB** + **복수 타깃 DB** 조회(SELECT) + **메타데이터 CRUD(JSON)**. Transport는 **일반 HTTP**(기본) + **stdio**(로컬). Frontend / Admin API / 세션형 Streamable HTTP는 취소.
 
-## 확정된 결정
+## 완료
 
-| 항목 | 결정 |
-|------|------|
-| 시맨틱 DB | **MCP 프로세스에 임베드** (원격 시맨틱 서버 없음) |
-| 시맨틱 엔진 | **libSQL** (임베디드) — 네이티브 벡터·FTS, 파일 하나로 M1 CRUD·이후 검색에 적합 |
-| 시맨틱 등록 문서 | `table` · `view` · `cube` · `metric` · `segment`. 스키마·예시는 `semantic/` |
-| 조회 대상 | **타깃 DB**, **복수** 허용 |
-| 타깃 SQL | SELECT only |
-| 메타 | MCP `metadata_*` CRUD, **JSON 바디**. 검증은 `semantic/schema/document.schema.json` |
-| 컬럼 검색 | BM25/벡터/hybrid — 인덱스는 등록 JSON 투영(D12). 임베딩=외부 API, 없으면 강화 BM25(D14) |
-| MCP 툴 | `list_databases`, `list_tables`, `describe_table`, `search_columns`, `sample_column`(cube+member), `execute_sql`(+as_code 조인), `metadata_*` — DW 표면 인자는 `database`(등록 문서 필드는 `target`) |
-| Transport | **일반 HTTP**(기본) + **stdio**(로컬). 세션형 Streamable HTTP 취소 |
-| Frontend / Admin API | 취소 |
-| 개발 | TDD, 문서 우선 |
-| metric·segment 식 (D16) | 새 DSL 없음 · `sqlparser` + AST 제한 |
-| `encryption` (D17) | 응답 마스킹(암·복호화 아님) |
-| 식 식별자 검사 (D18) | 저장=연결 그래프 · 컴파일=AST 식별자 |
+- M0: 문서·계약. MCP-only, 임베디드 libSQL, 일반 HTTP + stdio.
+- M1: 타깃 SELECT·탐색·메타 JSON CRUD가 일반 HTTP로 동작.
+- M2: `search_columns`(BM25/벡터/hybrid), 컴파일, CI, SQLite·BIRD `target_db/`.
+- M3: release·컨테이너·`deploy/k8s/base/`, MySQL·Oracle, RBAC·타임아웃.
+- M4: 타입별 `meta_*`, `execute_sql`은 시맨틱 SQL만, 요약 뷰·pruning·union.
+- M5: SELECT 절 전체, 전 계층 `role`, 카탈로그 캐시·`SQL_MCP_TIMEOUT_MS`.
+- 같은 `target` cube JOIN/UNION · `execute_sql.dry_run`.
+- D1: 시맨틱 엔진은 libSQL.
+- D2: 시맨틱 `libsql` 0.9(core), 타깃 `sqlx` 0.9, Oracle `oracledb` thin, 크레이트 분리, Rust 1.94+.
+- D7: release 바이너리 + 컨테이너. Kustomize는 `deploy/k8s/base/`.
+- D9: dimension `as_code`는 집계 후 `{dim}__value`.
+- D12: JSON 교환 `document.schema.json`, 저장은 `meta_*`, 검색은 FTS5 + embedding.
+- D13: Postgres·MySQL·SQLite·Oracle. 테스트 타깃은 BIRD Mini-Dev SQLite.
+- D14: 임베딩은 외부 API만. 없으면 BM25. 로컬 ONNX 비채택.
+- D15: `metadata_update`는 전체 replace.
+- D16: metric·segment 식은 새 DSL 없이 SQL 조각 + AST 제한.
+- D17: `encryption`은 응답 마스킹.
+- D18: 저장은 연결 그래프, 컴파일은 AST 식별자.
+- D19: `execute_sql`은 시맨틱 SELECT만.
+- D20: table/view/cube `target` 일치. 같은 target JOIN만.
+- D21: DialectProfile emit. 자유 트랜스파일·실행 bind rewrite 비채택.
+- D22: `name` / `physical_ident` 분리.
+- D23: Grouped / Ungrouped. 비-`DISTINCT` Ungrouped cube JOIN 거절.
+- D24: metric `group_by`는 기본 grain. 질의 축이 있으면 override.
+- D25: `CURRENT_DATE` / `NOW` / `DATEDIFF` / `EXTRACT`.
+- D26: metric/segment는 `describe_table.examples`. `execute_sql`은 dim/fact ad-hoc.
+- D27: 리터럴-only → existence dim. `SELECT *` 거절.
+- D28: expression은 스칼라. `additive: false`면 `SUM`/`AVG`/`COUNT(col)` 거절.
+- 제거: D5 세션형 Streamable HTTP, D10/D11 Frontend. stdio는 로컬용으로 복원.
 
-## 시맨틱=libSQL 선택 이유
+## 남은 일 — Cube 관계 모델 · 팬아웃 거절 (D29)
 
-임베디드 + (장차) BM25/벡터 + 지금 당장 JSON 메타 CRUD에 **libSQL이 잘 맞음**.
+**구현됨. 거절 플래그는 꺼져 있고 BIRD는 아직 돌리지 않았다.** 허브 정본 `semantic_plan.yaml`(팩트 테이블 1 = view+cube 1)은 유지하고, 그 옆에 Cube식 관계를 둔다. 큐브 그레인 = 허브 `table.pk`. `table.fk`가 허브 `dimensions`를 가리키면 `many_to_one`. 컴파일은 MetricFlow식 **거절**(primary–foreign 팬아웃 · 캐즘). 조회 표면은 `execute_sql` 시맨틱 SELECT(D19). **비채택:** Cube.dev 런타임 교체 · Looker 심바가 재작성(행 집합이 바뀜) · `Never JOIN` 설명문으로 거절.
 
-- 확장(`sqlite-vec`) 없이 벡터·FTS 경로가 엔진에 있음
-- 프로세스 내 파일 DB → `rmcp` 안에 심기 자연스러움
-- 타입별 `meta_*` 카탈로그 + JSON CRUD 통로·검색 인덱스 투영이 가능
-- 주의: hybrid는 앱 RRF. Turso 브랜드/API 이동은 있으나 M1 시맨틱은 `libsql` 핀(D2)
-- 타깃 DB는 libSQL일 필요 없음(Postgres 등 별도, D13)
+전제: 에이전트는 `semantic_plan.yaml`을 직접 읽지 않는다. `generate_meta`가 허브로 만든 큐브를 `execute_sql`로 조회한다. `viewJoin.type`은 SQL 조인(`inner`/`left`/`right`/`full`)이고, `relationship`이 카디널리티다. D23 비-`DISTINCT` Ungrouped cube JOIN 거절은 유지된다. 뷰 안 행 배율 거절은 `SQL_MCP_GRAIN_GUARD`에 적힌 target에서만 돈다.
 
-**임베딩 공급(D14):** 외부 OpenAI-호환 HTTP API. 벡터는 libSQL에 저장. API 없으면 **강화 BM25(keyword)만** — HashEmbedder·로컬 ONNX는 쓰지 않음.
+컷오버 전까지 기존 큐브 JSON·설명문은 그대로 두고, 관계와 거절은 옆에 얹는다. 계약 문서는 구현 착수 때 `ARCHITECTURE.md`·`semantic/schema/document.schema.json`·`server/DESIGN.md`를 이 절과 함께 고친다.
 
-## 미결정
+1. **yaml 옆에 Cube 관계.** 허브 목록은 팩트 정본으로 유지한다. 관계 초안은 허브 + `table.pk` + `table.fk`에서 만들고, 메타 디렉터리를 비우지 않는다. `viewJoin`에 SQL `type`과 별도로 `relationship`(`many_to_one` / `one_to_one` / `one_to_many`)을 둔다. 큐브 그레인은 허브 테이블 `pk`다.
+2. **팩트 큐브 ↔ pk/fk.** 각 허브에서 팩트 `pk`가 그레인이다. `fk` 대상이 그 허브 `dimensions`에 있으면 `many_to_one`이다. `fk`가 다른 허브(형제 팩트)를 가리키면 뷰에 흡수하지 않고 기존 cube JOIN으로 남긴다. 브릿지(`connected`, `attendance` 등)는 자체 허브 `pk`다. 다대다는 한 조인으로 합치지 않는다.
+3. **컴파일 거절.** 팬아웃(집계 측 `pk`가 조인으로 복제)과 캐즘(형제 팩트 또는 두 일대다가 한 뷰에서 만남)은 `validation`으로 거절한다. `many_to_one` 차원 조인과, 각 측을 집계한 뒤 잇는 Grouped cube JOIN은 통과한다. 합계를 기본키 기준으로 다시 쓰지 않는다. D23 Ungrouped `DISTINCT` 가드와 D28 `additive: false`는 유지한다. 테스트가 먼저다.
+4. **조회 경로.** 1단계에서는 관계가 있어도 거절은 플래그 뒤이고, 에이전트는 지금처럼 등록 큐브 `execute_sql`만 쓴다. 2단계는 검증을 통과한 DB만 거절을 켠다. 큐브 선택은 `Never JOIN` 문장이 아니라 그 큐브의 dimension/fact로 한다. yaml을 에이전트 입력으로 바꾸지 않는다.
+5. **컷오버 전 검증.** `hub_grain.py`와 같은 dry_run으로 컴파일된 물리 테이블이 허브(팩트 + 나열 차원) 안에 있는지 본다. 골든은 두 갈래다. 의도된 팬아웃·캐즘 SQL은 거절되고, 이미 맞던 `many_to_one` 집계의 물리 SQL은 유지된다. BIRD는 바꾼 DB만 돌린다. 그레인 FAIL이 줄지 않거나 해당 DB의 EX가 R3(`client/eval` 116/286의 그 DB 부분집합)보다 내려가면 그 DB는 끈다. 286 전체는 DB별 게이트 뒤에만 한다.
 
-| ID | 질문 | 옵션 / 비고 |
-|----|------|-------------|
-| D1 | 임베디드 시맨틱 엔진 | **결정: libSQL** |
-| D2 | 클라이언트 | **결정:** 시맨틱=`libsql` 0.9 (`core`만) · 타깃=`sqlx` 0.9(+postgres,+mysql) · Oracle=`oracledb`(thin). **크레이트 분리**. Rust **1.94+** (`rust-toolchain.toml`) |
-| D14 | 임베딩·검색 폴백 | **결정: 외부 API만 임베딩.** `SQL_MCP_EMBEDDING_URL`+`API_KEY` → vector/hybrid. **미설정 시 keyword(BM25)만**(vector/hybrid 요청도 keyword로 폴백). 오프라인 품질은 **BM25 강화**(한글 유지·문자 bigram·`as_code` 등 인덱스 텍스트). HashEmbedder=테스트 전용. 로컬 ONNX 비채택 |
-| D7 | 배포 | **결정(M3): release 바이너리 + 컨테이너 이미지**. Kustomize 베이스는 `deploy/k8s/base/` |
-| D9 | 코드사전 | **결정:** dimension `as_code` = `{table,key_column,value_column,where?}`. 집계 후 dim=key LEFT JOIN → `{dim}__value`. `sample_column`은 cube+member(사전 있으면 사전 샘플). 에이전트 기입·MCP 저장만 |
-| D12 | 등록 스키마 ↔ 저장·검색 | **결정: JSON 교환=`document.schema.json` · 저장=타입별 `meta_*` · 검색 투영=`column_index`+FTS5(`bm25`)+embedding(hybrid RRF). 규칙은 `semantic/DESIGN.md`·`server/spec.md`** |
-| D13 | 타깃 엔진 | **결정: Postgres(`sqlx`) · MySQL(`sqlx`) · SQLite(`libsql` 로컬) · Oracle(`oracledb` thin)**. sqlx에 `sqlite` feature를 넣지 않는다(번들 SQLite 이중 링크 방지). ADBC·JDBC/ODBC 비채택. Exadata=일반 Oracle. 테스트 타깃은 BIRD Mini-Dev SQLite (`target_db/`) |
-| D15 | `metadata_update` | **결정: 전체 replace** (merge-patch 아님). `body`는 문서 JSON 전체 |
-| D16 | metric·segment 식 문법 | **결정: 새 DSL 없음.** `sqlparser`로 파싱한 **신뢰된 SQL 조각** + AST 제한. metric `expression` = 스칼라/집계식만 · segment·filter = 단일 boolean 식만. 서브쿼리·다중 문장·쓰기·CTE 거부. 식별자: table 필터=물리 컬럼 · cube/metric/segment=dimension·fact 이름 |
-| D17 | `encryption: true` | **결정: 암·복호화 아님 → 응답 마스킹.** SELECT/샘플/로그에서 해당 셀을 `null`(또는 `"***"`)로 치환. AES·토큰화는 타깃 DW 책임 |
-| D18 | expression/filter 컬럼 검사 시점 | **결정: 이중 검사.** `metadata_*` = 연결 그래프 · 컴파일=AST 식별자. `execute_sql`은 시맨틱 컴파일 필수 |
-| D19 | `execute_sql` 입력 | **결정: 시맨틱 SELECT만.** 툴명 유지. 자유 물리 SELECT 경로 없음 |
-| D20 | table/view/cube `target` | **결정:** 등록 JSON에 MCP `target` id 필수. leaf table·view·cube 동일 target 강제. `list_tables`/`describe_table`=cube 표면. 같은 target cube JOIN/UNION 허용(다른 target 거절) |
-| D21 | 타깃 SQL 방언(dialect) | **결정: Cube식 DialectProfile emit.** 컴파일은 엔진 중립(canonical ANSI `"…"` · `date_trunc`). emit: `date_trunc`→엔진별 식 · quote adapt · `wrap_row_limit`. **비채택:** 자유 SQL 트랜스파일 · `sqlparser` Display 방언 위임 · **실행 bind 스타일 rewrite**(ad-hoc OLAP만, 드라이버 prepared bind 경로 없음). 상세 [ARCHITECTURE.md](ARCHITECTURE.md) · [server/DESIGN.md](server/DESIGN.md) · [server/spec.md](server/spec.md) |
-| D22 | 물리 vs 시맨틱 식별자 | **결정: 부분 완화.** `$defs/name`(시맨틱) 유지 · `$defs/physical_ident`(물리 db/schema/table/컬럼·mapping·join on·as_code key/value) 분리. view 컬럼·cube 멤버는 시맨틱 `name`만. 물리명에 공백·기호가 있으면 view 별칭 + `mappings.column`에 물리 유지. `quote_ident`는 동일 허용 집합. |
-| D23 | 시맨틱 SELECT 모드 | **결정: 그레인 기반 2-모드(Grouped vs Ungrouped).** **(1) Grouped(집계):** ad-hoc 집계(`sum/count/avg/min/max`)·파생 연산·윈도우 **동일 SELECT 혼용 허용** + 차원 스칼라 식(`date_trunc` 등) + 차원-only `GROUP BY`(+ `HAVING`/`ORDER BY` 집계식) 허용. grain = 명시 `GROUP BY`(별칭·위치·식 포함) / 프로젝션 차원 또는 전역 집계. 같은 `target` cube JOIN 허용(집계 없는 JOIN 측은 참조 차원 `GROUP BY` 서브쿼리로 팬아웃 방지). **(2) Ungrouped(행 상세):** 집계·`GROUP BY`·`HAVING` 없는 dim/fact(+비집계 스칼라 식) 프로젝션. `SELECT DISTINCT` 보존. 비-`DISTINCT` 상세 조회는 요약 뷰(`summary: true`) 우회(원천 뷰 선택) 및 다대다 팬아웃(Chasm Trap) 방지를 위해 cube JOIN 거절. 전 모드/절에서 fact·dim `role` 및 `encryption` 직접 검사. 명명 metric/segment는 SQL 식별자가 아님(D26). |
-| D24 | metric `group_by` 의미 | **결정: 기본 grain만. 허용목록(allowlist) 폐기.** 필드명 `group_by` 유지. 명명 metric을 컴파일할 때 질의 축이 없으면 `group_by`(복수면 교집합)를 유효 grain으로 쓴다. 축이 있으면 override하고, 목록 밖 차원도 거절하지 않는다. `execute_sql`은 그 이름을 식별자로 쓰지 않는다(D26). Cube multi-stage 고정 grain과 다름. |
-| D25 | 표준 날짜/시간 함수 | **결정: D21 emit 확장.** metric/dimension/filter 식에서 `CURRENT_DATE`·`CURRENT_TIMESTAMP`·`NOW()`·`DATEDIFF(end,start)`(일수)·`EXTRACT(YEAR\|MONTH\|DAY\|HOUR FROM x)` 공식 허용. `YEAR`/`MONTH`/`DAY`는 PG/Oracle도 `EXTRACT`로 rewrite. 산술 `/`는 emit에서 0-안전 실수 나눗셈(`NULLIF`). **비범위:** `DATEADD`/`TIMESTAMPDIFF`/3인자 `DATEDIFF`/임의 interval. 상세 [ARCHITECTURE.md](ARCHITECTURE.md) §5.1 · [server/spec.md](server/spec.md) |
-| D26 | metric/segment DW 표면 · ad-hoc SELECT | **결정:** metric·segment는 cube **컬럼이 아님**. `describe_table`은 expression/filter를 **`examples`로만** 제시하고, `execute_sql`은 명명 metric/segment 식별자를 **해석하지 않음**(에이전트가 dim/fact로 ad-hoc SELECT 작성). `search_columns` 인덱스에서 metric/segment 제외. 시맨틱 SQL은 **읽기 전용 ANSI SELECT 전체** 허용(서브쿼리·읽기 CTE·윈도우·UNION/EXCEPT/INTERSECT 등). FROM `cube.physical`·`AS alias`는 첫 식별자를 큐브로 라우팅. INSERT/UPDATE/DELETE/DDL/다중 문장/쓰기 CTE만 거절. 자유 물리 SELECT 경로 없음(D19). |
-| D27 | 리터럴 existence 프로젝션 | **결정:** `SELECT 1`/`true`/문자열 등 **리터럴-only** 프로젝션은 classify 전에 cube **existence 차원**(leaf `table.pk`에 매핑된 dim, 없으면 `dimensions[0]`)으로 AST rewrite. **`SELECT *`는 거절**(시맨틱 큐브에 all-columns 없음). 스칼라 서브쿼리는 D26 재귀 컴파일 유지(2-query 분할 없음). |
-| D28 | 행 그레인 가상 dim/fact | **결정:** dimension/fact `expression`은 **스칼라만**(`assert_scalar_expr`). 행 파생은 cube expression 멤버. 비가산 비율은 fact `additive: false`(기본 true) — `SUM`/`AVG`/`COUNT(col)` 거절, ungrouped SELECT/WHERE/ORDER BY/MIN/MAX 허용. 그룹 `SUM(a)/SUM(b)`는 metric(D26)이며 fact와 이름을 겹치지 않는다. 코호트 WHERE 식별자는 flag dim(`IIF`/`CASE`). `{db}_all`·질문 1건=멤버 1개 금지. |
-
-(제거: D5 세션형 Streamable HTTP, D10/D11 Frontend. stdio는 로컬용으로 복원)
-
-## 마일스톤
-
-### M0 — 문서·계약
-
-- [x] MCP-only · 임베디드 libSQL · 복수 타깃 · 메타 CRUD(JSON) · **일반 HTTP** · **stdio(로컬)**
-- [x] 시맨틱 등록 JSON Schema·예시·카탈로그 DDL (`semantic/`)
-- [x] D2·D13·D15 합의 (D14는 M2)
-
-### M1 — 타깃 조회 + 메타 CRUD (일반 HTTP)
-
-- [x] `server/` + **libSQL** 임베디드 + HTTP 리스너 + `DESIGN.md` / Commands
-- [x] `metadata_*` CRUD — `document.schema.json` 검증 + `document` 테이블 저장 · update=전체 replace(D15)
-- [x] `list_databases`(구 `list_targets`) · 타깃 SELECT 가드 · `list_tables` / `describe_table` / `execute_sql` / `sample_column` · 엔진 Postgres·SQLite(D13) · DW 인자 `database`
-- [x] `search_columns`는 스텁 또는 no-op 허용 — 인덱스 본구현은 M2
-- [x] HTTP 클라이언트로 스모크 (`cargo test -p sql-mcp`)
-
-**완료 기준:** 타깃 SELECT·탐색 + 메타 JSON CRUD가 **일반 HTTP**로 동작. (Postgres 실연결 스모크는 `http_smoke` ignore 테스트·DSN 환경 선택)
-
-### M2 — 검색·컴파일
-
-- [x] `search_columns` BM25(FTS5) / 벡터 / hybrid(RRF) · D14(API 또는 강화 BM25) · D9 휴리스틱
-- [x] 메타 CRUD 시 `column_index` 재구축
-- [x] table→물리 SQL 컴파일(필터 AND) + SELECT AST 가드 유지
-- [x] CI (`.github/workflows/ci.yml`)
-- [x] OpenAI-호환 임베딩 HTTP 클라이언트 배선 (`SQL_MCP_EMBEDDING_*`, 미설정 시 BM25만 · D14)
-- [x] cube/metric/segment → 물리 SQL 컴파일 (`compile_metric_select`)
-- [x] D16 식 AST 제한 · D18 컴파일 식별자 검사 · D17 encryption 마스킹
-- [x] 타깃 엔진 SQLite (`libsql`) · BIRD Mini-Dev → `target_db/`
-
-### M3 — 배포·하드닝
-
-- [x] (D7) release 바이너리 + 컨테이너 · `deploy/SETUP.md` · `deploy/k8s/base/`
-- [x] `/health` 프로브 · tracing 로그
-- [x] D16–D18 본구현 (`expr_guard` · `mask`)
-- [x] MCP Resource로 `document.schema.json` 제공 (`resources/list` · `resources/read`)
-- [x] Agent Skills 정본 `skills/` + MCP Resource 노출(`https://sql-mcp.local/skills/…`); Cursor용 `.cursor/skills` 심볼릭
-- [x] MCP Skills extension: `skills/list` · `skills/get` + capabilities `io.modelcontextprotocol/skills` (`directoryRead` 미구현)
-- [x] 타깃 MySQL(`sqlx`) · Oracle(`oracledb` thin) (D13; ADBC 비채택)
-- [x] 운영 하드닝(전 계층 RBAC·타임아웃·읽기 전용 메타 모드·에러 마스킹)
-
-### M4 — 시맨틱 컴파일러 · 타입별 카탈로그
-
-- [x] 타입별 `meta_*` 저장 + `metadata_*` JSON 분해/재조립
-- [x] `execute_sql` = 시맨틱 SQL → `pipeline` → 물리 SELECT (자유 물리 SELECT 삭제, D19)
-- [x] keyword = FTS5/`bm25` · vector/hybrid 유지 (D12)
-- [x] 요약 뷰 라우팅 (`combine=select` + `prefer=summary`) · join Steiner 근사 pruning · 인라인 뷰 필터 푸시다운 · encryption 프로젝션 NULL
-- [x] union/minus 컴파일 · union pruning(`1=0` scope · 미매핑 source 제거)
-- [x] metric/view 식별자 치환을 sqlparser `VisitorMut` AST 경로로 이관 (`ast_rewrite`)
-- [x] metric SELECT AST 조립(`ast_select`) · 날짜 리터럴 구간 union disjoint(`date_range`)
-- [x] bind-param 구간 비교(`params` → `:name` 치환) · OR(DNF) 날짜식 · `execute_sql.params`
-
-### 후속 — 동일 target cube JOIN/UNION
-
-- [x] semantic SQL에서 같은 `target`인 cube끼리 JOIN / UNION(·EXCEPT/INTERSECT) (다른 target 거절; Grouped·`DISTINCT` JOIN 허용, 비-`DISTINCT` Ungrouped JOIN은 팬아웃 방지로 거절)
-
-### 후속 — execute_sql dry_run
-
-- [x] `execute_sql.dry_run`: 시맨틱 컴파일·인가만 하고 타깃 SELECT 생략, `{ sql, dry_run: true }` 반환
-
-### 후속 — 타깃 DialectProfile (D21)
-
-- [x] `DialectProfile`: `quote_ident` · `adapt_compiled_sql` · `wrap_row_limit` — `TargetConfig.engine`으로 선택
-- [x] `pipeline`/`sample`/`tools`에 프로필 주입 · 타깃 LIMIT은 `wrap_row_limit`
-- [x] Postgres·SQLite·MySQL·Oracle 골든 테스트(quote · MySQL adapt · `LIMIT`/`FETCH`)
-- [x] `date_trunc` rewrite (`year`/`month`/`day`/`hour`) · `emit_physical_sql`
-- [x] 실행 bind rewrite **비채택**(ad-hoc OLAP)
-- [x] `/` emit = `DIVIDE`와 동일(실수 승격 + `NULLIF(den, 0)`); `DIVIDE`는 호환 별칭 · 비율은 표준 산술 연산자 권장
-
-### M5 — 컴파일러 완결성 · 전 계층 보안(RBAC) · 카탈로그/엔진 하드닝
-
-- [x] 시맨틱 SELECT 전체 절 지원: 복수 metric · 선택 dimension 동적 `GROUP BY` · `ROLLUP`/`CUBE`/`GROUPING SETS` · 일반 `WHERE` 조건식 보존 · `HAVING` / `ORDER BY` / `LIMIT` / `OFFSET`
-- [x] `:name` 바인드 파라미터 안전 리터럴 치환(쿼트 이스케이프) 및 실행 시 미해석 `:param` 거절
-- [x] Cube JOIN `ON` 식 AST 검증·치환 및 Join Pruning 기준 테이블(`sources[0]`) 고정·Outer Join 방향 보존
-- [x] 반가산(Semi-additive) metric 요약 뷰 그레뉼러리티 일치 검증 수정
-- [x] 전 계층(`cube`·`table`·`dimension`·`fact`·`metric`·`segment`) `role` 접근 제어 + `permission_filters` Fail-Closed + `sample_column` 인라인 보안 필터 + 큐브 스코프 `encryption` 마스킹·수식/필터 차단
-- [x] FTS5 `bm25()` 음수 랭크 점수 정규화 · `column_index.target` 및 `search_columns(target)` 필터링
-- [x] 인메모리 카탈로그 스냅샷 캐시 + 단일 Write 트랜잭션 내 증분 임베딩 갱신
-- [x] `SQL_MCP_TIMEOUT_MS` 타깃 쿼리 타임아웃 강제 · Postgres/MySQL `NUMERIC`/`DECIMAL`/`DATE`/`TIMESTAMP` 디코딩 · DSN 마스킹 상세 에러 · `SQL_MCP_MODE`
-
-### 후속 — 그레인 기반 2-모드 시맨틱 SELECT 개편 (D23)
-
-- [x] **Grouped 모드 통합:** 명명 metric · ad-hoc 집계 · metric 파생 연산 **동일 SELECT 혼용 허용** (단일 큐브 및 Cube JOIN 모두)
-- [x] **차원 스칼라 식 & 차원-only GROUP BY:** `date_trunc` 등 비집계 스칼라 식 프로젝션/그룹핑(별칭·`GROUP BY 1` 위치 참조 포함) 및 metric 없는 차원 `GROUP BY`(+ `HAVING`/`ORDER BY` 집계식) 지원
-- [x] **`HAVING` · `ORDER BY` 확장:** `HAVING` 내 집계 함수(`COUNT(*)`, `SUM(...)` 등) 허용(`assert_having_expr`) · `ORDER BY`에 별칭·위치·멤버·스칼라 식·집계식 직접 허용
-- [x] **Ungrouped 상세 모드 가드:** 비집계 스칼라 식(`a * b`, `a / b` 등) 및 `SELECT DISTINCT` 지원 · 비-`DISTINCT` 상세 조회 시 요약 뷰(`summary: true`) 우회(원천 뷰 라우팅) · 다대다 팬아웃(Chasm Trap) 방지를 위해 비-`DISTINCT` Ungrouped Cube JOIN 거절(Grouped Cube JOIN에서 metric 없는 측은 참조 차원 `GROUP BY` 서브쿼리로 팬아웃 방지)
-- [x] 계약·파이프라인 문서(`ARCHITECTURE.md` · `server/spec.md` · `server/DESIGN.md`)와 TDD
-
-### 후속 — metric `group_by` = 기본 grain (D24)
-
-- [x] allowlist 검증 제거. 명명 metric 컴파일 시 축이 없으면 `group_by` 교집합, 있으면 override
-- [x] 계약·스키마·skills를 기본 grain으로 통일
-- [x] Cube 고정 grain과 구분(여기는 override 가능)
-
-### 후속 — 표준 날짜/시간 함수 (D25)
-
-- [x] `expr_guard`: `CURRENT_DATE`·`CURRENT_TIMESTAMP`·`NOW`·`DATEDIFF` allowlist · `EXTRACT(YEAR|MONTH|DAY|HOUR FROM …)` AST 허용
-- [x] `DialectProfile` emit: `NOW`→Oracle `CURRENT_TIMESTAMP` · `DATEDIFF` 4방언 · `YEAR`/`MONTH`/`DAY` PG/Oracle `EXTRACT` · SQLite `EXTRACT`→`strftime` · `/` → `NULLIF` 실수 나눗셈
-- [x] `sample` 경로 `emit_physical_sql` 정렬 · 계약·스킬 문서 · TDD
-
-### 후속 — metric/segment 예제화 · 읽기 ANSI SELECT (D26)
-
-- [x] DW 표면: `describe_table.examples` · `search_columns`에서 metric/segment 제외 · 툴/에이전트 문구
-- [x] `execute_sql` 명명 metric/segment 식별자 해석 제거(ad-hoc dim/fact만)
-- [x] ad-hoc 읽기 ANSI SELECT: 서브쿼리·CTE·FROM 파생·윈도우·집합연산 · 서브쿼리 확장 fail-closed
-- [x] FROM `cube.physical`·`AS alias`는 첫 식별자를 큐브로 라우팅
-- [x] 계약·스펙·client `SYSTEM` 프롬프트 · TDD
-
-### 후속 — 리터럴 existence 프로젝션 (D27)
-
-- [x] `SELECT 1`/`true` 등 리터럴-only → existence dim AST rewrite (`pipeline/existence`)
-- [x] `SELECT *` 거절 유지 · `EXISTS (SELECT 1 …)` 경로 · q1457형 Ungrouped AVG 서브쿼리 회귀
-- [x] 계약·스펙·DESIGN · client `SYSTEM` · TDD
-
-### 후속 — 행 그레인 가상 멤버 (D28)
-
-- [x] cube dim/fact `expression` = 스칼라(`assert_scalar_expr`)
-- [x] fact `additive`(기본 true) · grouped `SUM`/`AVG`/`COUNT(col)` 거절 · ungrouped SELECT/ORDER BY 통과
-- [x] 계약·스키마·skills · enrich 승격(행 비율 fact / 나이 dim / flag dim)
+- [x] `viewJoin.relationship` + 허브 `pk` 그레인 스키마 · yaml에서 관계 초안 생성(기존 JSON 유지)
+- [x] 허브별 pk/fk → `many_to_one` 매핑 · 형제 팩트·브릿지는 뷰에 흡수하지 않음
+- [x] 팬아웃·캐즘 `validation` 거절 테스트 → 컴파일러. 심바가 재작성 없음
+- [x] 거절 플래그 `SQL_MCP_GRAIN_GUARD`. 켠 DB 없음. 조회는 `execute_sql`(D19)
+- [x] dry_run 그레인 골든(뷰 소스·컴파일 테이블 ⊆ 허브, `many_to_one` 물리 SQL 유지)
+- [ ] 변경 DB BIRD. 플래그가 꺼져 있어 아직 돌리지 않음. 286 전체는 DB별 게이트 뒤. `pk`가 비어 grain을 못 단 큐브: `throm_examination`, `hero_attribute`, `hero_power`
 
 ## 구현 시 작업 규칙
 
