@@ -4,8 +4,8 @@ description: >-
   Refines sql-mcp semantic cube, metric, and segment JSON from natural-language
   questions, domain knowledge (definitions, formulas, glossaries), and optional
   reference SQL. Use when improving an existing semantic layer with Q&A pairs or
-  business knowledge—not for authoring table/view from scratch, MCP register, or
-  execution-accuracy eval (use semantic-from-eval).
+  business knowledge—not for authoring table/view from scratch, HTTP /api/meta
+  registration, or execution-accuracy eval (use semantic-from-eval).
 ---
 
 # Semantic refine · from Q&A / knowledge
@@ -17,7 +17,7 @@ description: >-
 문서 형태: [../semantic-cube-metric-segment/contract.md](../semantic-cube-metric-segment/contract.md).  
 마이닝 규칙 상세: [methodology.md](methodology.md).
 
-**MCP 등록은 이 스킬 밖**(요청 시 `semantic-register`). 실행 정확도 eval·그레인 분할의 **반복 루프**는 `semantic-from-eval`.
+**/api/meta 등록은 이 스킬 밖**(요청 시 `semantic-register`). 실행 정확도 eval·그레인 분할의 **반복 루프**는 `semantic-from-eval`.
 
 ## Inputs
 
