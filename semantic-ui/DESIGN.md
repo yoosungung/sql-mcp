@@ -15,7 +15,9 @@
 
 - 목록은 **등록된** `kind=table` 문서(`GET /api/meta`). 물리 카탈로그를 목록으로 쓰지 않는다.
 - 탭 아래 **Register** / **Delete**: Register는 물리 `GET /api/databases/{id}/tables`·describe로 table JSON을 만들어 `POST /api/meta`. Delete는 `DELETE /api/meta/table/{name}`(view/cube 참조 있으면 거절). table 문서 **편집 금지**(추가·삭제만).
-- 가운데 **ViewHeader**(이름 · combine 타입 · New / Open / Rename / Save / Delete) + 본문:
+- 가운데 **ViewHeader**(이름 · **View type** 셀렉터 하나 · Unsaved · New / Open / Rename / Save / Delete) + 본문:
+  - combine은 헤더 셀렉터만. 본문 join/union/minus 버튼 행은 없다.
+  - 테이블은 **캔버스**에 드롭한다.
   - `join`: `@xyflow/react` + `@dagrejs/dagre` JoinCanvas. 노드 위치는 저장하지 않음. 핸들 연결 → `view.joins`(선택 `relationship`).
   - `union` / `minus`: 세로 스택 + 드래그 재정렬.
 - 오른쪽 **Columns**: 뷰 컬럼 목록(파생 PK · type · name · description). 위 **Map columns** → ViewMappingEditor(거의 전체 화면).
@@ -38,12 +40,39 @@ View 편집은 메모리 JSON; **Save**가 `POST`/`PUT /api/meta`.
 
 데이터는 HTTP `/api`만. JSON-RPC `/mcp`는 쓰지 않는다.
 
+## E2E 시나리오
+
+BIRD `superhero` 타깃. 만든 문서만 지운다. sql-mcp HTTP `:8090` + `npm run dev`.
+정본 경로는 아래 **한 사이클**(12단계)이다. 뷰 생성은 캔버스 드래그. New→Create 빈 껍질은 정본이 아니다(두 번째 뷰를 시작하려면 저장 후 New로 캔버스만 비운 뒤 다시 드래그).
+
+1. **테이블 등록** — Register로 물리 테이블(조인용 `superhero`+`publisher`, 유니온용 공통 컬럼 테이블 둘).
+2. **뷰 생성** — 헤더 **View type**만으로 combine을 고른다(본문 join/union/minus 버튼 없음). 테이블을 **캔버스**에 드래그해 **join 뷰 하나**와 **union 뷰 하나**를 만들고 각각 Save.
+3. **컬럼 매핑** — 각 뷰 Map columns에서 매핑 확인·Apply 후 Save.
+4. **큐브 만들기** — Cubes 탭 → 저장한 view 체크 → **Add to cube stack** → Save.
+5. **큐브 디멘션·팩트 매핑** — **Map members**. 체크한 행이 dimension/fact, Apply 후 Members의 Dimensions / Facts.
+6. **metric·segment 만들기** — Members에서 추가 후 Detail Expression / Filter, cube Save.
+7. **뷰 리네임** — 뷰 Rename 후 Save.
+8. **큐브 리네임** — 큐브 Rename 후 Save.
+9. **열어서 보기** — Open으로 저장한 뷰·큐브를 다시 연다.
+10. **큐브 삭제** — Cube 헤더 Delete(붙은 metric/segment 함께).
+11. **뷰 삭제** — 조인·유니온 뷰 Delete.
+12. **테이블 삭제** — 참조가 없을 때 Delete table.
+
+재현 오류 (superhero 12단계 사이클):
+- ~~헤더 아래 join/union/minus 버튼 중복~~ → 헤더 View type만. 드롭은 캔버스.
+- Map members 체크가 바로 풀린다(`open`/`cube`/`viewDocs` effect가 rows를 다시 심음). Apply해도 dim/fact가 안 남음.
+- Map members 미매핑 후보는 전부 `kind=dimension`이고 Kind는 글자만 보여 **fact로 바꿀 UI가 없다**.
+- Metrics/Segments **Add metric / Add segment 버튼이 없다**.
+- Rename 후 Save는 새 이름 `POST`라 **옛 문서가 남는다**(뷰·큐브 복제).
+
 ## Commands
 
 ```text
 cd semantic-ui
 npm install
 npm test
+# 정본 E2E: BIRD superhero · sql-mcp HTTP 127.0.0.1:8090 + vite. 브라우저에서 DESIGN 12단계 한 사이클.
+# 샌드박스 cargo는 aws-lc EPERM → 권한(all)로 기동.
 npm run build
 # 산출물: semantic-ui/dist  →  sql-mcp GET /ui/
 

@@ -159,7 +159,6 @@ export function physicalTableDoc(
       name: c.name,
       type: c.data_type || "unknown",
       nullable: c.nullable ?? true,
-      mappings: [],
     })),
     pk: [],
     fk: [],

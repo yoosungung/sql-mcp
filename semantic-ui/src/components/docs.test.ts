@@ -83,6 +83,6 @@ describe("physicalTableDoc", () => {
     ]);
     expect(doc.kind).toBe("table");
     expect(doc.table).toBe("account");
-    expect(doc.columns).toEqual([{ name: "id", type: "INTEGER", nullable: false, mappings: [] }]);
+    expect(doc.columns).toEqual([{ name: "id", type: "INTEGER", nullable: false }]);
   });
 });

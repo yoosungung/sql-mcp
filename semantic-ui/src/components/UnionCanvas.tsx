@@ -8,16 +8,35 @@ export function UnionCanvas({
   combine,
   onChange,
   onSelectTable,
+  onTableDrop,
 }: {
   view: Doc;
   combine: TableCombine;
   onChange: (view: Doc) => void;
   onSelectTable: (name: string) => void;
+  onTableDrop?: (name: string) => void;
 }) {
   const [from, setFrom] = useState<number | null>(null);
   const names = (view.sources || []).map((s) => sourceLabel(s));
   return (
-    <Flex direction="column" gap="2" aria-label={`${combine} canvas`}>
+    <Flex
+      direction="column"
+      gap="2"
+      aria-label={`${combine} canvas`}
+      onDragOver={(event) => {
+        if (!onTableDrop) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+      }}
+      onDrop={(event) => {
+        const name = event.dataTransfer.getData("text/plain");
+        if (name && onTableDrop) {
+          event.preventDefault();
+          event.stopPropagation();
+          onTableDrop(name);
+        }
+      }}
+    >
       <Heading size="3" weight="medium">{combine}</Heading>
       <Text size="1" color="gray">Vertical stack. Drag to reorder sources.</Text>
       {names.map((name, i) => (

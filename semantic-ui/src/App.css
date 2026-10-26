@@ -100,26 +100,13 @@ body { margin: 0; }
 }
 .inspector .rt-TextFieldRoot,
 .editor .rt-TextFieldRoot { width: 100%; }
-.combine-switch { display: flex; gap: 6px; }
 .nav-label[draggable="true"] { cursor: grab; }
 .nav-label[draggable="true"]:active { cursor: grabbing; }
-.drop-target { border-radius: var(--radius-2); }
-.drop-target.is-over { outline: 2px solid var(--accent-8); }
+.canvas.is-over { outline: 2px solid var(--accent-8); outline-offset: -2px; }
 .group-label {
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
-
-.combine-btn {
-  border: 0;
-  border-radius: var(--radius-2);
-  padding: 4px 10px;
-  background: var(--gray-a3);
-  color: var(--gray-12);
-  font: inherit;
-  cursor: pointer;
-}
-.combine-btn.on { background: var(--accent-9); color: white; }
 
 .join-flow {
   height: min(420px, 50vh);

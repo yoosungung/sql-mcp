@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type DragEvent } from "react";
 import { Badge, Flex, Heading, Text } from "@radix-ui/themes";
 import type { Doc } from "../model";
 import type { TableCombine } from "./docs";
@@ -66,8 +66,17 @@ export function Canvas({
   onDeleteCube: () => void;
   onRenameCube: (name: string) => void;
 }) {
-  const [over, setOver] = useState<TableCombine | null>(null);
+  const [over, setOver] = useState(false);
   const live = draft || editing;
+  const kind: TableCombine = ((live?.combine as TableCombine) || combine);
+
+  function dropTable(event: DragEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    setOver(false);
+    const name = event.dataTransfer.getData("text/plain");
+    if (name) onDropTable(kind, name);
+  }
 
   if (tab === "cubes") {
     return (
@@ -97,11 +106,23 @@ export function Canvas({
   const viewDirty = Boolean(draft) || (editing && selectedView && JSON.stringify(editing) !== JSON.stringify(selectedView));
 
   return (
-    <main className="canvas" aria-label="Canvas">
+    <main
+      className={over ? "canvas is-over" : "canvas"}
+      aria-label="Canvas"
+      onDragOver={(event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        setOver(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node)) setOver(false);
+      }}
+      onDrop={dropTable}
+    >
       <Flex direction="column" gap="3" height="100%">
         <ViewHeader
           title={live?.name || "No view"}
-          combine={(live?.combine as TableCombine) || combine}
+          combine={kind}
           unsaved={Boolean(viewDirty)}
           busy={busy}
           canSave={Boolean(live)}
@@ -117,56 +138,25 @@ export function Canvas({
             if (live) onChangeView({ ...live, combine: c });
           }}
         />
-        <div className="combine-switch" role="group" aria-label="Combine">
-          {(["join", "union", "minus"] as const).map((kind) => (
-            <div
-              key={kind}
-              className={over === kind ? "drop-target is-over" : "drop-target"}
-              onDragOver={(event) => {
-                event.preventDefault();
-                event.dataTransfer.dropEffect = "copy";
-                setOver(kind);
-              }}
-              onDragLeave={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget as Node)) setOver(null);
-              }}
-              onDrop={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                setOver(null);
-                const name = event.dataTransfer.getData("text/plain");
-                if (name) onDropTable(kind, name);
-              }}
-            >
-              <button
-                type="button"
-                className={combine === kind ? "combine-btn on" : "combine-btn"}
-                aria-pressed={combine === kind}
-                aria-label={kind}
-                onClick={() => onCombine(kind)}
-              >
-                {kind}
-              </button>
-            </div>
-          ))}
-        </div>
-        {live && ((live.combine as TableCombine) || combine) === "join" ? (
+        {live && kind === "join" ? (
           <JoinCanvas
             view={live}
             onChange={onChangeView}
             onSelectJoin={onSelectJoin}
             onSelectTable={onSelectTable}
             selectedJoinIndex={selectedJoinIndex}
+            onTableDrop={(name) => onDropTable(kind, name)}
           />
         ) : live ? (
           <UnionCanvas
             view={live}
-            combine={((live.combine as TableCombine) || combine) === "minus" ? "minus" : "union"}
+            combine={kind === "minus" ? "minus" : "union"}
             onChange={onChangeView}
             onSelectTable={onSelectTable}
+            onTableDrop={(name) => onDropTable(kind, name)}
           />
         ) : (
-          <Text size="2" color="gray">New or Open a view, then drag tables onto join, union, or minus.</Text>
+          <Text size="2" color="gray">Drag tables onto the canvas. View type is the selector in the header.</Text>
         )}
         {!live && picked.length > 0 && (
           <Text size="1" color="gray">Picked: {picked.join(", ")}</Text>

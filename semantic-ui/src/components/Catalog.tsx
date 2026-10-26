@@ -95,7 +95,7 @@ export function Catalog({
                   Delete
                 </Button>
               </Flex>
-              <Text size="1" color="gray" as="p" mb="2">Registered tables. Drag onto join, union, or minus.</Text>
+              <Text size="1" color="gray" as="p" mb="2">Registered tables. Drag onto the canvas.</Text>
               {tables.map((t) => (
                 <Flex key={t.name} align="center" gap="2" className={selectedTable?.name === t.name ? "nav-item on" : "nav-item"}>
                   <Checkbox

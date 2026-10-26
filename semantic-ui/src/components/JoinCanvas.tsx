@@ -70,12 +70,14 @@ export function JoinCanvas({
   onSelectJoin,
   onSelectTable,
   selectedJoinIndex,
+  onTableDrop,
 }: {
   view: Doc;
   onChange: (view: Doc) => void;
   onSelectJoin: (index: number) => void;
   onSelectTable: (name: string) => void;
   selectedJoinIndex?: number;
+  onTableDrop?: (name: string) => void;
 }) {
   const names = useMemo(
     () => (view.sources || []).map((s) => s.alias || s.table),
@@ -110,7 +112,23 @@ export function JoinCanvas({
   );
 
   return (
-    <div className="join-flow" aria-label="Join canvas">
+    <div
+      className="join-flow"
+      aria-label="Join canvas"
+      onDragOver={(event) => {
+        if (!onTableDrop) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+      }}
+      onDrop={(event) => {
+        const name = event.dataTransfer.getData("text/plain");
+        if (name && onTableDrop) {
+          event.preventDefault();
+          event.stopPropagation();
+          onTableDrop(name);
+        }
+      }}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges.map((e) => ({
