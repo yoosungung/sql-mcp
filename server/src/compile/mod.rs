@@ -235,7 +235,7 @@ pub(crate) fn find_doc<'a>(
         .ok_or_else(|| AppError::NotFound(format!("{kind}/{name}")))
 }
 
-/// Compile a join/union/select view into a FROM clause.
+/// Compile a join/union/minus view into a FROM clause.
 /// Table filters are pushed into derived-table subqueries (spec Step 6).
 /// When `used_view_cols` is set, join graph is pruned to a Steiner approx (Step 4).
 

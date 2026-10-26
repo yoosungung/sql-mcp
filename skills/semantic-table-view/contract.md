@@ -41,7 +41,8 @@
 |---------|---------|------|
 | `join` | table (≥1) | source 1개면 `joins: []`(identity). 2개 이상이면 `joins`(≥1): `left`, `right`, `type`(`inner`/`left`/`right`/`full`), `on[]`(`left_column`, `right_column`) |
 | `union` / `minus` | table | 첫 source가 기준; 각 view 컬럼의 `mappings`가 **모든** source를 가리킴 |
-| `select` | **view** | 선택 `prefer`; 질의에 필요한 컬럼을 모두 가진 source 중 `summary: true` view를 우선. 없으면 나머지. 어느 source도 덮지 못하면 거절 |
+
+요약·상세 후보는 view가 아니라 cube `choice`다.
 
 `columns[]`: `name` + `mappings[]`(`source` = source 문서 `name`, `column` = 그 source의 물리 컬럼).
 

@@ -101,9 +101,9 @@ export function Catalog({
                 </Flex>
               ))}
               <Button mt="3" style={{ width: "100%" }} disabled={checked.length < 2 || busy} onClick={onCombine}>
-                New view
+                New cube
               </Button>
-              <Text size="1" color="gray" as="p" mt="2">The combined-view tree opens on the right.</Text>
+              <Text size="1" color="gray" as="p" mt="2">Last checked view is the cube base. Others are summary choice.</Text>
             </Box>
           )}
         </>

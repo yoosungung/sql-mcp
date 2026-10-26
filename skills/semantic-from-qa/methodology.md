@@ -56,7 +56,7 @@
 
 - `view.joins`에 직접 FK 간선이 빠져 우회 조인(Chasm/Fan Trap)이 발생하는 경우 → `view.joins`에 누락된 FK 간선 및 조인 키 양방향 매핑 보강 제안
 - 동일 소규모 룩업 테이블을 여러 역할 FK(`ship_to_address_id`, `bill_to_address_id` 등)로 참조해 동시 필터링이 막히는 경우 → 역할별 룩업 `table` 문서 분리 제안
-- 사전 집계 요약 테이블(`summary: true`)과 원천 상세 테이블을 함께 라우팅해야 하는 경우 → `combine: "select"`(`prefer: "summary"`) 뷰 구조 제안
+- 사전 집계 요약 테이블과 원천 상세 테이블을 함께 라우팅해야 하는 경우 → 요약은 별도 join view로 두고 cube `choice`(`summary: true`) + `prefer: "summary"` 제안
 
 → view/table 수정이나 신규 생성이 필요하면 짧게 제안하고 `semantic-table-view` / `semantic-cube-metric-segment`로 넘긴다.
 

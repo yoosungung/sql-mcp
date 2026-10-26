@@ -4,20 +4,20 @@ import { AuthorApi } from "./api";
 import { Canvas } from "./components/Canvas";
 import { Catalog } from "./components/Catalog";
 import { Detail } from "./components/Detail";
-import { detailDoc, draftView, mergedColumns, uniqueName, type TableCombine } from "./components/docs";
+import { detailDoc, draftView, uniqueName, type TableCombine } from "./components/docs";
 import { Inspector } from "./components/Inspector";
 import type { Pick, Tab } from "./components/types";
 import {
   combineName,
   cubeForView,
+  choiceStack,
   forTarget,
   joinViewForTable,
   metricsForCube,
   reorder,
   segmentsForCube,
-  withSourceOrder,
+  withChoiceStack,
   type Doc,
-  type Source,
 } from "./model";
 
 export function App({ api }: { api?: AuthorApi }) {
@@ -34,6 +34,8 @@ export function App({ api }: { api?: AuthorApi }) {
   const [draftKey, setDraftKey] = useState("");
   const [editing, setEditing] = useState<Doc>();
   const [editingStamp, setEditingStamp] = useState("");
+  const [cubeDraft, setCubeDraft] = useState<Doc>();
+  const [cubeStamp, setCubeStamp] = useState("");
   const [checked, setChecked] = useState<string[]>([]);
   const [viewName, setViewName] = useState("");
   const [member, setMember] = useState<Pick>(null);
@@ -78,8 +80,9 @@ export function App({ api }: { api?: AuthorApi }) {
   const selectedTable = tables.find((t) => t.name === tableName) ?? tables[0];
   const joinView = selectedTable ? joinViewForTable(views, selectedTable.name) : views.find((v) => v.combine === "join");
   const selectedView = views.find((v) => v.name === viewName);
-  const selectMode = tab === "cubes" && selectedView?.combine === "select";
   const cube = selectedView ? cubeForView(cubes, selectedView.name) : undefined;
+  const liveCube = cubeDraft && cube && cubeDraft.name === cube.name ? cubeDraft : cube;
+  const selectMode = tab === "cubes" && choiceStack(liveCube).length > 1;
   const engine = targets.find((t) => t.name === target)?.engine;
 
   function chooseTarget(value: string) {
@@ -117,38 +120,26 @@ export function App({ api }: { api?: AuthorApi }) {
 
   async function combine() {
     if (checked.length < 2) return;
-    const name = uniqueName(combineName(checked), views);
-    const sources: Source[] = checked.map((table, i) => ({
-      kind: "view",
-      table,
-      summary: i === 0,
-    }));
-    const columns = mergedColumns(views.filter((v) => checked.includes(v.name)));
-    const view: Doc = {
-      kind: "view",
-      name,
-      target,
-      combine: "select",
-      prefer: "summary",
-      description: "",
-      sources,
-      columns,
-    };
-    const cubeDoc: Doc = {
-      kind: "cube",
-      name: uniqueName(`${name}_cube`, cubes),
-      target,
-      view: name,
-      description: "",
-      dimensions: [],
-      facts: [],
-    };
+    const canonical = checked[checked.length - 1];
+    const existing = cubeForView(cubes, canonical);
+    const cubeDoc = withChoiceStack(
+      {
+        kind: "cube",
+        name: existing?.name ?? uniqueName(combineName(checked), cubes),
+        target,
+        view: canonical,
+        description: existing?.description ?? "",
+        dimensions: existing?.dimensions ?? [],
+        facts: existing?.facts ?? [],
+      },
+      checked,
+    );
     setBusy(true);
     setError("");
     try {
-      await client.create(view);
-      await client.create(cubeDoc);
-      setViewName(name);
+      if (existing) await client.update("cube", existing.name, cubeDoc);
+      else await client.create(cubeDoc);
+      setViewName(canonical);
       setMember(null);
       setChecked([]);
       await reload();
@@ -160,8 +151,8 @@ export function App({ api }: { api?: AuthorApi }) {
   }
 
   function dropSource(from: number, to: number) {
-    if (!editing?.sources) return;
-    setEditing(withSourceOrder(editing, reorder(editing.sources, from, to)));
+    if (!liveCube) return;
+    setCubeDraft(withChoiceStack(liveCube, reorder(choiceStack(liveCube), from, to)));
   }
 
   const pickedTables = picked
@@ -203,10 +194,20 @@ export function App({ api }: { api?: AuthorApi }) {
     setEditingStamp(openedStamp);
     setEditing(opened ? (JSON.parse(JSON.stringify(opened)) as Doc) : undefined);
   }
+  const cubeOpenedStamp = cube ? JSON.stringify(cube) : "";
+  const cubeDirty = Boolean(cubeDraft && cube && JSON.stringify(cubeDraft) !== cubeOpenedStamp);
+  if ((cube?.name || "") !== (cubeDraft?.name || "") || (cubeOpenedStamp !== cubeStamp && !cubeDirty)) {
+    setCubeStamp(cubeOpenedStamp);
+    setCubeDraft(cube ? (JSON.parse(JSON.stringify(cube)) as Doc) : undefined);
+  }
 
   async function saveOpen() {
     if (tab === "physical" && draft) {
       await createPhysical();
+      return;
+    }
+    if (tab === "cubes" && cubeDirty && cubeDraft) {
+      await save(cubeDraft);
       return;
     }
     if (editing) await save(editing);
@@ -218,6 +219,13 @@ export function App({ api }: { api?: AuthorApi }) {
     const usedBy = views.filter((view) => view.name !== name && (view.sources || []).some((source) => source.table === name));
     if (usedBy.length) {
       setError(`${name} is used by ${usedBy.map((view) => view.name).join(", ")}`);
+      return;
+    }
+    const choiceUsers = cubes.filter(
+      (c) => c.view !== name && (c.choice || []).some((item) => item.view === name),
+    );
+    if (choiceUsers.length) {
+      setError(`${name} is used by ${choiceUsers.map((c) => c.name).join(", ")}`);
       return;
     }
     const cubeDoc = cubeForView(cubes, name);
@@ -250,8 +258,8 @@ export function App({ api }: { api?: AuthorApi }) {
         canDelete: Boolean(editing) && !draft,
         canDiscard: Boolean(draft),
       }
-    : editing
-      ? { title: editing.name, unsaved: dirty, canSave: dirty, canDelete: true, canDiscard: false }
+      : editing
+      ? { title: editing.name, unsaved: dirty || cubeDirty, canSave: dirty || cubeDirty, canDelete: true, canDiscard: false }
       : undefined;
 
   return (
@@ -323,6 +331,7 @@ export function App({ api }: { api?: AuthorApi }) {
             selectMode={selectMode}
             tab={tab}
             selectedView={tab === "cubes" ? editing ?? selectedView : selectedView}
+            stackNames={choiceStack(liveCube)}
             joinView={joinView}
             checked={checked}
             onDrop={dropSource}
@@ -347,14 +356,12 @@ export function App({ api }: { api?: AuthorApi }) {
             mapping={draft ?? (tab === "physical" ? editing ?? joinView : undefined)}
             onSaveMapping={editView}
             source={draft ? picked[0] : selectedTable?.name}
-            selectMode={selectMode}
             selectedView={tab === "cubes" ? editing ?? selectedView : selectedView}
-            cube={cube}
-            metrics={cube ? metricsForCube(docs, cube.name) : []}
-            segments={cube ? segmentsForCube(docs, cube.name) : []}
+            cube={liveCube}
+            metrics={liveCube ? metricsForCube(docs, liveCube.name) : []}
+            segments={liveCube ? segmentsForCube(docs, liveCube.name) : []}
             selected={member}
             onSelect={setMember}
-            onSave={editView}
           />
         </div>
         <section className="editor" aria-label="Detail">

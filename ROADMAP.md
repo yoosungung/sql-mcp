@@ -69,16 +69,16 @@ D10/D11 조회 Admin API 취소는 유지한다. D30이 작성 HTTP `/api`를 �
 루트 `semantic-ui/`는 Vite React다. 빌드 산출물은 sql-mcp HTTP가 정적 파일로 서빙한다. 데이터는 `/api`(타깃·물리 테이블·`/api/meta`). `POST /mcp`는 DW 조회만.
 
 1. **타깃을 먼저 고른다.** 셀렉터 하나. 타깃 사이 조인은 없다. 목록은 `list_databases`.
-2. **왼쪽 두 탭.** Physical은 물리 테이블을 `join` · `union` · `minus`로 끌어 초안을 만든다. 체크도 된다. Cubes는 뷰 목록과 `New view`(`combine: select`).
-3. **가운데가 연 뷰다.** Physical은 고른 테이블의 join 선, 또는 union/minus 포개기다. 첫 테이블이 기준이다. Cubes의 `select`는 입력 뷰 스택이다. 위가 priority 1. 드래그는 순서만 바꾸고 `Save view`가 저장한다.
-4. **오른쪽이 컬럼이다.** Physical 초안과 조인 뷰는 물리 컬럼 매핑이다. 셀렉트 뷰는 입력 뷰 컬럼 머지다. 그 외 Cubes는 cube 트리(dimension · fact · metric · segment).
-5. **저장과 삭제는 연 뷰의 막대다.** `Save view`가 생성과 수정이다. `Delete view`는 확인 후 그 뷰의 metric · segment · cube를 지우고 뷰를 지운다. Cubes의 select 생성은 `New view`와 빈 cube.
+2. **왼쪽 두 탭.** Physical은 물리 테이블을 `join` · `union` · `minus`로 끌어 초안을 만든다. 체크도 된다. Cubes는 뷰 목록과 `New cube`(체크한 뷰의 마지막이 정본 `cube.view`, 나머지가 `choice`).
+3. **가운데가 연 뷰다.** Physical은 고른 테이블의 join 선, 또는 union/minus 포개기다. 첫 테이블이 기준이다. Cubes의 choice 스택은 위가 요약 우선. 드래그는 순서만 바꾸고 `Save view`가 cube를 저장한다.
+4. **오른쪽이 컬럼이다.** Physical 초안과 조인 뷰는 물리 컬럼 매핑이다. Cubes는 cube 트리(dimension · fact · metric · segment).
+5. **저장과 삭제는 연 뷰의 막대다.** `Save view`가 생성과 수정이다. `Delete view`는 확인 후 그 뷰의 metric · segment · cube를 지우고 뷰를 지운다. Cubes의 choice 생성은 `New cube`.
 6. **아래 상세는 선택 항목의 meta JSON.** 물리 테이블이면 테이블 정보만(컬럼 목록은 오른쪽 매핑에 있다). 뷰를 고르면 뷰 문서. 오른쪽 트리에서 dimension / fact / metric / segment를 고르면 그 항목.
 7. **정적 라우트.** Rust `http`가 `semantic-ui` 빌드 산출물을 서빙한다. `/health` · `/api` · `/mcp` · `/ui`.
 
 - [x] 루트 `semantic-ui/` Vite React. `server/` 컴파일과 `client/`는 그대로
-- [x] 타깃 셀렉터 · Physical에서 join/union/minus 초안 · Cubes의 select 스택 · 오른쪽 매핑/머지 · 아래 상세
-- [x] 셀렉트 뷰 우선순위 스택(드래그)과 컬럼 머지
+- [x] 타깃 셀렉터 · Physical에서 join/union/minus 초안 · Cubes의 cube.choice 스택 · 오른쪽 매핑 · 아래 상세
+- [x] cube.choice 우선순위 스택(드래그)
 - [x] HTTP `/api/databases` · 물리 tables/sample · `/api/meta` CRUD. MCP는 조회만.
 - [x] sql-mcp 정적 파일 라우트. 빌드 산출물 `semantic-ui/dist` → `GET /ui/`
 

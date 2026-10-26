@@ -76,10 +76,7 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
             let catalog = source_catalog(src).ok_or_else(|| {
                 AppError::Validation(format!("view {name}: source table missing"))
             })?;
-            let ok = match combine {
-                "select" => views.contains_key(catalog),
-                _ => tables.contains_key(catalog),
-            };
+            let ok = tables.contains_key(catalog);
             if !ok {
                 return Err(AppError::Validation(format!(
                     "view {name}: unknown source catalog {catalog} for combine={combine}"
@@ -91,7 +88,7 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
                 )));
             }
         }
-        let leaf_targets = leaf_table_targets(view, &tables, &views, &mut HashSet::new())?;
+        let leaf_targets = leaf_table_targets(view, &tables)?;
         for lt in &leaf_targets {
             if *lt != view_target {
                 return Err(AppError::Validation(format!(
@@ -136,6 +133,48 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
             return Err(AppError::Validation(format!(
                 "cube {name}: target {cube_target} != view {view_name} target {view_target}"
             )));
+        }
+        let has_choice = cube
+            .get("choice")
+            .and_then(|v| v.as_array())
+            .is_some_and(|a| !a.is_empty());
+        let has_prefer = cube.get("prefer").and_then(|v| v.as_str()).is_some();
+        if has_choice != has_prefer {
+            return Err(AppError::Validation(format!(
+                "cube {name}: choice and prefer must be set together"
+            )));
+        }
+        if let Some(choices) = cube.get("choice").and_then(|v| v.as_array()) {
+            let mut seen: HashSet<String> = HashSet::new();
+            for item in choices {
+                let cname = item.get("view").and_then(|v| v.as_str()).ok_or_else(|| {
+                    AppError::Validation(format!("cube {name}: choice.view missing"))
+                })?;
+                if cname == view_name {
+                    return Err(AppError::Validation(format!(
+                        "cube {name}: choice view {cname} equals cube.view"
+                    )));
+                }
+                if !seen.insert(cname.to_string()) {
+                    return Err(AppError::Validation(format!(
+                        "cube {name}: duplicate choice view {cname}"
+                    )));
+                }
+                if !views.contains_key(cname) {
+                    return Err(AppError::Validation(format!(
+                        "cube {name}: unknown choice view {cname}"
+                    )));
+                }
+                let choice_view = views[cname];
+                let choice_target = doc_target(choice_view).ok_or_else(|| {
+                    AppError::Validation(format!("view {cname}: target missing"))
+                })?;
+                if cube_target != choice_target {
+                    return Err(AppError::Validation(format!(
+                        "cube {name}: target {cube_target} != choice view {cname} target {choice_target}"
+                    )));
+                }
+            }
         }
         let view_cols = view_column_names(view);
         let mut dim_fact_names: HashSet<String> = HashSet::new();
@@ -290,18 +329,12 @@ fn doc_target(doc: &Value) -> Option<&str> {
     doc.get("target").and_then(|v| v.as_str())
 }
 
-/// Collect distinct leaf table `target` values under a view (follows select→view).
+/// Collect distinct leaf table `target` values under a view.
 fn leaf_table_targets<'a>(
     view: &'a Value,
     tables: &HashMap<String, &'a Value>,
-    views: &HashMap<String, &'a Value>,
-    visiting: &mut HashSet<String>,
 ) -> Result<HashSet<&'a str>, AppError> {
     let name = view.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-    if !visiting.insert(name.to_string()) {
-        return Err(AppError::Validation(format!("view {name}: cyclic sources")));
-    }
-    let combine = view.get("combine").and_then(|v| v.as_str()).unwrap_or("");
     let sources = view
         .get("sources")
         .and_then(|v| v.as_array())
@@ -310,21 +343,13 @@ fn leaf_table_targets<'a>(
     let mut out = HashSet::new();
     for src in &sources {
         let catalog = source_catalog(src).unwrap_or("");
-        if combine == "select" {
-            let child = views.get(catalog).ok_or_else(|| {
-                AppError::Validation(format!("view {name}: unknown source view {catalog}"))
-            })?;
-            out.extend(leaf_table_targets(child, tables, views, visiting)?);
-        } else {
-            let table = tables.get(catalog).ok_or_else(|| {
-                AppError::Validation(format!("view {name}: unknown source table {catalog}"))
-            })?;
-            let t = doc_target(table)
-                .ok_or_else(|| AppError::Validation(format!("table {catalog}: target missing")))?;
-            out.insert(t);
-        }
+        let table = tables.get(catalog).ok_or_else(|| {
+            AppError::Validation(format!("view {name}: unknown source table {catalog}"))
+        })?;
+        let t = doc_target(table)
+            .ok_or_else(|| AppError::Validation(format!("table {catalog}: target missing")))?;
+        out.insert(t);
     }
-    visiting.remove(name);
     Ok(out)
 }
 
@@ -406,6 +431,23 @@ mod tests {
     #[test]
     fn example_set_links_ok() {
         validate_links(&load_examples()).unwrap();
+    }
+
+    #[test]
+    fn rejects_unknown_cube_choice_view() {
+        let mut docs = load_examples();
+        for d in &mut docs {
+            if d.get("kind").and_then(|v| v.as_str()) == Some("cube")
+                && d.get("name").and_then(|v| v.as_str()) == Some("sales")
+            {
+                d["choice"] = json!([{ "view": "missing_summary", "summary": true }]);
+                d["prefer"] = json!("summary");
+            }
+        }
+        assert!(matches!(
+            validate_links(&docs),
+            Err(AppError::Validation(_))
+        ));
     }
 
     #[test]

@@ -248,7 +248,7 @@ def render_view_graph(
                     a = source_ids[_src_alias(sources[i])]
                     b = source_ids[_src_alias(sources[i + 1])]
                     lines.append(f"  {a} --- {b}")
-        elif combine in ("union", "minus", "select"):
+        elif combine in ("union", "minus"):
             names = [_src_alias(s) for s in sources]
             for i in range(len(names) - 1):
                 a = source_ids[names[i]]

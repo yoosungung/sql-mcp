@@ -8,6 +8,7 @@ export function Canvas({
   tab,
   selectMode,
   selectedView,
+  stackNames,
   joinView,
   checked,
   onDrop,
@@ -25,6 +26,7 @@ export function Canvas({
   tab: Tab;
   selectMode: boolean;
   selectedView?: Doc;
+  stackNames?: string[];
   joinView?: Doc;
   checked: string[];
   onDrop: (from: number, to: number) => void;
@@ -47,8 +49,8 @@ export function Canvas({
           {viewBar && (
             <ViewBar {...viewBar} busy={busy} onSave={onSaveView} onDelete={onDeleteView} onDiscard={onDiscard} />
           )}
-          {selectMode && selectedView ? (
-            <Stack view={selectedView} onDrop={onDrop} />
+          {selectMode && (stackNames || []).length > 1 ? (
+            <Stack names={stackNames || []} onDrop={onDrop} />
           ) : selectedView && isTableCombine(selectedView.combine) ? (
             <TableDraft combine={selectedView.combine} names={(selectedView.sources || []).map((s) => sourceLabel(s))} joins={selectedView.joins} />
           ) : (
@@ -221,8 +223,8 @@ function CombineDiagram({ names }: { names: string[] }) {
   if (!names.length) return <Text size="2" color="gray">Check views to preview the combine.</Text>;
   return (
     <Flex direction="column" gap="2">
-      <Heading size="3" weight="medium">Select</Heading>
-      <Text size="1" color="gray">Checked views become one select view.</Text>
+      <Heading size="3" weight="medium">Choice</Heading>
+      <Text size="1" color="gray">Checked views become one cube. Last is the base.</Text>
       {names.map((n) => (
         <div className="node" key={n}>
           {n}
@@ -232,16 +234,15 @@ function CombineDiagram({ names }: { names: string[] }) {
   );
 }
 
-function Stack({ view, onDrop }: { view: Doc; onDrop: (from: number, to: number) => void }) {
+function Stack({ names, onDrop }: { names: string[]; onDrop: (from: number, to: number) => void }) {
   const [from, setFrom] = useState<number | null>(null);
-  const sources = view.sources || [];
   return (
     <Flex direction="column" gap="2">
       <Heading size="3" weight="medium">Priority</Heading>
-      <Text size="1" color="gray">Top is priority 1. Drag to reorder.</Text>
-      {sources.map((s, i) => (
+      <Text size="1" color="gray">Top is summary first. Last is the cube base. Drag to reorder.</Text>
+      {names.map((name, i) => (
         <div
-          key={`${s.table}-${i}`}
+          key={`${name}-${i}`}
           className="stack-row"
           draggable
           onDragStart={() => setFrom(i)}
@@ -253,9 +254,9 @@ function Stack({ view, onDrop }: { view: Doc; onDrop: (from: number, to: number)
         >
           <Text size="1" color="gray">⋮⋮</Text>
           <Text weight="medium">{i + 1}</Text>
-          <Text>{sourceLabel(s)}</Text>
+          <Text>{name}</Text>
           {i === 0 && <Badge variant="soft" size="1">Priority 1</Badge>}
-          {i === sources.length - 1 && i > 0 && <Badge variant="soft" color="gray" size="1">Lowest</Badge>}
+          {i === names.length - 1 && i > 0 && <Badge variant="soft" color="gray" size="1">Base</Badge>}
         </div>
       ))}
     </Flex>

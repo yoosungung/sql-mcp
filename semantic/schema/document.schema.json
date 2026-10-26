@@ -209,7 +209,7 @@
     },
     "view": {
       "title": "View",
-      "description": "테이블 또는 view 를 묶는다. combine 은 join, union, minus, select 중 하나다.",
+      "description": "테이블을 묶는다. combine 은 join, union, minus 중 하나다.",
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "name", "target", "combine", "sources", "columns"],
@@ -222,12 +222,8 @@
         },
         "description": { "type": "string" },
         "combine": {
-          "enum": ["join", "union", "minus", "select"],
-          "description": "join, union, minus 는 테이블을 묶는다. select 는 view 를 묶어 요약 view 를 우선 고른다."
-        },
-        "prefer": {
-          "const": "summary",
-          "description": "select 전용. 사용자 SQL을 풀 수 있는 source 중 summary 를 우선한다."
+          "enum": ["join", "union", "minus"],
+          "description": "join, union, minus 는 테이블을 묶는다. 요약·상세 선택은 cube.choice 다."
         },
         "sources": {
           "type": "array",
@@ -260,7 +256,6 @@
                 }
               }
             },
-            "not": { "required": ["prefer"] },
             "allOf": [
               {
                 "if": {
@@ -291,34 +286,6 @@
                 }
               }
             },
-            "not": {
-              "anyOf": [
-                { "required": ["joins"] },
-                { "required": ["prefer"] }
-              ]
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": { "combine": { "const": "select" } },
-            "required": ["combine"]
-          },
-          "then": {
-            "required": ["prefer"],
-            "properties": {
-              "sources": {
-                "minItems": 2,
-                "contains": {
-                  "required": ["summary"],
-                  "properties": { "summary": { "const": true } }
-                },
-                "items": {
-                  "required": ["summary"],
-                  "properties": { "kind": { "const": "view" } }
-                }
-              }
-            },
             "not": { "required": ["joins"] }
           }
         }
@@ -329,18 +296,14 @@
       "additionalProperties": false,
       "required": ["kind", "table"],
       "properties": {
-        "kind": { "enum": ["table", "view"] },
+        "kind": { "const": "table" },
         "table": {
           "$ref": "#/$defs/name",
-          "description": "카탈로그 table/view 문서 name (kind에 따라)."
+          "description": "카탈로그 table 문서 name."
         },
         "alias": {
           "$ref": "#/$defs/name",
           "description": "뷰 내 별칭(joins·mappings·SQL AS). 생략 시 table과 동일."
-        },
-        "summary": {
-          "type": "boolean",
-          "description": "select 전용. true 이면 요약 view."
         }
       }
     },
@@ -394,7 +357,7 @@
     },
     "cube": {
       "title": "Cube",
-      "description": "DW 에이전트에게 테이블로 보이는 문서. view 하나와 설명이 있고 컬럼은 dimension 또는 fact 다.",
+      "description": "DW 에이전트에게 테이블로 보이는 문서. view 하나와 설명이 있고 컬럼은 dimension 또는 fact 다. 요약 view 선택은 choice 다.",
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "name", "target", "view", "description", "dimensions", "facts"],
@@ -407,7 +370,17 @@
         },
         "view": {
           "$ref": "#/$defs/name",
-          "description": "연결된 view name."
+          "description": "정본(상세) view name. dim/fact column 이 붙는다."
+        },
+        "choice": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/cubeChoice" },
+          "description": "요약 후보 view. prefer 와 함께 둔다."
+        },
+        "prefer": {
+          "const": "summary",
+          "description": "choice 가 있을 때만. 질의 컬럼을 덮는 summary choice 를 정본 view 보다 우선한다."
         },
         "description": { "type": "string", "description": "메타 사용(검색·동의어·업무 의미). 생성 출처 문구 금지. 없으면 빈 문자열." },
         "dimensions": {
@@ -424,6 +397,31 @@
           "minItems": 1,
           "items": { "$ref": "#/$defs/physical_ident" },
           "description": "D29 큐브 그레인. 허브 table.pk. 집계 전 이 키가 조인으로 복제되면 팬아웃이다."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["choice"] },
+          "then": { "required": ["prefer"] }
+        },
+        {
+          "if": { "required": ["prefer"] },
+          "then": { "required": ["choice"] }
+        }
+      ]
+    },
+    "cubeChoice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["view", "summary"],
+      "properties": {
+        "view": {
+          "$ref": "#/$defs/name",
+          "description": "요약 후보 view name. cube.view 와 달라야 한다."
+        },
+        "summary": {
+          "const": true,
+          "description": "true 이면 요약 view."
         }
       }
     },

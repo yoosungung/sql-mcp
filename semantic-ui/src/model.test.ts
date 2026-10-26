@@ -5,7 +5,7 @@ import {
   reorder,
   setMapping,
   toolPayload,
-  withSourceOrder,
+  withChoiceStack,
   type Doc,
 } from "./model";
 
@@ -32,16 +32,13 @@ describe("setMapping", () => {
   });
 });
 
-describe("withSourceOrder", () => {
-  it("marks only the first source as summary", () => {
-    const view: Doc = { kind: "view", name: "s", combine: "select" };
-    const next = withSourceOrder(view, [
-      { kind: "view", table: "loan_view", summary: true },
-      { kind: "view", table: "financial_all", summary: false },
-    ]);
-    expect(next.sources?.map((s) => s.table)).toEqual(["loan_view", "financial_all"]);
-    expect(next.sources?.[0].summary).toBe(true);
-    expect(next.sources?.[1].summary).toBe(false);
+describe("withChoiceStack", () => {
+  it("puts later names on cube.view and earlier names on summary choice", () => {
+    const cube: Doc = { kind: "cube", name: "sales", view: "orders_customer" };
+    const next = withChoiceStack(cube, ["loan_view", "financial_all"]);
+    expect(next.view).toBe("financial_all");
+    expect(next.prefer).toBe("summary");
+    expect(next.choice).toEqual([{ view: "loan_view", summary: true }]);
   });
 });
 

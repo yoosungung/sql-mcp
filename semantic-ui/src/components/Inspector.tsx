@@ -1,5 +1,5 @@
 import { Button, Flex, Heading, IconButton, Table, Text, TextField } from "@radix-ui/themes";
-import { mappingFor, setMapping, sourceLabel, type Doc } from "../model";
+import { mappingFor, setMapping, type Doc } from "../model";
 import type { Pick, Tab } from "./types";
 
 export function Inspector({
@@ -9,14 +9,12 @@ export function Inspector({
   mapping,
   onSaveMapping,
   source,
-  selectMode,
   selectedView,
   cube,
   metrics,
   segments,
   selected,
   onSelect,
-  onSave,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -24,14 +22,12 @@ export function Inspector({
   mapping?: Doc;
   onSaveMapping: (doc: Doc) => void;
   source?: string;
-  selectMode: boolean;
   selectedView?: Doc;
   cube?: Doc;
   metrics: Doc[];
   segments: Doc[];
   selected: Pick;
   onSelect: (pick: Pick) => void;
-  onSave: (doc: Doc) => void;
 }) {
   return (
     <aside className={open ? "inspector" : "inspector is-collapsed"} aria-label="Inspector">
@@ -51,8 +47,6 @@ export function Inspector({
         <>
           {tab === "physical" && mapping ? (
             <JoinMapping view={mapping} source={source} onSave={onSaveMapping} />
-          ) : selectMode && selectedView ? (
-            <MergeGrid view={selectedView} onSave={onSave} />
           ) : tab === "physical" ? (
             <Text size="2" color="gray">Check tables to map columns.</Text>
           ) : (
@@ -108,52 +102,6 @@ function JoinMapping({
                   }}
                 />
               </Table.Cell>
-            </Table.Row>
-          ))}
-        </Table.Body>
-      </Table.Root>
-    </Flex>
-  );
-}
-
-function MergeGrid({ view, onSave }: { view: Doc; onSave: (doc: Doc) => void }) {
-  const sources = view.sources || [];
-  return (
-    <Flex direction="column" gap="2">
-      <Heading size="3" weight="medium">Column merge</Heading>
-      <Table.Root size="1" variant="surface">
-        <Table.Header>
-          <Table.Row>
-            <Table.ColumnHeaderCell>View column</Table.ColumnHeaderCell>
-            {sources.map((s, i) => (
-              <Table.ColumnHeaderCell key={sourceLabel(s)}>
-                {i + 1} {sourceLabel(s)}
-              </Table.ColumnHeaderCell>
-            ))}
-          </Table.Row>
-        </Table.Header>
-        <Table.Body>
-          {(view.columns || []).map((col) => (
-            <Table.Row key={col.name}>
-              <Table.RowHeaderCell>{col.name}</Table.RowHeaderCell>
-              {sources.map((s) => {
-                const label = sourceLabel(s);
-                const current = mappingFor(col, label);
-                return (
-                  <Table.Cell key={label}>
-                    <TextField.Root
-                      size="1"
-                      aria-label={`${col.name} ${label}`}
-                      defaultValue={current}
-                      onBlur={(e) => {
-                        if (e.target.value !== current) {
-                          onSave(setMapping(view, col.name, label, e.target.value));
-                        }
-                      }}
-                    />
-                  </Table.Cell>
-                );
-              })}
             </Table.Row>
           ))}
         </Table.Body>

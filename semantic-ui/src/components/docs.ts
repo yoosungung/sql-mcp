@@ -89,14 +89,3 @@ export function uniqueName(base: string, docs: Doc[]): string {
   while (docs.some((d) => d.name === `${base}_${n}`)) n += 1;
   return `${base}_${n}`;
 }
-
-export function mergedColumns(views: Doc[]): Doc["columns"] {
-  const names = new Set<string>();
-  for (const view of views) for (const col of view.columns || []) names.add(col.name);
-  return [...names].map((name) => ({
-    name,
-    mappings: views.flatMap((view) =>
-      (view.columns || []).some((c) => c.name === name) ? [{ source: view.name, column: name }] : [],
-    ),
-  })).filter((col) => col.mappings.length > 0);
-}

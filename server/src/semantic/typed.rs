@@ -278,18 +278,17 @@ async fn insert_view(conn: &Connection, body: &Value) -> Result<(), AppError> {
     let target = str_field(body, "target")?;
     let description = opt_str(body, "description");
     let combine = str_field(body, "combine")?;
-    let prefer = opt_str(body, "prefer");
     conn.execute(
-        "INSERT INTO meta_views (name, description, target, combine, prefer) VALUES (?1,?2,?3,?4,?5)",
-        params![name, description, target, combine, prefer],
+        "INSERT INTO meta_views (name, description, target, combine) VALUES (?1,?2,?3,?4)",
+        params![name, description, target, combine],
     )
     .await
     .map_err(|e| AppError::Internal(e.into()))?;
 
     if let Some(sources) = body.get("sources").and_then(|v| v.as_array()) {
         for s in sources {
-            let (skind, catalog, alias, summary) = if let Some(n) = s.as_str() {
-                ("table", n, n, false)
+            let (skind, catalog, alias) = if let Some(n) = s.as_str() {
+                ("table", n, n)
             } else {
                 let catalog = s
                     .get("table")
@@ -301,12 +300,11 @@ async fn insert_view(conn: &Connection, body: &Value) -> Result<(), AppError> {
                     s.get("kind").and_then(|v| v.as_str()).unwrap_or("table"),
                     catalog,
                     alias,
-                    s.get("summary").and_then(|v| v.as_bool()).unwrap_or(false),
                 )
             };
             conn.execute(
-                "INSERT INTO meta_view_sources (view_name, kind, source_name, catalog_name, summary) VALUES (?1,?2,?3,?4,?5)",
-                params![name, skind, alias, catalog, summary as i32],
+                "INSERT INTO meta_view_sources (view_name, kind, source_name, catalog_name, summary) VALUES (?1,?2,?3,?4,0)",
+                params![name, skind, alias, catalog],
             )
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
@@ -353,7 +351,7 @@ async fn insert_view(conn: &Connection, body: &Value) -> Result<(), AppError> {
 async fn load_view(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut rows = conn
         .query(
-            "SELECT description, target, combine, prefer FROM meta_views WHERE name = ?1",
+            "SELECT description, target, combine FROM meta_views WHERE name = ?1",
             params![name],
         )
         .await
@@ -366,12 +364,11 @@ async fn load_view(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let description: Option<String> = row.get(0).ok();
     let target: String = row.get(1).map_err(|e| AppError::Internal(e.into()))?;
     let combine: String = row.get(2).map_err(|e| AppError::Internal(e.into()))?;
-    let prefer: Option<String> = row.get(3).ok();
 
     let mut sources = Vec::new();
     let mut srows = conn
         .query(
-            "SELECT kind, source_name, summary, catalog_name FROM meta_view_sources WHERE view_name = ?1",
+            "SELECT kind, source_name, catalog_name FROM meta_view_sources WHERE view_name = ?1",
             params![name],
         )
         .await
@@ -383,18 +380,14 @@ async fn load_view(conn: &Connection, name: &str) -> Result<Value, AppError> {
     {
         let kind: String = r.get(0).map_err(|e| AppError::Internal(e.into()))?;
         let alias: String = r.get(1).map_err(|e| AppError::Internal(e.into()))?;
-        let summary: i32 = r.get(2).map_err(|e| AppError::Internal(e.into()))?;
         let catalog: String = r
-            .get::<String>(3)
+            .get::<String>(2)
             .ok()
             .filter(|c| !c.is_empty())
             .unwrap_or_else(|| alias.clone());
         let mut s = json!({ "kind": kind, "table": catalog });
         if alias != catalog {
             s["alias"] = json!(alias);
-        }
-        if summary != 0 {
-            s["summary"] = json!(true);
         }
         sources.push(s);
     }
@@ -461,9 +454,6 @@ async fn load_view(conn: &Connection, name: &str) -> Result<Value, AppError> {
     if let Some(d) = description {
         out["description"] = json!(d);
     }
-    if let Some(p) = prefer {
-        out["prefer"] = json!(p);
-    }
     if !joins.is_empty() {
         out["joins"] = json!(joins);
     }
@@ -479,12 +469,29 @@ async fn insert_cube(conn: &Connection, body: &Value) -> Result<(), AppError> {
         .get("grain")
         .filter(|v| v.as_array().is_some_and(|a| !a.is_empty()))
         .map(|v| v.to_string());
+    let prefer = opt_str(body, "prefer");
     conn.execute(
-        "INSERT INTO meta_cubes (name, target, view_name, description, role_json, grain_json) VALUES (?1,?2,?3,?4,?5,?6)",
-        params![name, target, view, description, role_json(body), grain_json],
+        "INSERT INTO meta_cubes (name, target, view_name, description, role_json, grain_json, prefer) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        params![name, target, view, description, role_json(body), grain_json, prefer],
     )
     .await
     .map_err(|e| AppError::Internal(e.into()))?;
+
+    if let Some(choices) = body.get("choice").and_then(|v| v.as_array()) {
+        for (pos, item) in choices.iter().enumerate() {
+            let cview = str_field(item, "view")?;
+            let summary = item
+                .get("summary")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            conn.execute(
+                "INSERT INTO meta_cube_choices (cube_name, pos, view_name, summary) VALUES (?1,?2,?3,?4)",
+                params![name, pos as i64, cview, summary as i32],
+            )
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?;
+        }
+    }
 
     if let Some(dims) = body.get("dimensions").and_then(|v| v.as_array()) {
         for d in dims {
@@ -569,7 +576,7 @@ async fn insert_cube_member(
 async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut rows = conn
         .query(
-            "SELECT target, view_name, description, role_json, grain_json FROM meta_cubes WHERE name = ?1",
+            "SELECT target, view_name, description, role_json, grain_json, prefer FROM meta_cubes WHERE name = ?1",
             params![name],
         )
         .await
@@ -584,6 +591,7 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let description: String = row.get(2).map_err(|e| AppError::Internal(e.into()))?;
     let role_s: String = row.get(3).unwrap_or_else(|_| "\"all\"".to_string());
     let grain_s: Option<String> = row.get(4).ok();
+    let prefer: Option<String> = row.get(5).ok();
 
     let mut dimensions = Vec::new();
     let mut drows = conn
@@ -638,6 +646,33 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
                 out["grain"] = grain;
             }
         }
+    }
+    if let Some(p) = prefer.filter(|s| !s.is_empty()) {
+        out["prefer"] = json!(p);
+    }
+    let mut choice = Vec::new();
+    let mut chrows = conn
+        .query(
+            "SELECT view_name, summary FROM meta_cube_choices WHERE cube_name = ?1 ORDER BY pos",
+            params![name],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    while let Some(r) = chrows
+        .next()
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?
+    {
+        let cview: String = r.get(0).map_err(|e| AppError::Internal(e.into()))?;
+        let summary: i32 = r.get(1).unwrap_or(1);
+        let mut item = json!({ "view": cview });
+        if summary != 0 {
+            item["summary"] = json!(true);
+        }
+        choice.push(item);
+    }
+    if !choice.is_empty() {
+        out["choice"] = json!(choice);
     }
     Ok(out)
 }

@@ -12,6 +12,8 @@ export type Doc = {
   columns?: ViewColumn[];
   dimensions?: Member[];
   facts?: Member[];
+  choice?: CubeChoice[];
+  prefer?: string;
   expression?: string;
   aggregation?: string;
   filter?: { expression?: string } | null;
@@ -24,8 +26,9 @@ export type Source = {
   kind: string;
   table: string;
   alias?: string;
-  summary?: boolean;
 };
+
+export type CubeChoice = { view: string; summary?: boolean };
 
 export type Join = {
   left: string;
@@ -89,12 +92,35 @@ export function setMapping(view: Doc, viewColumn: string, source: string, physic
 }
 
 export function withSourceOrder(view: Doc, sources: Source[]): Doc {
-  const next = sources.map((s, i) => ({ ...s, summary: i === 0 }));
-  return { ...view, sources: next };
+  return { ...view, sources };
+}
+
+export function choiceStack(cube?: Doc): string[] {
+  if (!cube) return [];
+  const names = (cube.choice || []).map((item) => item.view);
+  if (cube.view) names.push(cube.view);
+  return names;
+}
+
+export function withChoiceStack(cube: Doc, names: string[]): Doc {
+  if (names.length <= 1) {
+    const next = { ...cube, view: names[0] || cube.view };
+    delete next.choice;
+    delete next.prefer;
+    return next;
+  }
+  return {
+    ...cube,
+    view: names[names.length - 1],
+    choice: names.slice(0, -1).map((view) => ({ view, summary: true as const })),
+    prefer: "summary",
+  };
 }
 
 export function cubeForView(cubes: Doc[], viewName: string): Doc | undefined {
-  return cubes.find((c) => c.view === viewName);
+  return cubes.find(
+    (c) => c.view === viewName || (c.choice || []).some((item) => item.view === viewName),
+  );
 }
 
 export function metricsForCube(docs: Doc[], cube: string): Doc[] {

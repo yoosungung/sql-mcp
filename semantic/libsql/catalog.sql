@@ -36,13 +36,12 @@ CREATE TABLE IF NOT EXISTS meta_views (
   name TEXT PRIMARY KEY,
   description TEXT,
   target TEXT NOT NULL,
-  combine TEXT NOT NULL CHECK (combine IN ('join', 'union', 'minus', 'select')),
-  prefer TEXT CHECK (prefer IS NULL OR prefer = 'summary')
+  combine TEXT NOT NULL CHECK (combine IN ('join', 'union', 'minus'))
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS meta_view_sources (
   view_name TEXT NOT NULL REFERENCES meta_views(name) ON DELETE CASCADE,
-  kind TEXT NOT NULL CHECK (kind IN ('table', 'view')),
+  kind TEXT NOT NULL CHECK (kind IN ('table')),
   source_name TEXT NOT NULL,
   catalog_name TEXT,
   summary INTEGER NOT NULL DEFAULT 0
@@ -71,7 +70,16 @@ CREATE TABLE IF NOT EXISTS meta_cubes (
   view_name TEXT NOT NULL REFERENCES meta_views(name),
   description TEXT NOT NULL,
   role_json TEXT NOT NULL DEFAULT '"all"',
-  grain_json TEXT
+  grain_json TEXT,
+  prefer TEXT CHECK (prefer IS NULL OR prefer = 'summary')
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS meta_cube_choices (
+  cube_name TEXT NOT NULL REFERENCES meta_cubes(name) ON DELETE CASCADE,
+  pos INTEGER NOT NULL,
+  view_name TEXT NOT NULL REFERENCES meta_views(name),
+  summary INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (cube_name, pos)
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS meta_cube_dimensions (

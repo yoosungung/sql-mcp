@@ -238,22 +238,12 @@ fn summary_view_routing_prefers_summary() {
             {"name": "customer_id", "mappings": [{"source": "orders", "column": "customer_id"}]}
         ]
     }));
-    docs.push(json!({
-        "kind": "view",
-        "name": "sales_select",
-        "combine": "select",
-        "prefer": "summary",
-        "sources": [
-            {"kind": "view", "table": "orders_only", "summary": true},
-            {"kind": "view", "table": "orders_customer", "summary": false}
-        ],
-        "columns": []
-    }));
     for d in &mut docs {
         if d.get("kind").and_then(|v| v.as_str()) == Some("cube")
             && d.get("name").and_then(|v| v.as_str()) == Some("sales")
         {
-            d["view"] = json!("sales_select");
+            d["choice"] = json!([{ "view": "orders_only", "summary": true }]);
+            d["prefer"] = json!("summary");
         }
     }
     let sql = compile_metric_select(&docs, "revenue", &["paid"], Some("branch")).unwrap();
@@ -521,22 +511,12 @@ fn ungrouped_detail_bypasses_summary_view_while_distinct_allows_it() {
                 {"name": "sale_amount", "mappings": [{"source": "orders_month", "column": "sale_amount"}]}
             ]
         }));
-    docs.push(json!({
-        "kind": "view",
-        "name": "sales_select",
-        "combine": "select",
-        "prefer": "summary",
-        "sources": [
-            {"kind": "view", "table": "orders_month_summary_view", "summary": true},
-            {"kind": "view", "table": "orders_customer", "summary": false}
-        ],
-        "columns": []
-    }));
     for d in &mut docs {
         if d.get("kind").and_then(|v| v.as_str()) == Some("cube")
             && d.get("name").and_then(|v| v.as_str()) == Some("sales")
         {
-            d["view"] = json!("sales_select");
+            d["choice"] = json!([{ "view": "orders_month_summary_view", "summary": true }]);
+            d["prefer"] = json!("summary");
         }
     }
 

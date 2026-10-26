@@ -62,13 +62,12 @@ CREATE TABLE meta_tables (
     role_json TEXT NOT NULL DEFAULT '"all"'
 ) STRICT;
 
--- 2. View 계층 (join / union / minus / select)
+-- 2. View 계층 (join / union / minus)
 CREATE TABLE meta_views (
     name TEXT PRIMARY KEY,
     description TEXT,
     target TEXT NOT NULL,
-    combine TEXT NOT NULL CHECK (combine IN ('join', 'union', 'minus', 'select')),
-    prefer TEXT CHECK (prefer IS NULL OR prefer = 'summary')
+    combine TEXT NOT NULL CHECK (combine IN ('join', 'union', 'minus'))
 ) STRICT;
 
 -- 3. Cube 계층
@@ -76,6 +75,7 @@ CREATE TABLE meta_cubes (
     name TEXT PRIMARY KEY,
     target TEXT NOT NULL,
     view_name TEXT NOT NULL REFERENCES meta_views(name),
+    prefer TEXT CHECK (prefer IS NULL OR prefer = 'summary'),
     description TEXT NOT NULL,
     role_json TEXT NOT NULL DEFAULT '"all"'
 ) STRICT;
@@ -127,7 +127,7 @@ CREATE VIRTUAL TABLE column_index_fts USING fts5(
 ### Step 3: 요약 뷰(Summary View) 우선 라우팅 및 커버리지 검증
 
 - 동작:
-  - Cube의 View가 `combine: "select"`이고 `prefer: "summary"`일 때, **Grouped 모드(또는 `SELECT DISTINCT`)**이면 `summary: true` source를 우선하고, **비-`DISTINCT` Ungrouped 상세 행 조회(D23)**이면 사전 집계 왜곡을 막기 위해 `summary: false` 원천 뷰를 우선한다.
+  - Cube에 `choice`와 `prefer: "summary"`가 있으면, **Grouped 모드(또는 `SELECT DISTINCT`)**이면 `summary: true` choice view를 우선하고, **비-`DISTINCT` Ungrouped 상세 행 조회(D23)**이면 사전 집계 왜곡을 막기 위해 정본 `cube.view`를 우선한다.
   - ReqCols = Projection ∪ GROUP BY ∪ WHERE ∪ HAVING ∪ ORDER BY ∪ Metric Filter 컬럼.
   - 후보 뷰의 `meta_view_columns`가 ReqCols를 커버하는지 확인. 비가산(`is_semi_additive`) metric이면 요약 뷰 컬럼 집합이 `ReqCols`와 **정확히 일치**할 때만 채택.
   - 조건을 만족하는 최적 뷰를 고르고, 없으면 기본(원천) View.

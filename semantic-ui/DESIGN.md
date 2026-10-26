@@ -10,9 +10,9 @@
 
 - 위: 타깃 하나. 타깃 사이 조인 없음. `list_databases`.
 - 왼쪽 **Physical**: 테이블을 가운데 `join` · `union` · `minus`로 끌어 초안을 만든다. 체크도 같은 목록에 넣는다. 컬럼 목록은 왼쪽 트리에 두지 않는다.
-- 왼쪽 **Cubes**: 뷰를 눌러 연다. `New view`는 체크한 뷰로 `combine: select` 뷰와 빈 cube를 만든다.
-- 가운데 문서 막대: 연 뷰의 저장과 삭제. 새 초안은 `Save view`. 저장된 뷰는 `Save view`와 `Delete view`. 삭제는 확인 후 그 뷰의 metric · segment · cube를 먼저 지운다. Physical은 join 선 또는 union/minus 포개기. Cubes의 셀렉트 뷰는 입력 뷰 스택(위가 priority 1). 드래그는 순서만 바꾸고 `Save view`가 `PUT /api/meta`.
-- 오른쪽: Physical 초안과 조인 뷰는 물리 컬럼 매핑. 셀렉트 뷰는 컬럼 머지. 그 외 Cubes는 cube 트리(dimension · fact · metric · segment).
+- 왼쪽 **Cubes**: 뷰를 눌러 연다. `New cube`는 체크한 뷰로 cube를 만든다. 마지막이 정본 `view`, 나머지가 `choice`(`summary: true`, `prefer: summary`).
+- 가운데 문서 막대: 연 뷰의 저장과 삭제. 새 초안은 `Save view`. 저장된 뷰는 `Save view`와 `Delete view`. 삭제는 확인 후 그 뷰의 metric · segment · cube를 먼저 지운다. Physical은 join 선 또는 union/minus 포개기. Cubes의 choice 스택은 위가 요약 우선. 드래그는 순서만 바꾸고 `Save view`가 cube `PUT /api/meta`.
+- 오른쪽: Physical 초안과 조인 뷰는 물리 컬럼 매핑. Cubes는 cube 트리(dimension · fact · metric · segment).
 - 아래: 선택한 table / view / dimension / fact / metric / segment. 테이블 컬럼 목록은 여기 두지 않는다. 뷰 설명은 문서의 `Save view`로 저장한다. 그 외는 `Save`.
 
 데이터는 HTTP `/api` (`/api/databases`, 물리 tables/columns/sample, `/api/meta`). JSON-RPC `/mcp`는 쓰지 않는다.

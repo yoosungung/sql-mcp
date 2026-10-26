@@ -33,7 +33,7 @@
 
 필수: `kind`, `name`, `target`, `view`, `description`, `dimensions`, `facts`.
 
-`view`는 view 문서 **하나**.
+`view`는 정본(상세) view 문서 **하나**. 요약 view가 있으면 선택 `choice[]`(`{ view, summary: true }`)와 `prefer: "summary"`를 함께 둔다. choice view의 `target`은 cube와 같고, 이름은 `cube.view`와 달라야 한다. 질의 컬럼 커버리지는 컴파일 때 검사한다.
 
 **dimension**
 
@@ -72,7 +72,8 @@
 
 ## Quick checks
 
-- [ ] `cube.view` 존재; `column` ∈ view columns
+- [ ] `cube.view` 존재; `column` ∈ 정본 view columns
+- [ ] `choice`와 `prefer`는 함께; choice view는 다른 join/union/minus view, 같은 target
 - [ ] cube·dim·fact·metric·segment `description`은 메타 사용 서술만(생성 출처 문구 없음). 없으면 `""`
 - [ ] `column`과 `expression` 동시 사용 없음
 - [ ] metric `name` ∉ 같은 cube dimension/fact names

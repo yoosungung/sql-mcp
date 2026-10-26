@@ -7,7 +7,7 @@ use crate::error::AppError;
 
 use super::{
     check_role_access, collect_table_filters, filter_expr, find_doc, physical_from, quote_ident,
-    table_column_names, view_column_name_set,
+    view_column_name_set,
 };
 
 pub fn compile_view_from(docs: &[Value], view: &Value) -> Result<String, AppError> {
@@ -30,11 +30,8 @@ pub fn compile_view_from_opts(
         "join" => compile_join_view(docs, view, role, used_view_cols, binds),
         "union" => compile_set_view(docs, view, role, used_view_cols, false, query_preds, binds),
         "minus" => compile_set_view(docs, view, role, used_view_cols, true, query_preds, binds),
-        "select" => Err(AppError::Validation(
-            "combine=select must be resolved before compile_view_from".into(),
-        )),
         other => Err(AppError::Validation(format!(
-            "combine={other} not yet supported in compile"
+            "combine={other} not supported in compile"
         ))),
     }
 }
@@ -180,7 +177,7 @@ pub(crate) fn view_physical_expr_for_source(
     Ok(format!("{}.{}", quote_ident(source)?, quote_ident(column)?))
 }
 
-/// Resolve cube.view, applying summary-view routing when combine=select (Step 3).
+/// Resolve cube.view, applying summary-view routing from cube.choice (Step 3).
 pub fn resolve_view_for_cube(
     docs: &[Value],
     cube: &Value,
@@ -204,43 +201,54 @@ pub fn resolve_view_for_cube_opts(
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("cube.view required".into()))?;
     let view = find_doc(docs, "view", view_name)?.clone();
-    let combine = view.get("combine").and_then(|v| v.as_str()).unwrap_or("");
-    let prefer = view.get("prefer").and_then(|v| v.as_str());
-    if combine != "select" {
+    let Some(choice) = cube.get("choice").and_then(|v| v.as_array()) else {
+        return Ok(view);
+    };
+    if choice.is_empty() {
         return Ok(view);
     }
-    let sources = view
-        .get("sources")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| AppError::Validation("select view.sources required".into()))?;
-    let mut summary_first: Vec<&Value> = Vec::new();
-    let mut rest: Vec<&Value> = Vec::new();
-    for s in sources {
-        if s.get("summary").and_then(|v| v.as_bool()).unwrap_or(false) {
-            summary_first.push(s);
+    let prefer = cube.get("prefer").and_then(|v| v.as_str());
+    struct Cand {
+        name: String,
+        summary: bool,
+    }
+    let mut summary_first: Vec<Cand> = Vec::new();
+    let mut rest: Vec<Cand> = Vec::new();
+    for item in choice {
+        let name = item
+            .get("view")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AppError::Validation("cube.choice.view required".into()))?;
+        let summary = item
+            .get("summary")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let cand = Cand {
+            name: name.to_string(),
+            summary,
+        };
+        if summary {
+            summary_first.push(cand);
         } else {
-            rest.push(s);
+            rest.push(cand);
         }
     }
-    let order: Vec<&Value> = if prefer == Some("summary") {
+    rest.push(Cand {
+        name: view_name.to_string(),
+        summary: false,
+    });
+    let order: Vec<Cand> = if prefer == Some("summary") {
         summary_first.into_iter().chain(rest).collect()
     } else {
         rest.into_iter().chain(summary_first).collect()
     };
-    for src in order {
-        let catalog = source_catalog(src)?;
-        let skind = src.get("kind").and_then(|v| v.as_str()).unwrap_or("view");
-        let is_summary = src
-            .get("summary")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if is_summary && !allow_summary {
+    for cand in order {
+        if cand.summary && !allow_summary {
             continue;
         }
-        let candidate = find_doc(docs, skind, catalog)?;
-        if skind == "view" && view_covers_cols(candidate, req_cols) {
-            if is_semi_additive && is_summary {
-                // Semi-additive: only accept a summary candidate if its grain matches req_cols exactly.
+        let candidate = find_doc(docs, "view", &cand.name)?;
+        if view_covers_cols(candidate, req_cols) {
+            if is_semi_additive && cand.summary {
                 let cand_cols = view_column_name_set(candidate);
                 if cand_cols != *req_cols {
                     continue;
@@ -248,22 +256,10 @@ pub fn resolve_view_for_cube_opts(
             }
             return Ok(candidate.clone());
         }
-        if skind == "table" {
-            let tcols = table_column_names(candidate);
-            if req_cols.is_subset(&tcols) {
-                return Ok(json_singleton_table_view(catalog, candidate)?);
-            }
-        }
     }
     Err(AppError::Validation(
-        "no select-view source covers required columns".into(),
+        "no cube choice view covers required columns".into(),
     ))
-}
-
-pub(crate) fn json_singleton_table_view(name: &str, _table: &Value) -> Result<Value, AppError> {
-    Err(AppError::Validation(format!(
-        "table source {name} in select view not yet wrapped; use a join view source"
-    )))
 }
 
 pub(crate) fn view_covers_cols(view: &Value, req: &HashSet<String>) -> bool {

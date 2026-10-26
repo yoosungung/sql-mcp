@@ -31,11 +31,11 @@ table, cube, dimension, fact, metric, segment의 `role`을 생략하거나 `all`
 
 view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은 컬럼은 하나의 view 컬럼으로 묶는다. `mappings`가 둘 이상이면 가리키는 컬럼 이름이 같다.
 
-`combine`이 `select`인 view는 view만 묶는다. Grouped 집계 질의(또는 `SELECT DISTINCT`)에서는 사용자 SQL이 참조한 컬럼을 모두 가진 source 중에서 `summary`가 true인 view를 우선 선택한다(단, 반가산성 metric인 경우 요약 view의 컬럼 집합이 질의 요구 컬럼 집합과 정확히 일치할 때만 채택한다). 반면 **비-`DISTINCT` Ungrouped 상세 행 조회(D23)**는 사전 집계된 `summary: true` view를 건너뛰고 원천(non-summary) source를 우선 선택한다. 어느 source도 컬럼을 덮지 못하면 질의를 거절한다.
+view는 테이블만 묶는다(`join` / `union` / `minus`). 요약·상세 **choice**는 cube다. cube `view`가 정본(상세)이고, 선택 `choice[]`는 같은 컬럼 이름을 가진 다른 view다(`summary: true`). `prefer: "summary"`이면 Grouped 집계 질의(또는 `SELECT DISTINCT`)에서 요구 컬럼을 덮는 choice를 정본보다 우선한다(반가산성 metric은 요약 view 컬럼 집합이 요구 컬럼과 **정확히 일치**할 때만). **비-`DISTINCT` Ungrouped 상세 행 조회(D23)**는 `summary: true` choice를 건너뛰고 정본 `view`를 쓴다. 어느 후보도 컬럼을 덮지 못하면 거절한다.
 
 `POST /api/meta`와 `PUT /api/meta/{kind}/{name}`은 문서 하나의 JSON Schema 검증을 통과한 뒤에, 그 문서를 반영한 등록 집합 전체의 연결을 검증한다. `DELETE`는 그 문서를 뺀 집합의 연결을 검증한다. 검증이 실패하면 시맨틱 DB를 바꾸지 않는다. GET은 저장된 문서를 반환한다.
 
-연결은 `fk.references`, view `sources`와 `mappings`, cube `view`, dimension·fact의 `column`, metric·segment `cube`, metric `group_by`, 그리고 table/view/cube의 **`target` 일치**다. `expression`으로 만든 dimension·fact는 **저장 시** view 컬럼 연결 검사를 하지 않는다(식 식별자 검사는 D18 컴파일 단계). `aggregation`이 `group`이면 `group_by`의 각 이름이 연결된 view 컬럼에 있어야 한다. 저장 계층은 타입별 libSQL `meta_*` 테이블이다(`semantic/libsql/catalog.sql`). `/api/meta` **입출력은 JSON**(`document.schema.json`)이며 저장 시 타입별 행으로 분해·조회 시 JSON으로 재조립한다. 검색 투영은 `column_index`(+`target`+`embedding`)와 FTS5(`column_index_fts`, 순위 `bm25`)다 — keyword는 FTS5이며 vector/hybrid(RRF)를 유지한다.
+연결은 `fk.references`, view `sources`와 `mappings`, cube `view`와 `choice[].view`, dimension·fact의 `column`, metric·segment `cube`, metric `group_by`, 그리고 table/view/cube의 **`target` 일치**다. `expression`으로 만든 dimension·fact는 **저장 시** view 컬럼 연결 검사를 하지 않는다(식 식별자 검사는 D18 컴파일 단계). `aggregation`이 `group`이면 `group_by`의 각 이름이 연결된 view 컬럼에 있어야 한다. 저장 계층은 타입별 libSQL `meta_*` 테이블이다(`semantic/libsql/catalog.sql`). `/api/meta` **입출력은 JSON**(`document.schema.json`)이며 저장 시 타입별 행으로 분해·조회 시 JSON으로 재조립한다. 검색 투영은 `column_index`(+`target`+`embedding`)와 FTS5(`column_index_fts`, 순위 `bm25`)다 — keyword는 FTS5이며 vector/hybrid(RRF)를 유지한다.
 
 ## 2. 컴포넌트
 
@@ -146,14 +146,14 @@ semantic/examples/
 | 문서 | 필수 필드 |
 | --- | --- |
 | table | `kind`, `name`, `target`, `db`, `schema`, `table`, `columns`, `pk`, `fk`, `permission_filters`, `scope_filter`, `default_filter` |
-| view | `kind`, `name`, `target`, `combine`, `sources`, `columns`. join은 `joins`(source 1개면 빈 배열=identity), select는 `prefer`. `sources[]` = `{ kind, table, alias? }` (`table`=카탈로그 문서명, `alias` 생략 시=`table`; role-play는 동일 `table`+다른 `alias`). join에 선택 `relationship`(D29) |
-| cube | `kind`, `name`, `target`, `view`, `description`, `dimensions`, `facts` (+ 선택 `role`, `grain`) |
+| view | `kind`, `name`, `target`, `combine`, `sources`, `columns`. join은 `joins`(source 1개면 빈 배열=identity). `sources[]` = `{ kind: table, table, alias? }` (`table`=카탈로그 문서명, `alias` 생략 시=`table`; role-play는 동일 `table`+다른 `alias`). join에 선택 `relationship`(D29) |
+| cube | `kind`, `name`, `target`, `view`, `description`, `dimensions`, `facts` (+ 선택 `role`, `grain`, `choice`, `prefer`) |
 | metric | `kind`, `name`, `description`, `cube`, `expression`, `aggregation`, `filter` |
 | segment | `kind`, `name`, `description`, `cube`, `filter` |
 
 table, cube `role`의 기본값은 `all`이다. `columns`는 `name`, `type`, `nullable`이다. `pk`는 그 컬럼 이름이다. `fk.columns`는 이 테이블 컬럼이고 `fk.references`는 다른 논리 테이블과 그 컬럼이다.
 
-view `combine`은 `join`, `union`, `minus`, `select` 중 하나다. `combine`이 없으면 view가 아니다. `join`, `union`, `minus`의 source는 테이블이고, `select`의 source는 view다. **`join` source는 1개 이상**: 1개면 `joins`는 빈 배열(identity view, cube 바인딩용), 2개 이상이면 `joins` ≥1. union/minus/select source는 2개 이상. union과 minus는 첫 source가 기준이고 각 view 컬럼이 모든 source를 가리킨다. join의 `type`은 `inner`, `left`, `right`, `full`이다. **D29** `relationship`은 선택이며 `many_to_one`, `one_to_one`, `one_to_many`다. 큐브 `grain`은 허브 테이블 `pk` 컬럼 이름이다. 없으면 카디널리티 거절은 그 조인을 보지 않는다.
+view `combine`은 `join`, `union`, `minus` 중 하나다. `combine`이 없으면 view가 아니다. source는 테이블이다. **`join` source는 1개 이상**: 1개면 `joins`는 빈 배열(identity view, cube 바인딩용), 2개 이상이면 `joins` ≥1. union/minus source는 2개 이상. union과 minus는 첫 source가 기준이고 각 view 컬럼이 모든 source를 가리킨다. join의 `type`은 `inner`, `left`, `right`, `full`이다. **D29** `relationship`은 선택이며 `many_to_one`, `one_to_one`, `one_to_many`다. 큐브 `grain`은 허브 테이블 `pk` 컬럼 이름이다. 없으면 카디널리티 거절은 그 조인을 보지 않는다. cube `choice[]`는 `{ view, summary: true }`이고 `prefer`는 `"summary"`다. 둘 다 있거나 둘 다 없다.
 
 dimension `type`은 `code`, `date`, `time`, `datetime`, `string` 중 하나다(취급 방식). fact `type`은 `amount`, `fx`, `quantity` 중 하나다(금액·환율·일반 수량). 둘 다 **`description` 필드**(검색 투영)와 `encryption`(D17 마스킹)을 가진다. `description`은 **메타 사용**용(검색·동의어·업무 의미)이며, 생성 출처(`from table.column`, `Auto cube…` 등)를 넣지 않는다. 사용 서술이 없으면 빈 문자열이다. dimension만 선택 `as_code`(D9 코드사전)를 가진다. `role`의 기본값은 `all`이다. 값은 view 컬럼 `column`이거나, view 컬럼 이름을 쓰는 **스칼라** `expression`이다(집계 금지, D28). 둘 중 하나만 둔다. fact는 선택 `additive`(기본 `true`)를 가진다. `false`는 행 그레인 비율처럼 가산할 수 없는 수량이다.
 

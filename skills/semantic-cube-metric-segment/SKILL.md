@@ -29,7 +29,7 @@ Progress:
 
 ### 1. Bound view
 
-`cube.view`는 view 하나. view `columns[].name`이 dimension/fact `column` 및 expression 식별자의 기준이다. 이미 등록됐으면 `GET /api/meta/view/{name}`으로 가져온다(물리 DW 조회용이 아님).
+`cube.view`는 정본(상세) view 하나. view `columns[].name`이 dimension/fact `column` 및 expression 식별자의 기준이다. 사전 집계 요약 view가 있으면 `choice: [{ "view": "<summary_view>", "summary": true }]`와 `prefer: "summary"`를 둔다. 이미 등록됐으면 `GET /api/meta/view/{name}`으로 가져온다(물리 DW 조회용이 아님).
 
 ### 2–4. Draft
 

@@ -61,7 +61,7 @@ describe("production shell", () => {
     render(<App api={api()} />);
     await screen.findByRole("tab", { name: /Cubes/ });
     await user.click(screen.getByRole("tab", { name: /Cubes/ }));
-    expect(screen.getByRole("button", { name: "New view" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "New cube" })).toBeTruthy();
   });
 
   it("creates a union view from checked tables", async () => {
@@ -138,7 +138,7 @@ describe("production shell", () => {
             ...api(),
             ...api([
               { kind: "table", name: "account", target: "bird" },
-              { kind: "view", name: "accounts", target: "bird", combine: "select", description: "Accounts", sources: [], columns: [] },
+              { kind: "view", name: "accounts", target: "bird", combine: "join", description: "Accounts", sources: [{ kind: "table", table: "account" }], columns: [], joins: [] },
               { kind: "cube", name: "accounts_cube", target: "bird", view: "accounts" },
               { kind: "metric", name: "rows", target: "bird", cube: "accounts_cube" },
             ]),

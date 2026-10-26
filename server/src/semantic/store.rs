@@ -67,6 +67,7 @@ impl SemanticStore {
         migrate_add_fact_additive(&conn).await?;
         migrate_add_view_join_relationship(&conn).await?;
         migrate_add_cube_grain(&conn).await?;
+        migrate_add_cube_prefer(&conn).await?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             embedder: None,
@@ -408,6 +409,15 @@ async fn migrate_add_cube_grain(conn: &Connection) -> Result<(), AppError> {
     Ok(())
 }
 
+async fn migrate_add_cube_prefer(conn: &Connection) -> Result<(), AppError> {
+    if !table_has_column(conn, "meta_cubes", "prefer").await? {
+        conn.execute("ALTER TABLE meta_cubes ADD COLUMN prefer TEXT", ())
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?;
+    }
+    Ok(())
+}
+
 async fn migrate_add_fact_additive(conn: &Connection) -> Result<(), AppError> {
     if table_has_column(conn, "meta_cube_facts", "additive").await? {
         return Ok(());
@@ -621,5 +631,45 @@ mod tests {
             assert_eq!(got["kind"], doc["kind"]);
             assert_eq!(got["name"], doc["name"]);
         }
+    }
+
+    #[tokio::test]
+    async fn cube_choice_roundtrip() {
+        let store = mem().await;
+        for path in [
+            include_str!("../../../semantic/examples/tables/customer.json"),
+            include_str!("../../../semantic/examples/tables/region_codes.json"),
+            include_str!("../../../semantic/examples/tables/status_codes.json"),
+            include_str!("../../../semantic/examples/tables/orders.json"),
+            include_str!("../../../semantic/examples/tables/orders_month.json"),
+            include_str!("../../../semantic/examples/views/orders_customer.json"),
+            include_str!("../../../semantic/examples/cubes/sales.json"),
+        ] {
+            store
+                .create(serde_json::from_str(path).unwrap())
+                .await
+                .unwrap();
+        }
+        let month_view = json!({
+            "kind": "view",
+            "name": "orders_month_only",
+            "target": "dw",
+            "combine": "join",
+            "sources": [{"kind": "table", "table": "orders_month"}],
+            "joins": [],
+            "columns": [
+                {"name": "region_code", "mappings": [{"source": "orders_month", "column": "region_code"}]},
+                {"name": "sale_amount", "mappings": [{"source": "orders_month", "column": "sale_amount"}]}
+            ]
+        });
+        store.create(month_view).await.unwrap();
+        let mut sales = store.get("cube", "sales").await.unwrap();
+        sales["choice"] = json!([{ "view": "orders_month_only", "summary": true }]);
+        sales["prefer"] = json!("summary");
+        store.update("cube", "sales", sales).await.unwrap();
+        let got = store.get("cube", "sales").await.unwrap();
+        assert_eq!(got["prefer"], "summary");
+        assert_eq!(got["choice"][0]["view"], "orders_month_only");
+        assert_eq!(got["choice"][0]["summary"], true);
     }
 }
