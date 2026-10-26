@@ -36,13 +36,26 @@ export type CubeChoice = { view: string; summary?: boolean };
 
 export type Relationship = "many_to_one" | "one_to_one" | "one_to_many";
 
+export const JOIN_ON_OPS = ["=", "<>", "!=", "<", ">", "<=", ">="] as const;
+export type JoinOnOp = (typeof JOIN_ON_OPS)[number];
+
+export type JoinOn = {
+  left_column: string;
+  right_column: string;
+  op?: JoinOnOp;
+};
+
 export type Join = {
   left: string;
   right: string;
   type: string;
   relationship?: Relationship;
-  on?: { left_column: string; right_column: string }[];
+  on?: JoinOn[];
 };
+
+export function joinOnOp(on: JoinOn): JoinOnOp {
+  return on.op && (JOIN_ON_OPS as readonly string[]).includes(on.op) ? on.op : "=";
+}
 
 export type Mapping = { source: string; column: string };
 
@@ -74,6 +87,38 @@ export function reorder<T>(items: T[], from: number, to: number): T[] {
 
 export function sourceLabel(source: Source): string {
   return source.alias || source.table;
+}
+
+export function uniqueSourceAlias(sources: Source[], table: string): string {
+  const used = new Set(sources.map(sourceLabel));
+  if (!used.has(table)) return table;
+  let n = 2;
+  while (used.has(`${table}_${n}`)) n += 1;
+  return `${table}_${n}`;
+}
+
+export function setSourceAlias(view: Doc, current: string, nextRaw: string): Doc {
+  const sources = view.sources || [];
+  const idx = sources.findIndex((s) => sourceLabel(s) === current);
+  if (idx < 0) return view;
+  const table = sources[idx].table;
+  const next = nextRaw.trim() || table;
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(next)) return view;
+  if (sources.some((s, i) => i !== idx && sourceLabel(s) === next)) return view;
+  const nextSources = sources.map((s, i) => {
+    if (i !== idx) return s;
+    return next === s.table ? { kind: s.kind, table: s.table } : { kind: s.kind, table: s.table, alias: next };
+  });
+  const joins = (view.joins || []).map((j) => ({
+    ...j,
+    left: j.left === current ? next : j.left,
+    right: j.right === current ? next : j.right,
+  }));
+  const columns = (view.columns || []).map((c) => ({
+    ...c,
+    mappings: (c.mappings || []).map((m) => (m.source === current ? { ...m, source: next } : m)),
+  }));
+  return { ...view, sources: nextSources, joins, columns };
 }
 
 export function joinViewForTable(views: Doc[], table: string): Doc | undefined {
@@ -111,8 +156,14 @@ export function choiceStack(cube?: Doc): string[] {
 }
 
 export function withChoiceStack(cube: Doc, names: string[]): Doc {
-  if (names.length <= 1) {
-    const next = { ...cube, view: names[0] || cube.view };
+  if (names.length === 0) {
+    const next = { ...cube, view: "" };
+    delete next.choice;
+    delete next.prefer;
+    return next;
+  }
+  if (names.length === 1) {
+    const next = { ...cube, view: names[0] };
     delete next.choice;
     delete next.prefer;
     return next;
@@ -123,6 +174,10 @@ export function withChoiceStack(cube: Doc, names: string[]): Doc {
     choice: names.slice(0, -1).map((view) => ({ view, summary: true as const })),
     prefer: "summary",
   };
+}
+
+export function dropViewFromCube(cube: Doc, viewName: string): Doc {
+  return withChoiceStack(cube, choiceStack(cube).filter((n) => n !== viewName));
 }
 
 export function cubeForView(cubes: Doc[], viewName: string): Doc | undefined {
@@ -188,7 +243,7 @@ export function addJoin(
   view: Doc,
   left: string,
   right: string,
-  on?: { left_column: string; right_column: string }[],
+  on?: JoinOn[],
 ): Doc {
   const joins = [...(view.joins || [])];
   if (joins.some((j) => (j.left === left && j.right === right) || (j.left === right && j.right === left))) {

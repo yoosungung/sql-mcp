@@ -53,7 +53,7 @@ export function Canvas({
   cubeDirty: boolean;
   onSaveView: () => void;
   onDeleteView: () => void;
-  onNewView: (combine: TableCombine) => void;
+  onNewView: (combine: TableCombine, name: string) => void;
   onOpenView: (name: string) => void;
   onRenameView: (name: string) => void;
   onChangeView: (view: Doc) => void;
@@ -66,14 +66,12 @@ export function Canvas({
   onDeleteCube: () => void;
   onRenameCube: (name: string) => void;
 }) {
-  const [over, setOver] = useState(false);
   const live = draft || editing;
   const kind: TableCombine = ((live?.combine as TableCombine) || combine);
 
   function dropTable(event: DragEvent) {
     event.preventDefault();
     event.stopPropagation();
-    setOver(false);
     const name = event.dataTransfer.getData("text/plain");
     if (name) onDropTable(kind, name);
   }
@@ -94,7 +92,7 @@ export function Canvas({
             onDelete={onDeleteCube}
           />
           <ChoiceStack
-            names={stackNames?.length ? stackNames : checked}
+            names={cube ? stackNames || [] : checked}
             onDrop={onDropStack}
             onSelectView={(name) => onOpenView(name)}
           />
@@ -107,19 +105,15 @@ export function Canvas({
 
   return (
     <main
-      className={over ? "canvas is-over" : "canvas"}
+      className="canvas"
       aria-label="Canvas"
       onDragOver={(event) => {
         event.preventDefault();
         event.dataTransfer.dropEffect = "copy";
-        setOver(true);
-      }}
-      onDragLeave={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node)) setOver(false);
       }}
       onDrop={dropTable}
     >
-      <Flex direction="column" gap="3" height="100%">
+      <Flex className="canvas-body" direction="column" gap="3" height="100%">
         <ViewHeader
           title={live?.name || "No view"}
           combine={kind}

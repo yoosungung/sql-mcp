@@ -754,3 +754,19 @@ fn grain_guard_defaults_off_and_rejects_only_when_target_is_listed() {
     std::env::remove_var("SQL_MCP_GRAIN_GUARD");
     assert!(err.contains("Fan-out rejected"), "{err}");
 }
+
+#[test]
+fn join_on_op_emits_comparison() {
+    let mut docs = example_docs();
+    for doc in &mut docs {
+        if doc.get("name").and_then(|v| v.as_str()) == Some("orders_customer") {
+            doc["joins"][0]["on"][0]["op"] = json!(">");
+        }
+    }
+    let view = docs
+        .iter()
+        .find(|d| d.get("name").and_then(|v| v.as_str()) == Some("orders_customer"))
+        .unwrap();
+    let sql = compile_view_from(&docs, view).unwrap();
+    assert!(sql.contains(" > "), "expected custom join on.op in {sql}");
+}

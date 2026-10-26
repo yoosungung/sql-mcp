@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   combineName,
+  joinOnOp,
   mappingFor,
   reorder,
   setMapping,
+  setSourceAlias,
   toolPayload,
+  dropViewFromCube,
+  uniqueSourceAlias,
   withChoiceStack,
   type Doc,
 } from "./model";
@@ -40,6 +44,26 @@ describe("withChoiceStack", () => {
     expect(next.prefer).toBe("summary");
     expect(next.choice).toEqual([{ view: "loan_view", summary: true }]);
   });
+
+  it("clears cube.view when the stack is empty", () => {
+    const cube: Doc = { kind: "cube", name: "sales", view: "orders_customer" };
+    const next = withChoiceStack(cube, []);
+    expect(next.view).toBe("");
+    expect(next.choice).toBeUndefined();
+  });
+
+  it("drops a view from the cube stack and keeps the cube", () => {
+    const cube: Doc = {
+      kind: "cube",
+      name: "sales",
+      view: "accounts",
+      choice: [{ view: "loans", summary: true }],
+    };
+    const next = dropViewFromCube(cube, "accounts");
+    expect(next.name).toBe("sales");
+    expect(next.view).toBe("loans");
+    expect(next.choice).toBeUndefined();
+  });
 });
 
 describe("toolPayload", () => {
@@ -53,5 +77,41 @@ describe("toolPayload", () => {
 describe("combineName", () => {
   it("stays a semantic identifier", () => {
     expect(combineName(["financial_all", "loan_view"])).toMatch(/^[A-Za-z_][A-Za-z0-9_]*$/);
+  });
+});
+
+describe("uniqueSourceAlias", () => {
+  it("uses the table name when it is free, then table_2", () => {
+    expect(uniqueSourceAlias([], "address")).toBe("address");
+    expect(uniqueSourceAlias([{ kind: "table", table: "address" }], "address")).toBe("address_2");
+  });
+});
+
+describe("joinOnOp", () => {
+  it("defaults to equals when omitted", () => {
+    expect(joinOnOp({ left_column: "id", right_column: "id" })).toBe("=");
+    expect(joinOnOp({ left_column: "id", right_column: "id", op: ">" })).toBe(">");
+  });
+});
+
+describe("setSourceAlias", () => {
+  it("stores alias on the view source and rewrites joins", () => {
+    const view: Doc = {
+      kind: "view",
+      name: "v",
+      sources: [
+        { kind: "table", table: "address" },
+        { kind: "table", table: "address", alias: "address_2" },
+      ],
+      joins: [{ left: "address", right: "address_2", type: "inner", on: [{ left_column: "id", right_column: "id" }] }],
+      columns: [{ name: "id", mappings: [{ source: "address_2", column: "id" }] }],
+    };
+    const next = setSourceAlias(view, "address_2", "bill_to");
+    expect(next.sources).toEqual([
+      { kind: "table", table: "address" },
+      { kind: "table", table: "address", alias: "bill_to" },
+    ]);
+    expect(next.joins?.[0].right).toBe("bill_to");
+    expect(next.columns?.[0].mappings?.[0].source).toBe("bill_to");
   });
 });

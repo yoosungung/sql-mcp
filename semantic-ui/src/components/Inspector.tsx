@@ -32,7 +32,7 @@ export function Inspector({
 }) {
   return (
     <aside className={open ? "inspector" : "inspector is-collapsed"} aria-label="Inspector">
-      <div className="pane-bar pane-bar-start">
+      <div className="pane-bar pane-bar-start" role="toolbar" aria-label="Inspector header">
         <IconButton
           size="1"
           variant="ghost"
@@ -43,6 +43,19 @@ export function Inspector({
         >
           {open ? "›" : "‹"}
         </IconButton>
+        {open && (
+          <>
+            <Heading size="3" weight="medium" className="pane-bar-title">
+              {tab === "tables" ? "Columns" : "Members"}
+            </Heading>
+            {tab === "tables" && view && (
+              <Button size="1" variant="soft" onClick={onOpenViewMapping}>Map columns</Button>
+            )}
+            {tab === "cubes" && cube && (
+              <Button size="1" variant="soft" onClick={onOpenCubeMapping}>Map members</Button>
+            )}
+          </>
+        )}
       </div>
       {open && (
         <>
@@ -52,7 +65,6 @@ export function Inspector({
               tables={tables}
               selected={selected}
               onSelect={onSelect}
-              onOpenMapping={onOpenViewMapping}
             />
           ) : (
             <MembersPanel
@@ -61,7 +73,6 @@ export function Inspector({
               segments={segments}
               selected={selected}
               onSelect={onSelect}
-              onOpenMapping={onOpenCubeMapping}
             />
           )}
         </>
@@ -75,22 +86,15 @@ function ColumnsPanel({
   tables,
   selected,
   onSelect,
-  onOpenMapping,
 }: {
   view?: Doc;
   tables: Doc[];
   selected: Selection;
   onSelect: (pick: Selection) => void;
-  onOpenMapping: () => void;
 }) {
   if (!view) return <Text size="2" color="gray">Open a view to list columns.</Text>;
   return (
     <Flex direction="column" gap="2">
-      <Flex align="center" justify="between" gap="2">
-        <Heading size="3" weight="medium">Columns</Heading>
-        <Button size="1" variant="soft" onClick={onOpenMapping}>Map columns</Button>
-      </Flex>
-      <Text size="1" color="gray">{view.name}</Text>
       {(view.columns || []).map((col) => {
         const meta = columnMeta(view, col.name, tables);
         const on = selected?.kind === "column" && selected.name === col.name;
@@ -121,22 +125,16 @@ function MembersPanel({
   segments,
   selected,
   onSelect,
-  onOpenMapping,
 }: {
   cube?: Doc;
   metrics: Doc[];
   segments: Doc[];
   selected: Selection;
   onSelect: (pick: Selection) => void;
-  onOpenMapping: () => void;
 }) {
   if (!cube) return <Text size="2" color="gray">Select or create a cube.</Text>;
   return (
     <Flex direction="column" gap="2" className="tree">
-      <Flex align="center" justify="between" gap="2">
-        <Heading size="3" weight="medium">Members</Heading>
-        <Button size="1" variant="soft" onClick={onOpenMapping}>Map members</Button>
-      </Flex>
       <Text size="2">cube {cube.name}</Text>
       <Group title="Dimensions" items={cube.dimensions || []} kind="dimension" selected={selected} onSelect={onSelect} />
       <Group title="Facts" items={cube.facts || []} kind="fact" selected={selected} onSelect={onSelect} />

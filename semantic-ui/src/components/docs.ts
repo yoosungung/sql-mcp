@@ -1,5 +1,6 @@
-import { cubeForView, forTarget, type Doc, type Join, type ViewColumn } from "../model";
+import { cubeForView, forTarget, sourceLabel, type Doc, type Source, type ViewColumn } from "../model";
 import type { Selection, Tab } from "./types";
+import { joinGraphOrder } from "./joinLayout";
 
 export type TableCombine = "join" | "union" | "minus";
 
@@ -27,7 +28,7 @@ export function draftView(combine: TableCombine, tables: Doc[], target: string):
     sources: tables.map((t) => ({ kind: "table", table: t.name })),
     columns: autoMatchColumns(tables, names.length ? names : undefined),
   };
-  if (combine === "join") view.joins = joinEdges(tables);
+  if (combine === "join") view.joins = [];
   return view;
 }
 
@@ -45,21 +46,6 @@ function sharedNames(tables: Doc[]): string[] {
   return tableColumnNames(tables[0]).filter((name) => sets.every((set) => set.has(name)));
 }
 
-function joinEdges(tables: Doc[]): Join[] {
-  if (tables.length < 2) return [];
-  return tables.slice(0, -1).map((left, i) => {
-    const right = tables[i + 1];
-    const leftCol = tableColumnNames(left)[0] || "id";
-    const rightCol = tableColumnNames(right)[0] || "id";
-    return {
-      left: left.name,
-      right: right.name,
-      type: "inner",
-      on: [{ left_column: leftCol, right_column: rightCol }],
-    };
-  });
-}
-
 /** Same-name columns across tables → one view column with multi-source mappings. */
 export function autoMatchColumns(tables: Doc[], preferNames?: string[]): ViewColumn[] {
   const names = preferNames?.length ? preferNames : unionNames(tables);
@@ -71,6 +57,25 @@ export function autoMatchColumns(tables: Doc[], preferNames?: string[]): ViewCol
   })).filter((col) => col.mappings.length > 0);
 }
 
+export function autoMatchColumnsForSources(sources: Source[], tables: Doc[]): ViewColumn[] {
+  const names: string[] = [];
+  for (const source of sources) {
+    const table = tables.find((t) => t.name === source.table);
+    if (!table) continue;
+    for (const col of tableColumnNames(table)) if (!names.includes(col)) names.push(col);
+  }
+  return names
+    .map((name) => ({
+      name,
+      mappings: sources.flatMap((source) => {
+        const table = tables.find((t) => t.name === source.table);
+        if (!table || !tableColumnNames(table).includes(name)) return [];
+        return [{ source: sourceLabel(source), column: name }];
+      }),
+    }))
+    .filter((col) => col.mappings.length > 0);
+}
+
 export type MappingRow = {
   active: boolean;
   name: string;
@@ -78,6 +83,24 @@ export type MappingRow = {
   /** true when this row is a candidate from an unmapped physical column */
   unmappedHint?: boolean;
 };
+
+export type MappingSource = { label: string; table: Doc };
+
+/** Join: dagre left-to-right. Union/minus: `view.sources` drag order. Labels are aliases. */
+export function mappingSourceColumns(view: Doc, tables: Doc[]): MappingSource[] {
+  const cols: MappingSource[] = [];
+  for (const source of view.sources || []) {
+    const table = tables.find((t) => t.name === source.table);
+    if (!table) continue;
+    cols.push({ label: sourceLabel(source), table });
+  }
+  if (view.combine === "join") {
+    const order = joinGraphOrder(cols.map((c) => c.label), view.joins);
+    const rank = new Map(order.map((name, i) => [name, i]));
+    cols.sort((a, b) => (rank.get(a.label) ?? 0) - (rank.get(b.label) ?? 0));
+  }
+  return cols;
+}
 
 export function mappingRowsFromView(view: Doc, tables: Doc[]): MappingRow[] {
   const active: MappingRow[] = (view.columns || []).map((col) => ({
@@ -89,15 +112,22 @@ export function mappingRowsFromView(view: Doc, tables: Doc[]): MappingRow[] {
     active.flatMap((row) => row.mappings.map((m) => `${m.source}.${m.column}`)),
   );
   const hints: MappingRow[] = [];
-  for (const table of tables) {
+  for (const { label, table } of mappingSourceColumns(view, tables)) {
     for (const col of tableColumnNames(table)) {
-      const key = `${table.name}.${col}`;
+      const key = `${label}.${col}`;
       if (mappedPhys.has(key)) continue;
-      if (hints.some((h) => h.name === col && h.mappings.some((m) => m.source === table.name))) continue;
+      const existing = hints.find((h) => h.name === col);
+      if (existing) {
+        if (!existing.mappings.some((m) => m.source === label)) {
+          existing.mappings.push({ source: label, column: col });
+        }
+        mappedPhys.add(key);
+        continue;
+      }
       hints.push({
         active: false,
         name: col,
-        mappings: [{ source: table.name, column: col }],
+        mappings: [{ source: label, column: col }],
         unmappedHint: true,
       });
       mappedPhys.add(key);
@@ -141,12 +171,16 @@ export function columnMeta(
   };
 }
 
+export function logicalTableName(physical: string): string {
+  return physical.replace(/[^A-Za-z0-9_]/g, "_").replace(/^([^A-Za-z_])/, "_$1") || "table";
+}
+
 export function physicalTableDoc(
   target: string,
   physical: { schema: string; name: string },
   columns: { name: string; data_type?: string; nullable?: boolean }[],
 ): Doc {
-  const logical = physical.name.replace(/[^A-Za-z0-9_]/g, "_").replace(/^([^A-Za-z_])/, "_$1") || "table";
+  const logical = logicalTableName(physical.name);
   return {
     kind: "table",
     name: logical,
@@ -154,7 +188,7 @@ export function physicalTableDoc(
     description: "",
     db: target,
     schema: physical.schema || "main",
-    table: physical.name,
+    table: logical,
     columns: columns.map((c) => ({
       name: c.name,
       type: c.data_type || "unknown",

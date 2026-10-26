@@ -328,7 +328,11 @@
             "required": ["left_column", "right_column"],
             "properties": {
               "left_column": { "$ref": "#/$defs/physical_ident" },
-              "right_column": { "$ref": "#/$defs/physical_ident" }
+              "right_column": { "$ref": "#/$defs/physical_ident" },
+              "op": {
+                "enum": ["=", "<>", "!=", "<", ">", "<=", ">="],
+                "description": "ON 비교 연산자. 생략 시 ="
+              }
             }
           }
         }

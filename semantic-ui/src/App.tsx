@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Badge, Callout, Flex, Select, Separator, Text, Theme } from "@radix-ui/themes";
+import { Badge, Callout, Flex, IconButton, Select, Separator, Text, Theme } from "@radix-ui/themes";
 import { AuthorApi } from "./api";
 import { Canvas } from "./components/Canvas";
 import { Catalog } from "./components/Catalog";
@@ -7,6 +7,7 @@ import { CubeMappingEditor } from "./components/CubeMappingEditor";
 import { Detail } from "./components/Detail";
 import {
   cubesReferencingTable,
+  autoMatchColumnsForSources,
   draftView,
   physicalTableDoc,
   uniqueName,
@@ -19,10 +20,13 @@ import { ViewMappingEditor } from "./components/ViewMappingEditor";
 import {
   choiceStack,
   cubeForView,
+  dropViewFromCube,
   forTarget,
   metricsForCube,
   reorder,
   segmentsForCube,
+  sourceLabel,
+  uniqueSourceAlias,
   withChoiceStack,
   type Doc,
 } from "./model";
@@ -50,6 +54,7 @@ export function App({ api }: { api?: AuthorApi }) {
   const [busy, setBusy] = useState(false);
   const [navOpen, setNavOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [detailSize, setDetailSize] = useState<"collapsed" | "standard" | "expanded">("standard");
   const [mappingEditor, setMappingEditor] = useState<MappingEditor>(null);
   const [knownViews, setKnownViews] = useState<Set<string>>(new Set());
 
@@ -74,12 +79,8 @@ export function App({ api }: { api?: AuthorApi }) {
     setDocs(all);
     setKnownViews(new Set(all.filter((d) => d.kind === "view").map((d) => d.name)));
     if (chosen) {
-      const registered = new Set(
-        all.filter((d) => d.kind === "table" && d.target === chosen).map((t) => String(t.table || t.name)),
-      );
       try {
-        const items = await client.listPhysicalTables(chosen);
-        setPhysicalCandidates(items.filter((i) => !registered.has(i.name)));
+        setPhysicalCandidates(await client.listPhysicalTables(chosen));
       } catch {
         setPhysicalCandidates([]);
       }
@@ -156,7 +157,6 @@ export function App({ api }: { api?: AuthorApi }) {
     setBusy(true);
     setError("");
     try {
-      if (doc.kind === "table") throw new Error("table documents are register/delete only");
       const exists =
         doc.kind === "view"
           ? knownViews.has(doc.name) || views.some((v) => v.name === doc.name)
@@ -205,14 +205,29 @@ export function App({ api }: { api?: AuthorApi }) {
     }
   }
 
-  async function registerTable(physical: { schema: string; name: string }) {
+  async function registerTables(physicals: { schema: string; name: string }[]) {
     setBusy(true);
     setError("");
     try {
-      const desc = await client.describePhysicalTable(target, physical.name, physical.schema);
-      const doc = physicalTableDoc(target, physical, desc.columns || []);
-      doc.name = uniqueName(doc.name, tables);
-      await client.create(doc);
+      for (const physical of physicals) {
+        const desc = await client.describePhysicalTable(target, physical.name, physical.schema);
+        const doc = physicalTableDoc(target, physical, desc.columns || []);
+        const existing = tables.find((t) => t.name === doc.name);
+        if (existing) {
+          await client.update("table", doc.name, {
+            ...existing,
+            ...doc,
+            pk: existing.pk,
+            fk: existing.fk,
+            description: existing.description || doc.description,
+            scope_filter: existing.scope_filter,
+            default_filter: existing.default_filter,
+            permission_filters: existing.permission_filters,
+          });
+        } else {
+          await client.create(doc);
+        }
+      }
       await reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -248,23 +263,21 @@ export function App({ api }: { api?: AuthorApi }) {
   async function deleteOpenView() {
     if (!editing) return;
     const name = editing.name;
-    const choiceUsers = cubes.filter(
-      (c) => c.view !== name && (c.choice || []).some((item) => item.view === name),
+    const affected = cubes.filter(
+      (c) => c.view === name || (c.choice || []).some((item) => item.view === name),
     );
-    if (choiceUsers.length) {
-      setError(`${name} is used by ${choiceUsers.map((c) => c.name).join(", ")}`);
-      return;
-    }
-    const cubeDoc = cubeForView(cubes, name);
-    const metrics = cubeDoc ? metricsForCube(docs, cubeDoc.name) : [];
-    const segments = cubeDoc ? segmentsForCube(docs, cubeDoc.name) : [];
     setBusy(true);
     setError("");
     try {
-      for (const doc of [...metrics, ...segments]) await client.remove(doc.kind, doc.name);
-      if (cubeDoc) await client.remove("cube", cubeDoc.name);
+      for (const cubeDoc of affected) {
+        const next = dropViewFromCube(cubeDoc, name);
+        if (liveCube?.name === cubeDoc.name) setCubeDraft(next);
+        await client.update("cube", cubeDoc.name, next);
+      }
       await client.remove("view", name);
-      setViewName("");
+      setChecked((cur) => cur.filter((n) => n !== name));
+      setViewName((cur) => (cur === name ? "" : cur));
+      setDraft((d) => (d?.name === name ? undefined : d));
       setEditing(undefined);
       setSelection(null);
       await reload();
@@ -292,12 +305,12 @@ export function App({ api }: { api?: AuthorApi }) {
     }
   }
 
-  function newView(combine: TableCombine) {
+  function newView(combine: TableCombine, name: string) {
     setTableCombine(combine);
-    const name = uniqueName(`${combine}_view`, views);
+    const chosen = uniqueName(name.trim() || `${combine}_view`, views);
     setDraft({
       kind: "view",
-      name,
+      name: chosen,
       target,
       combine,
       description: "",
@@ -308,7 +321,7 @@ export function App({ api }: { api?: AuthorApi }) {
     setEditing(undefined);
     setViewName("");
     setPicked([]);
-    setSelection({ kind: "view", name });
+    setSelection({ kind: "view", name: chosen });
   }
 
   function openView(name: string) {
@@ -330,18 +343,43 @@ export function App({ api }: { api?: AuthorApi }) {
   }
 
   function changeView(view: Doc) {
+    if (selection?.kind === "table") {
+      const prev = draft || editing;
+      const oldLabels = (prev?.sources || []).map(sourceLabel);
+      const newLabels = (view.sources || []).map(sourceLabel);
+      if (!newLabels.includes(selection.name)) {
+        const idx = oldLabels.indexOf(selection.name);
+        if (idx >= 0 && newLabels[idx]) setSelection({ kind: "table", name: newLabels[idx] });
+      }
+    }
     if (draft && draft.name === view.name) setDraft(view);
     else setEditing(view);
   }
 
   function dropTable(kind: TableCombine, name: string) {
     setTableCombine(kind);
+    const base = draft || editing;
+    if (kind === "join" && base) {
+      const sources = base.sources || [];
+      const alias = uniqueSourceAlias(sources, name);
+      const entry = alias === name ? { kind: "table", table: name } : { kind: "table", table: name, alias };
+      const nextSources = [...sources, entry];
+      const next = {
+        ...base,
+        sources: nextSources,
+        columns: autoMatchColumnsForSources(nextSources, tables),
+        joins: base.joins || [],
+      };
+      if (draft) setDraft(next);
+      else setEditing(next);
+      setPicked(nextSources.map((s) => s.table));
+      return;
+    }
     setPicked((cur) => {
       const next = cur.includes(name) ? cur : [...cur, name];
       const pickedTables = next
         .map((n) => tables.find((t) => t.name === n))
         .filter((t): t is Doc => Boolean(t));
-      const base = draft || editing;
       if (base) {
         const rebuilt = draftView(kind, pickedTables, target);
         if (rebuilt) {
@@ -408,15 +446,15 @@ export function App({ api }: { api?: AuthorApi }) {
 
   return (
     <Theme appearance="light" accentColor="indigo" grayColor="slate" panelBackground="solid" radius="medium" scaling="95%">
-      <div className={error ? "shell has-error" : "shell"}>
+      <div className={[error ? "shell has-error" : "shell", `detail-${detailSize}`].join(" ")}>
         <header className="topbar">
           <Flex align="center" gap="3">
             <Text size="3" weight="bold">Semantic</Text>
             <Separator orientation="vertical" />
-            <Text size="2" color="gray">Target</Text>
+            <Text size="2" color="gray">Database</Text>
             {target ? (
               <Select.Root size="2" value={target} onValueChange={chooseTarget}>
-                <Select.Trigger aria-label="Target" />
+                <Select.Trigger aria-label="Database" />
                 <Select.Content position="popper">
                   {targets.map((t) => (
                     <Select.Item key={t.name} value={t.name}>{t.name}</Select.Item>
@@ -424,7 +462,7 @@ export function App({ api }: { api?: AuthorApi }) {
                 </Select.Content>
               </Select.Root>
             ) : (
-              <Text size="2" color="gray">{error ? "No target" : "Loading targets"}</Text>
+              <Text size="2" color="gray">{error ? "No database" : "Loading databases"}</Text>
             )}
             {engine && <Badge variant="soft" color="gray">{engine}</Badge>}
           </Flex>
@@ -468,7 +506,7 @@ export function App({ api }: { api?: AuthorApi }) {
             busy={busy}
             onCombine={combineIntoCube}
             physicalCandidates={physicalCandidates}
-            onRegister={registerTable}
+            onRegister={registerTables}
             onDeleteTable={deleteTable}
           />
           <Canvas
@@ -497,7 +535,8 @@ export function App({ api }: { api?: AuthorApi }) {
             onChangeView={changeView}
             onDropTable={dropTable}
             onSelectTable={(name) => {
-              setTableName(name);
+              const src = liveView?.sources?.find((s) => (s.alias || s.table) === name);
+              setTableName(src?.table || name);
               setSelection({ kind: "table", name });
             }}
             onSelectJoin={(index) => {
@@ -525,41 +564,80 @@ export function App({ api }: { api?: AuthorApi }) {
             onOpenCubeMapping={() => setMappingEditor({ mode: "cube" })}
           />
         </div>
-        <section className="editor" aria-label="Detail">
-          <Detail
-            selection={selection}
-            table={selectedTable}
-            view={liveView}
-            tables={tables}
-            docs={docs}
-            cube={liveCube}
-            busy={busy}
-            onSave={(doc) => {
-              if (doc.kind === "cube") {
-                setCubeDraft(doc);
-                void saveDoc(doc);
-                return;
-              }
-              if (doc.kind === "metric") {
-                setMetricDrafts((cur) => {
-                  const next = cur.some((m) => m.name === doc.name)
-                    ? cur.map((m) => (m.name === doc.name ? doc : m))
-                    : [...cur, doc];
-                  return next;
-                });
-              }
-              if (doc.kind === "segment") {
-                setSegmentDrafts((cur) => {
-                  const next = cur.some((m) => m.name === doc.name)
-                    ? cur.map((m) => (m.name === doc.name ? doc : m))
-                    : [...cur, doc];
-                  return next;
-                });
-              }
-              void saveDoc(doc);
-            }}
-            onChangeView={changeView}
-          />
+        <section className={detailSize === "collapsed" ? "editor is-collapsed" : "editor"} aria-label="Detail">
+          <div className="pane-bar" role="toolbar" aria-label="Detail header">
+            <Text size="2" weight="medium">Detail</Text>
+            <Flex gap="1">
+              <IconButton
+                size="1"
+                variant="ghost"
+                color="gray"
+                aria-pressed={detailSize === "collapsed"}
+                aria-label="Collapse detail"
+                onClick={() => setDetailSize("collapsed")}
+              >
+                ▾
+              </IconButton>
+              <IconButton
+                size="1"
+                variant="ghost"
+                color="gray"
+                aria-pressed={detailSize === "standard"}
+                aria-label="Standard detail"
+                onClick={() => setDetailSize("standard")}
+              >
+                —
+              </IconButton>
+              <IconButton
+                size="1"
+                variant="ghost"
+                color="gray"
+                aria-pressed={detailSize === "expanded"}
+                aria-label="Expand detail"
+                onClick={() => setDetailSize("expanded")}
+              >
+                ▴
+              </IconButton>
+            </Flex>
+          </div>
+          {detailSize !== "collapsed" && (
+            <div className="detail-body">
+              <Detail
+                selection={selection}
+                table={selectedTable}
+                view={liveView}
+                tables={tables}
+                docs={docs}
+                cube={liveCube}
+                busy={busy}
+                onSave={(doc) => {
+                  if (doc.kind === "cube") {
+                    setCubeDraft(doc);
+                    void saveDoc(doc);
+                    return;
+                  }
+                  if (doc.kind === "metric") {
+                    setMetricDrafts((cur) => {
+                      const next = cur.some((m) => m.name === doc.name)
+                        ? cur.map((m) => (m.name === doc.name ? doc : m))
+                        : [...cur, doc];
+                      return next;
+                    });
+                  }
+                  if (doc.kind === "segment") {
+                    setSegmentDrafts((cur) => {
+                      const next = cur.some((m) => m.name === doc.name)
+                        ? cur.map((m) => (m.name === doc.name ? doc : m))
+                        : [...cur, doc];
+                      return next;
+                    });
+                  }
+                  void saveDoc(doc);
+                }}
+                onChangeView={changeView}
+              />
+            </div>
+          )}
         </section>
         {mappingEditor?.mode === "view" && liveView && (
           <ViewMappingEditor

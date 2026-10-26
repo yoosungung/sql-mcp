@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   applyMappingRows,
   autoMatchColumns,
+  autoMatchColumnsForSources,
   draftView,
   mappingRowsFromView,
+  mappingSourceColumns,
   physicalTableDoc,
 } from "./docs";
 import type { Doc } from "../model";
@@ -36,11 +38,10 @@ describe("draftView", () => {
     expect(view?.joins).toEqual([]);
   });
 
-  it("joins consecutive tables on their first column", () => {
+  it("does not auto-create joins when drafting a join view", () => {
     const view = draftView("join", [account, order], "bird");
-    expect(view?.joins).toEqual([
-      { left: "account", right: "order", type: "inner", on: [{ left_column: "id", right_column: "id" }] },
-    ]);
+    expect(view?.sources?.map((s) => s.table)).toEqual(["account", "order"]);
+    expect(view?.joins).toEqual([]);
   });
 
   it("stacks union and minus on shared columns", () => {
@@ -56,6 +57,20 @@ describe("draftView", () => {
 describe("autoMatch / mapping rows", () => {
   it("auto-matches same names", () => {
     expect(autoMatchColumns([account, order]).map((c) => c.name)).toEqual(["id", "name", "account_id"]);
+  });
+
+  it("maps duplicate table sources by alias", () => {
+    const cols = autoMatchColumnsForSources(
+      [
+        { kind: "table", table: "account" },
+        { kind: "table", table: "account", alias: "bill_to" },
+      ],
+      [account],
+    );
+    expect(cols.find((c) => c.name === "id")?.mappings).toEqual([
+      { source: "account", column: "id" },
+      { source: "bill_to", column: "id" },
+    ]);
   });
 
   it("lists unmapped physical columns with checkbox off", () => {
@@ -74,6 +89,63 @@ describe("autoMatch / mapping rows", () => {
     const applied = applyMappingRows(view, rows.map((r) => (r.name === "name" ? { ...r, active: true } : r)));
     expect(applied.columns?.some((c) => c.name === "name")).toBe(true);
   });
+
+  it("keeps union mapping columns in sources drag order", () => {
+    const view: Doc = {
+      kind: "view",
+      name: "v",
+      combine: "union",
+      sources: [
+        { kind: "table", table: "order" },
+        { kind: "table", table: "account" },
+      ],
+    };
+    expect(mappingSourceColumns(view, [account, order]).map((c) => c.label)).toEqual([
+      "order",
+      "account",
+    ]);
+  });
+
+  it("orders join mapping columns by the join graph", () => {
+    const view: Doc = {
+      kind: "view",
+      name: "v",
+      combine: "join",
+      sources: [
+        { kind: "table", table: "order" },
+        { kind: "table", table: "account" },
+      ],
+      joins: [{ left: "account", right: "order", type: "inner" }],
+    };
+    expect(mappingSourceColumns(view, [account, order]).map((c) => c.label)).toEqual([
+      "account",
+      "order",
+    ]);
+  });
+
+  it("uses source aliases for unmapped mapping hints", () => {
+    const view: Doc = {
+      kind: "view",
+      name: "v",
+      sources: [
+        { kind: "table", table: "account" },
+        { kind: "table", table: "account", alias: "bill_to" },
+      ],
+      columns: [{
+        name: "id",
+        mappings: [
+          { source: "account", column: "id" },
+          { source: "bill_to", column: "id" },
+        ],
+      }],
+    };
+    const rows = mappingRowsFromView(view, [account]);
+    const nameHint = rows.find((r) => !r.active && r.name === "name");
+    expect(nameHint?.mappings).toEqual([
+      { source: "account", column: "name" },
+      { source: "bill_to", column: "name" },
+    ]);
+  });
 });
 
 describe("physicalTableDoc", () => {
@@ -82,7 +154,10 @@ describe("physicalTableDoc", () => {
       { name: "id", data_type: "INTEGER", nullable: false },
     ]);
     expect(doc.kind).toBe("table");
+    expect(doc.name).toBe("account");
     expect(doc.table).toBe("account");
+    expect(doc.target).toBe("bird");
+    expect(doc.db).toBe("bird");
     expect(doc.columns).toEqual([{ name: "id", type: "INTEGER", nullable: false }]);
   });
 });

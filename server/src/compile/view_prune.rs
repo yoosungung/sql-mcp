@@ -491,8 +491,16 @@ pub(crate) fn format_join_fragment(
             .get("right_column")
             .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Validation("on.right_column".into()))?;
+        let op = match on.get("op").and_then(|v| v.as_str()).unwrap_or("=") {
+            op @ ("=" | "<>" | "!=" | "<" | ">" | "<=" | ">=") => op,
+            other => {
+                return Err(AppError::Validation(format!(
+                    "unsupported join on.op {other}"
+                )));
+            }
+        };
         ons.push(format!(
-            "{}.{} = {}.{}",
+            "{}.{} {op} {}.{}",
             quote_ident(left)?,
             quote_ident(lc)?,
             quote_ident(right)?,

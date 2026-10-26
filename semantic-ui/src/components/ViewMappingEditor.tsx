@@ -4,8 +4,10 @@ import type { Doc } from "../model";
 import {
   applyMappingRows,
   mappingRowsFromView,
+  mappingSourceColumns,
   tableColumnNames,
   type MappingRow,
+  type MappingSource,
 } from "./docs";
 
 export function ViewMappingEditor({
@@ -21,16 +23,12 @@ export function ViewMappingEditor({
   tables: Doc[];
   onApply: (view: Doc) => void;
 }) {
-  const sourceTables = useMemo(() => {
-    const names = (view.sources || []).map((s) => s.table);
-    return tables.filter((t) => names.includes(t.name));
-  }, [view.sources, tables]);
-
+  const sources = useMemo(() => mappingSourceColumns(view, tables), [view, tables]);
   const [rows, setRows] = useState<MappingRow[]>([]);
 
   useEffect(() => {
-    if (open) setRows(mappingRowsFromView(view, sourceTables));
-  }, [open, view, sourceTables]);
+    if (open) setRows(mappingRowsFromView(view, tables));
+  }, [open, view, tables]);
 
   function patch(i: number, next: MappingRow) {
     setRows((cur) => cur.map((r, idx) => (idx === i ? next : r)));
@@ -58,17 +56,17 @@ export function ViewMappingEditor({
         <Text size="2" color="gray" as="p" mb="3">
           Checkbox is the source of truth. Unmapped physical columns sit at the bottom.
         </Text>
-        <div className="mapping-grid" style={{ gridTemplateColumns: `32px minmax(140px, 1fr) repeat(${Math.max(sourceTables.length, 1)}, minmax(120px, 1fr))` }}>
+        <div className="mapping-grid" style={{ gridTemplateColumns: `32px minmax(140px, 1fr) repeat(${Math.max(sources.length, 1)}, minmax(120px, 1fr))` }}>
           <div />
           <Text size="1" weight="medium">View column</Text>
-          {sourceTables.map((t) => (
-            <Text key={t.name} size="1" weight="medium">{t.name}</Text>
+          {sources.map((s) => (
+            <Text key={s.label} size="1" weight="medium">{s.label}</Text>
           ))}
           {rows.map((row, i) => (
             <Row
               key={`${row.name}-${i}-${row.unmappedHint ? "h" : "a"}`}
               row={row}
-              tables={sourceTables}
+              sources={sources}
               onChange={(next) => patch(i, next)}
             />
           ))}
@@ -80,11 +78,11 @@ export function ViewMappingEditor({
 
 function Row({
   row,
-  tables,
+  sources,
   onChange,
 }: {
   row: MappingRow;
-  tables: Doc[];
+  sources: MappingSource[];
   onChange: (row: MappingRow) => void;
 }) {
   return (
@@ -104,22 +102,22 @@ function Row({
       ) : (
         <Text size="2" color="gray">{row.name}</Text>
       )}
-      {tables.map((t) => {
-        const mapping = row.mappings.find((m) => m.source === t.name);
-        const options = tableColumnNames(t);
+      {sources.map((s) => {
+        const mapping = row.mappings.find((m) => m.source === s.label);
+        const options = tableColumnNames(s.table);
         return (
           <select
-            key={t.name}
+            key={s.label}
             className="map-select"
             disabled={!row.active}
-            aria-label={`${row.name} → ${t.name}`}
+            aria-label={`${row.name} → ${s.label}`}
             value={mapping?.column || ""}
             onChange={(e) => {
               const column = e.target.value;
-              const rest = row.mappings.filter((m) => m.source !== t.name);
+              const rest = row.mappings.filter((m) => m.source !== s.label);
               onChange({
                 ...row,
-                mappings: column ? [...rest, { source: t.name, column }] : rest,
+                mappings: column ? [...rest, { source: s.label, column }] : rest,
               });
             }}
           >

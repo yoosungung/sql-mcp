@@ -39,7 +39,7 @@
 
 | combine | sources | 추가 |
 |---------|---------|------|
-| `join` | table (≥1) | source 1개면 `joins: []`(identity). 2개 이상이면 `joins`(≥1): `left`, `right`, `type`(`inner`/`left`/`right`/`full`), `on[]`(`left_column`, `right_column`) |
+| `join` | table (≥1) | source 1개면 `joins: []`(identity). 2개 이상이면 `joins`(≥1): `left`, `right`, `type`(`inner`/`left`/`right`/`full`), `on[]`(`left_column`, `right_column`, 선택 `op` 생략=`=`) |
 | `union` / `minus` | table | 첫 source가 기준; 각 view 컬럼의 `mappings`가 **모든** source를 가리킴 |
 
 요약·상세 후보는 view가 아니라 cube `choice`다.

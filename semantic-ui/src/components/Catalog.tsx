@@ -1,7 +1,12 @@
-import { Box, Button, Checkbox, Dialog, Flex, IconButton, Select, Tabs, Text } from "@radix-ui/themes";
+import { Box, Button, Checkbox, Dialog, Flex, IconButton, Tabs, Text } from "@radix-ui/themes";
 import { useState } from "react";
 import type { Doc } from "../model";
+import { logicalTableName } from "./docs";
 import type { Tab } from "./types";
+
+function physicalKey(p: { schema: string; name: string }): string {
+  return `${p.schema}:${p.name}`;
+}
 
 export function Catalog({
   open,
@@ -41,15 +46,37 @@ export function Catalog({
   busy: boolean;
   onCombine: () => void;
   physicalCandidates: { schema: string; name: string }[];
-  onRegister: (physical: { schema: string; name: string }) => Promise<void>;
+  onRegister: (physical: { schema: string; name: string }[]) => Promise<void>;
   onDeleteTable: (name: string) => Promise<void>;
 }) {
   const [registerOpen, setRegisterOpen] = useState(false);
-  const [pickPhysical, setPickPhysical] = useState("");
+  const [pickedPhysical, setPickedPhysical] = useState<string[]>([]);
+  const registered = new Set(tables.flatMap((t) => [t.name, t.table].filter(Boolean) as string[]));
+
+  function openRegister() {
+    setPickedPhysical(
+      physicalCandidates
+        .filter((p) => registered.has(p.name) || registered.has(logicalTableName(p.name)))
+        .map(physicalKey),
+    );
+    setRegisterOpen(true);
+  }
+
+  function togglePhysical(key: string) {
+    setPickedPhysical((cur) => (cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key]));
+  }
 
   return (
     <nav className={open ? "nav" : "nav is-collapsed"} aria-label="Catalog">
-      <div className="pane-bar">
+      <div className="pane-bar" role="toolbar" aria-label="Catalog header">
+        {open && (
+          <Tabs.Root value={tab} onValueChange={(value) => onTab(value as Tab)}>
+            <Tabs.List size="1">
+              <Tabs.Trigger value="tables">Tables</Tabs.Trigger>
+              <Tabs.Trigger value="cubes">Cubes</Tabs.Trigger>
+            </Tabs.List>
+          </Tabs.Root>
+        )}
         <IconButton
           size="1"
           variant="ghost"
@@ -63,12 +90,6 @@ export function Catalog({
       </div>
       {open && (
         <>
-          <Tabs.Root value={tab} onValueChange={(value) => onTab(value as Tab)}>
-            <Tabs.List size="1">
-              <Tabs.Trigger value="tables">Tables</Tabs.Trigger>
-              <Tabs.Trigger value="cubes">Cubes</Tabs.Trigger>
-            </Tabs.List>
-          </Tabs.Root>
           {tab === "tables" ? (
             <Box mt="3">
               <Flex gap="2" mb="3">
@@ -77,10 +98,7 @@ export function Catalog({
                   variant="soft"
                   aria-label="Register table"
                   disabled={busy || !physicalCandidates.length}
-                  onClick={() => {
-                    setPickPhysical(physicalCandidates[0] ? `${physicalCandidates[0].schema}:${physicalCandidates[0].name}` : "");
-                    setRegisterOpen(true);
-                  }}
+                  onClick={openRegister}
                 >
                   Register
                 </Button>
@@ -122,27 +140,37 @@ export function Catalog({
                 <Dialog.Content maxWidth="420px">
                   <Dialog.Title>Register table</Dialog.Title>
                   <Dialog.Description size="2" mb="3">
-                    Read a physical table and create metadata (add only; no edit).
+                    Check physical tables to register or update.
                   </Dialog.Description>
-                  <Select.Root value={pickPhysical} onValueChange={setPickPhysical}>
-                    <Select.Trigger aria-label="Physical table" />
-                    <Select.Content>
-                      {physicalCandidates.map((p) => (
-                        <Select.Item key={`${p.schema}:${p.name}`} value={`${p.schema}:${p.name}`}>
-                          {p.schema}.{p.name}
-                        </Select.Item>
-                      ))}
-                    </Select.Content>
-                  </Select.Root>
+                  <div className="register-list">
+                    {physicalCandidates.map((p) => {
+                      const key = physicalKey(p);
+                      const already = registered.has(p.name) || registered.has(logicalTableName(p.name));
+                      return (
+                        <Flex key={key} align="center" gap="2" className="nav-item">
+                          <Checkbox
+                            size="1"
+                            aria-label={`register ${p.schema}.${p.name}`}
+                            checked={pickedPhysical.includes(key)}
+                            onCheckedChange={() => togglePhysical(key)}
+                          />
+                          <Text size="2">
+                            {p.schema}.{p.name}
+                            {already ? " (registered)" : ""}
+                          </Text>
+                        </Flex>
+                      );
+                    })}
+                  </div>
                   <Flex gap="3" mt="4" justify="end">
                     <Dialog.Close>
                       <Button variant="soft" color="gray">Cancel</Button>
                     </Dialog.Close>
                     <Button
-                      disabled={!pickPhysical || busy}
+                      disabled={!pickedPhysical.length || busy}
                       onClick={() => {
-                        const [schema, name] = pickPhysical.split(":");
-                        void onRegister({ schema, name }).then(() => setRegisterOpen(false));
+                        const selected = physicalCandidates.filter((p) => pickedPhysical.includes(physicalKey(p)));
+                        void onRegister(selected).then(() => setRegisterOpen(false));
                       }}
                     >
                       Register

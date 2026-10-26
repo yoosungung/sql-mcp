@@ -14,26 +14,19 @@ import {
   type Node,
   type NodeProps,
 } from "@xyflow/react";
-import dagre from "@dagrejs/dagre";
 import "@xyflow/react/dist/style.css";
-import { Badge, Flex, Select, Text } from "@radix-ui/themes";
-import type { Doc, Relationship } from "../model";
+import { Text } from "@radix-ui/themes";
+import { sourceLabel, type Doc } from "../model";
+import { JOIN_NODE, runJoinLayout } from "./joinLayout";
 
 function layoutNodes(names: string[], joins: Doc["joins"]): { nodes: Node[]; edges: Edge[] } {
-  const g = new dagre.graphlib.Graph();
-  g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: "LR", nodesep: 40, ranksep: 80 });
-  for (const name of names) g.setNode(name, { width: 140, height: 48 });
-  for (const j of joins || []) {
-    if (names.includes(j.left) && names.includes(j.right)) g.setEdge(j.left, j.right);
-  }
-  dagre.layout(g);
+  const g = runJoinLayout(names, joins);
   const nodes: Node[] = names.map((name) => {
     const pos = g.node(name);
     return {
       id: name,
       type: "table",
-      position: { x: (pos?.x || 0) - 70, y: (pos?.y || 0) - 24 },
+      position: { x: (pos?.x || 0) - JOIN_NODE.width / 2, y: (pos?.y || 0) - JOIN_NODE.height / 2 },
       data: { label: name },
       sourcePosition: Position.Right,
       targetPosition: Position.Left,
@@ -64,6 +57,9 @@ function TableNode({ data }: NodeProps) {
 
 const nodeTypes = { table: TableNode };
 
+/** Initial fit-to-view never zooms in past 1:1 (UI font size). Manual Controls can still zoom. */
+export const JOIN_FIT_VIEW = { maxZoom: 1 } as const;
+
 export function JoinCanvas({
   view,
   onChange,
@@ -80,7 +76,7 @@ export function JoinCanvas({
   onTableDrop?: (name: string) => void;
 }) {
   const names = useMemo(
-    () => (view.sources || []).map((s) => s.alias || s.table),
+    () => (view.sources || []).map(sourceLabel),
     [view.sources],
   );
   const seed = useMemo(() => layoutNodes(names, view.joins), [names, view.joins]);
@@ -145,40 +141,12 @@ export function JoinCanvas({
         onNodeClick={(_, node) => onSelectTable(node.id)}
         nodeTypes={nodeTypes}
         fitView
+        fitViewOptions={JOIN_FIT_VIEW}
         proOptions={{ hideAttribution: true }}
       >
         <Background />
         <Controls showInteractive={false} />
       </ReactFlow>
-      {typeof selectedJoinIndex === "number" && view.joins?.[selectedJoinIndex] && (
-        <Flex align="center" gap="2" className="join-rel" mt="2">
-          <Badge size="1">relationship</Badge>
-          <Select.Root
-            size="1"
-            value={view.joins[selectedJoinIndex].relationship || "none"}
-            onValueChange={(value) => {
-              const joins = (view.joins || []).map((j, i) => {
-                if (i !== selectedJoinIndex) return j;
-                if (value === "none") {
-                  const next = { ...j };
-                  delete next.relationship;
-                  return next;
-                }
-                return { ...j, relationship: value as Relationship };
-              });
-              onChange({ ...view, joins });
-            }}
-          >
-            <Select.Trigger aria-label="Join relationship" />
-            <Select.Content>
-              <Select.Item value="none">unset</Select.Item>
-              <Select.Item value="many_to_one">many_to_one</Select.Item>
-              <Select.Item value="one_to_one">one_to_one</Select.Item>
-              <Select.Item value="one_to_many">one_to_many</Select.Item>
-            </Select.Content>
-          </Select.Root>
-        </Flex>
-      )}
     </div>
   );
 }

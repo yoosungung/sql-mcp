@@ -146,7 +146,7 @@ semantic/examples/
 | 문서 | 필수 필드 |
 | --- | --- |
 | table | `kind`, `name`, `target`, `db`, `schema`, `table`, `columns`, `pk`, `fk`, `permission_filters`, `scope_filter`, `default_filter` |
-| view | `kind`, `name`, `target`, `combine`, `sources`, `columns`. join은 `joins`(source 1개면 빈 배열=identity). `sources[]` = `{ kind: table, table, alias? }` (`table`=카탈로그 문서명, `alias` 생략 시=`table`; role-play는 동일 `table`+다른 `alias`). join에 선택 `relationship`(D29) |
+| view | `kind`, `name`, `target`, `combine`, `sources`, `columns`. join은 `joins`(source 1개면 빈 배열=identity). `sources[]` = `{ kind: table, table, alias? }` (`table`=카탈로그 문서명, `alias` 생략 시=`table`; role-play는 동일 `table`+다른 `alias`). `on[]` = `{ left_column, right_column, op? }` (`op` 생략=`=`). join에 선택 `relationship`(D29) |
 | cube | `kind`, `name`, `target`, `view`, `description`, `dimensions`, `facts` (+ 선택 `role`, `grain`, `choice`, `prefer`) |
 | metric | `kind`, `name`, `description`, `cube`, `expression`, `aggregation`, `filter` |
 | segment | `kind`, `name`, `description`, `cube`, `filter` |

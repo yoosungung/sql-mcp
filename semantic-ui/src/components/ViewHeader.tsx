@@ -24,7 +24,7 @@ export function ViewHeader({
   canSave: boolean;
   canDelete: boolean;
   views: { name: string }[];
-  onNew: (combine: TableCombine) => void;
+  onNew: (combine: TableCombine, name: string) => void;
   onOpen: (name: string) => void;
   onRename: (name: string) => void;
   onSave: () => void;
@@ -36,6 +36,7 @@ export function ViewHeader({
   const [renameOpen, setRenameOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [draftName, setDraftName] = useState(title);
+  const [newName, setNewName] = useState("");
   const [newCombine, setNewCombine] = useState<TableCombine>("join");
   const [openName, setOpenName] = useState(views[0]?.name || "");
 
@@ -62,7 +63,7 @@ export function ViewHeader({
           {unsaved && <Badge variant="soft">Unsaved</Badge>}
         </Flex>
         <Flex align="center" gap="2" wrap="wrap">
-          <Button type="button" size="1" variant="soft" onClick={() => setNewOpen(true)}>New</Button>
+          <Button type="button" size="1" variant="soft" onClick={() => { setNewCombine("join"); setNewName(""); setNewOpen(true); }}>New</Button>
           <Button type="button" size="1" variant="soft" onClick={() => { setOpenName(views[0]?.name || ""); setOpenPicker(true); }}>Open</Button>
           <Button type="button" size="1" variant="soft" disabled={!title} onClick={() => { setDraftName(title); setRenameOpen(true); }}>Rename</Button>
           <Button type="button" size="1" disabled={!canSave || busy} onClick={onSave}>Save</Button>
@@ -71,7 +72,7 @@ export function ViewHeader({
       </Flex>
       {askDelete && (
         <Flex align="center" justify="between" gap="3" role="alertdialog" aria-label="Delete view">
-          <Text size="2">Delete {title}? Dependent cube, metrics, and segments are removed.</Text>
+          <Text size="2">Delete {title}? Cubes keep existing; this view is dropped from their stack.</Text>
           <Flex gap="2">
             <Button type="button" size="1" variant="soft" color="gray" onClick={() => setAskDelete(false)}>Cancel</Button>
             <Button type="button" size="1" color="red" aria-label="Confirm delete" onClick={() => { setAskDelete(false); onDelete(); }}>Delete</Button>
@@ -82,17 +83,25 @@ export function ViewHeader({
       <Dialog.Root open={newOpen} onOpenChange={setNewOpen}>
         <Dialog.Content maxWidth="360px">
           <Dialog.Title>New view</Dialog.Title>
-          <Select.Root value={newCombine} onValueChange={(v) => setNewCombine(v as TableCombine)}>
-            <Select.Trigger aria-label="New view type" />
-            <Select.Content>
-              <Select.Item value="join">join</Select.Item>
-              <Select.Item value="union">union</Select.Item>
-              <Select.Item value="minus">minus</Select.Item>
-            </Select.Content>
-          </Select.Root>
+          <Flex direction="column" gap="3" mt="3">
+            <TextField.Root
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="View name"
+              aria-label="New view name"
+            />
+            <Select.Root value={newCombine} onValueChange={(v) => setNewCombine(v as TableCombine)}>
+              <Select.Trigger aria-label="New view type" />
+              <Select.Content>
+                <Select.Item value="join">join</Select.Item>
+                <Select.Item value="union">union</Select.Item>
+                <Select.Item value="minus">minus</Select.Item>
+              </Select.Content>
+            </Select.Root>
+          </Flex>
           <Flex gap="3" mt="4" justify="end">
             <Dialog.Close><Button variant="soft" color="gray">Cancel</Button></Dialog.Close>
-            <Button onClick={() => { onNew(newCombine); setNewOpen(false); }}>Create</Button>
+            <Button disabled={!newName.trim()} onClick={() => { onNew(newCombine, newName.trim()); setNewOpen(false); }}>Create</Button>
           </Flex>
         </Dialog.Content>
       </Dialog.Root>
