@@ -246,11 +246,68 @@ describe("production shell", () => {
     expect(within(header).getByRole("button", { name: "Collapse catalog" })).toBeTruthy();
   });
 
+  it("adds and deletes a view column from the inspector", async () => {
+    const user = userEvent.setup();
+    render(<App api={api()} />);
+    await screen.findByRole("button", { name: "account" });
+    dropOnto(screen.getByRole("button", { name: "account" }), screen.getByRole("main", { name: "Canvas" }));
+    const inspector = screen.getByRole("complementary", { name: "Inspector" });
+    await user.click(within(inspector).getByRole("button", { name: "Add column" }));
+    expect(within(inspector).getByText("col")).toBeTruthy();
+    const detail = screen.getByRole("region", { name: "Detail" });
+    const name = within(detail).getByRole("textbox", { name: "Column name" });
+    await user.clear(name);
+    await user.type(name, "display_name");
+    expect(within(inspector).getByText("display_name")).toBeTruthy();
+    await user.click(within(inspector).getByRole("button", { name: "Delete column" }));
+    expect(within(inspector).queryByText("display_name")).toBeNull();
+  });
+
+  it("edits the selected view column mapping in the detail panel", async () => {
+    const user = userEvent.setup();
+    render(
+      <App
+        api={api([
+          {
+            kind: "table",
+            name: "account",
+            target: "bird",
+            table: "account",
+            columns: [
+              { name: "id", type: "int", nullable: false },
+              { name: "name", type: "text", nullable: true },
+            ],
+            pk: ["id"],
+          },
+        ])}
+      />,
+    );
+    await screen.findByRole("button", { name: "account" });
+    dropOnto(screen.getByRole("button", { name: "account" }), screen.getByRole("main", { name: "Canvas" }));
+    const inspector = screen.getByRole("complementary", { name: "Inspector" });
+    await user.click(within(inspector).getByText("id"));
+    const detail = screen.getByRole("region", { name: "Detail" });
+    expect(within(detail).getByRole("textbox", { name: "Column name" })).toBeTruthy();
+    expect(
+      within(detail)
+        .getAllByRole("region")
+        .map((el) => el.getAttribute("aria-label")),
+    ).toEqual(expect.arrayContaining(["Column", "Column mappings"]));
+    const col = within(detail).getByRole("region", { name: "Column" });
+    const maps = within(detail).getByRole("region", { name: "Column mappings" });
+    expect(col.compareDocumentPosition(maps) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await user.click(within(detail).getByRole("combobox", { name: "Map account" }));
+    await user.click(await screen.findByRole("option", { name: "name" }));
+    expect(within(detail).getByRole("combobox", { name: "Map account" }).textContent).toMatch(/name/);
+    expect(within(detail).getByText("text")).toBeTruthy();
+  });
+
   it("keeps inspector collapse and Columns on one header row", async () => {
     render(<App api={api()} />);
     const header = await screen.findByRole("toolbar", { name: "Inspector header" });
     expect(within(header).getByRole("button", { name: "Collapse inspector" })).toBeTruthy();
     expect(within(header).getByRole("heading", { name: "Columns" })).toBeTruthy();
+    expect(header.className).toMatch(/pane-bar-wrap/);
   });
 
   it("sizes the detail panel collapsed, standard, and expanded", async () => {

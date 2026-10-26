@@ -4,6 +4,9 @@ import {
   joinOnOp,
   mappingFor,
   reorder,
+  addViewColumn,
+  removeViewColumn,
+  renameViewColumn,
   setMapping,
   setSourceAlias,
   toolPayload,
@@ -33,6 +36,15 @@ describe("setMapping", () => {
     const col = next.columns![0];
     expect(mappingFor(col, "disp")).toBe("account_id");
     expect(mappingFor(col, "account_table")).toBe("account_id");
+  });
+
+  it("adds a uniquely named view column and can rename or remove it", () => {
+    const added = addViewColumn(view, { source: "account_table", column: "name" });
+    expect(added.name).toBe("col");
+    expect(added.view.columns?.map((c) => c.name)).toEqual(["account_id", "col"]);
+    const renamed = renameViewColumn(added.view, "col", "display_name");
+    expect(renamed.columns?.map((c) => c.name)).toEqual(["account_id", "display_name"]);
+    expect(removeViewColumn(renamed, "display_name").columns?.map((c) => c.name)).toEqual(["account_id"]);
   });
 });
 

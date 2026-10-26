@@ -343,13 +343,25 @@ export function App({ api }: { api?: AuthorApi }) {
   }
 
   function changeView(view: Doc) {
+    const prev = draft || editing;
     if (selection?.kind === "table") {
-      const prev = draft || editing;
       const oldLabels = (prev?.sources || []).map(sourceLabel);
       const newLabels = (view.sources || []).map(sourceLabel);
       if (!newLabels.includes(selection.name)) {
         const idx = oldLabels.indexOf(selection.name);
         if (idx >= 0 && newLabels[idx]) setSelection({ kind: "table", name: newLabels[idx] });
+      }
+    }
+    if (selection?.kind === "column") {
+      const oldNames = (prev?.columns || []).map((c) => c.name);
+      const newNames = (view.columns || []).map((c) => c.name);
+      if (!newNames.includes(selection.name)) {
+        const idx = oldNames.indexOf(selection.name);
+        if (idx >= 0 && oldNames.length === newNames.length && newNames[idx] !== undefined) {
+          setSelection({ kind: "column", name: newNames[idx] });
+        } else {
+          setSelection({ kind: "view", name: view.name });
+        }
       }
     }
     if (draft && draft.name === view.name) setDraft(view);
@@ -562,6 +574,7 @@ export function App({ api }: { api?: AuthorApi }) {
             onSelect={setSelection}
             onOpenViewMapping={() => setMappingEditor({ mode: "view" })}
             onOpenCubeMapping={() => setMappingEditor({ mode: "cube" })}
+            onChangeView={changeView}
           />
         </div>
         <section className={detailSize === "collapsed" ? "editor is-collapsed" : "editor"} aria-label="Detail">

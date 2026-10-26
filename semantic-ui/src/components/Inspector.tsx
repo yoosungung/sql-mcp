@@ -1,6 +1,6 @@
 import { Badge, Button, Flex, Heading, IconButton, Text } from "@radix-ui/themes";
-import type { Doc } from "../model";
-import { columnMeta } from "./docs";
+import { addViewColumn, removeViewColumn, type Doc } from "../model";
+import { columnMeta, mappingSourceColumns, tableColumnNames } from "./docs";
 import type { Selection, Tab } from "./types";
 
 export function Inspector({
@@ -16,6 +16,7 @@ export function Inspector({
   onSelect,
   onOpenViewMapping,
   onOpenCubeMapping,
+  onChangeView,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -29,10 +30,11 @@ export function Inspector({
   onSelect: (pick: Selection) => void;
   onOpenViewMapping: () => void;
   onOpenCubeMapping: () => void;
+  onChangeView?: (view: Doc) => void;
 }) {
   return (
     <aside className={open ? "inspector" : "inspector is-collapsed"} aria-label="Inspector">
-      <div className="pane-bar pane-bar-start" role="toolbar" aria-label="Inspector header">
+      <div className="pane-bar pane-bar-start pane-bar-wrap" role="toolbar" aria-label="Inspector header">
         <IconButton
           size="1"
           variant="ghost"
@@ -49,7 +51,38 @@ export function Inspector({
               {tab === "tables" ? "Columns" : "Members"}
             </Heading>
             {tab === "tables" && view && (
-              <Button size="1" variant="soft" onClick={onOpenViewMapping}>Map columns</Button>
+              <>
+                <Button size="1" variant="soft" onClick={onOpenViewMapping}>Map columns</Button>
+                <Button
+                  size="1"
+                  variant="soft"
+                  disabled={!onChangeView || !(view.sources || []).length}
+                  onClick={() => {
+                    const sources = mappingSourceColumns(view, tables);
+                    const first = sources[0];
+                    if (!first || !onChangeView) return;
+                    const phys = tableColumnNames(first.table)[0] || "col";
+                    const added = addViewColumn(view, { source: first.label, column: phys });
+                    onChangeView(added.view);
+                    onSelect({ kind: "column", name: added.name });
+                  }}
+                >
+                  Add column
+                </Button>
+                <Button
+                  size="1"
+                  variant="soft"
+                  color="red"
+                  disabled={!onChangeView || selected?.kind !== "column"}
+                  onClick={() => {
+                    if (!onChangeView || selected?.kind !== "column") return;
+                    onChangeView(removeViewColumn(view, selected.name));
+                    onSelect({ kind: "view", name: view.name });
+                  }}
+                >
+                  Delete column
+                </Button>
+              </>
             )}
             {tab === "cubes" && cube && (
               <Button size="1" variant="soft" onClick={onOpenCubeMapping}>Map members</Button>
@@ -114,7 +147,7 @@ function ColumnsPanel({
           </button>
         );
       })}
-      {!(view.columns || []).length && <Text size="2" color="gray">No columns yet. Use Map columns.</Text>}
+      {!(view.columns || []).length && <Text size="2" color="gray">No columns yet. Use Add column or Map columns.</Text>}
     </Flex>
   );
 }

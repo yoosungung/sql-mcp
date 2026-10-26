@@ -155,7 +155,8 @@ export function columnMeta(
   let type = "";
   let pk = false;
   for (const m of mappings) {
-    const table = tables.find((t) => t.name === m.source);
+    const src = (view.sources || []).find((s) => sourceLabel(s) === m.source);
+    const table = tables.find((t) => t.name === (src?.table || m.source));
     if (!table) continue;
     const cols = (table.columns as { name?: string; type?: string }[] | undefined) || [];
     const phys = cols.find((c) => c.name === m.column);

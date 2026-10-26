@@ -59,6 +59,9 @@ body { margin: 0; }
 }
 .pane-bar-start { justify-content: flex-start; }
 .pane-bar .pane-bar-title { flex: 1; min-width: 0; }
+.pane-bar-wrap { flex-wrap: wrap; align-items: center; }
+.pane-bar-wrap .pane-bar-title { flex: 0 1 auto; }
+.pane-bar-wrap .rt-Button { flex: none; white-space: nowrap; }
 .is-collapsed .pane-bar, .is-collapsed .pane-bar-start { justify-content: center; }
 .canvas {
   display: flex;
@@ -142,6 +145,16 @@ body { margin: 0; }
   min-width: 0;
 }
 .join-field .rt-SelectTrigger { width: 100%; }
+.column-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px 20px;
+  min-height: 0;
+  height: 100%;
+}
+.column-detail .fields {
+  grid-template-columns: 72px minmax(0, 1fr);
+}
 .table-detail {
   display: grid;
   grid-template-columns: minmax(120px, 1fr) minmax(200px, 2fr) minmax(200px, 2fr);

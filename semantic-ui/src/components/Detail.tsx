@@ -3,7 +3,10 @@ import { Button, Flex, Heading, IconButton, Select, Text, TextField } from "@rad
 import {
   JOIN_ON_OPS,
   joinOnOp,
+  mappingFor,
+  renameViewColumn,
   setJoinRelationship,
+  setMapping,
   setSourceAlias,
   sourceLabel,
   type Doc,
@@ -11,7 +14,7 @@ import {
   type JoinOnOp,
   type Relationship,
 } from "../model";
-import { columnMeta, tableColumnNames } from "./docs";
+import { columnMeta, mappingSourceColumns, tableColumnNames } from "./docs";
 import type { Selection } from "./types";
 
 export function Detail({
@@ -58,7 +61,14 @@ export function Detail({
     return <JoinDetail join={join} index={selection.index} view={view} tables={tables} onChangeView={onChangeView} />;
   }
   if (selection?.kind === "column" && view) {
-    return <ColumnDetail view={view} columnName={selection.name} tables={tables} />;
+    return (
+      <ColumnDetail
+        view={view}
+        columnName={selection.name}
+        tables={tables}
+        onChangeView={onChangeView}
+      />
+    );
   }
   if (selection?.kind === "dimension" || selection?.kind === "fact") {
     const list = selection.kind === "dimension" ? cube?.dimensions : cube?.facts;
@@ -468,24 +478,59 @@ function ColumnDetail({
   view,
   columnName,
   tables,
+  onChangeView,
 }: {
   view: Doc;
   columnName: string;
   tables: Doc[];
+  onChangeView?: (doc: Doc) => void;
 }) {
+  const col = (view.columns || []).find((c) => c.name === columnName);
+  if (!col) return <Text size="2" color="gray">Column not found.</Text>;
   const meta = columnMeta(view, columnName, tables);
+  const sources = mappingSourceColumns(view, tables);
   return (
-    <div>
-      <Heading size="3" weight="medium" mb="3">column · {columnName}</Heading>
-      <div className="fields">
-        <Field label="PK"><Text size="2">{meta.pk ? "yes" : "no"}</Text></Field>
-        <Field label="Type"><Text size="2">{meta.type}</Text></Field>
-        <Field label="Description"><Text size="2">{meta.description || "—"}</Text></Field>
+    <div className="column-detail">
+      <div className="table-detail-col" role="region" aria-label="Column">
+        <Heading size="3" weight="medium" mb="3">column · {columnName}</Heading>
+        <div className="fields">
+          <Field label="Name">
+            <TextField.Root
+              size="2"
+              value={col.name}
+              aria-label="Column name"
+              onChange={(e) => onChangeView?.(renameViewColumn(view, columnName, e.target.value))}
+            />
+          </Field>
+          <Field label="Type"><Text size="2">{meta.type}</Text></Field>
+          <Field label="PK"><Text size="2">{meta.pk ? "yes" : "no"}</Text></Field>
+        </div>
       </div>
-      <Heading size="2" mt="4" mb="2">Mappings</Heading>
-      {meta.mappings.map((m) => (
-        <Text key={`${m.source}.${m.column}`} size="2" as="p">{m.source}.{m.column}</Text>
-      ))}
+      <div className="table-detail-col" role="region" aria-label="Column mappings">
+        <Heading size="2" mb="2">Mappings</Heading>
+        <div className="fields">
+          {sources.map((s) => (
+            <Field key={s.label} label={s.label}>
+              <Select.Root
+                size="2"
+                value={mappingFor(col, s.label) || "none"}
+                onValueChange={(value) => {
+                  onChangeView?.(setMapping(view, columnName, s.label, value === "none" ? "" : value));
+                }}
+              >
+                <Select.Trigger aria-label={`Map ${s.label}`} />
+                <Select.Content>
+                  <Select.Item value="none">—</Select.Item>
+                  {tableColumnNames(s.table).map((name) => (
+                    <Select.Item key={name} value={name}>{name}</Select.Item>
+                  ))}
+                </Select.Content>
+              </Select.Root>
+            </Field>
+          ))}
+          {!sources.length && <Text size="2" color="gray">No sources.</Text>}
+        </div>
+      </div>
     </div>
   );
 }

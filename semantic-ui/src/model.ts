@@ -144,6 +144,33 @@ export function setMapping(view: Doc, viewColumn: string, source: string, physic
   return { ...view, columns };
 }
 
+export function addViewColumn(view: Doc, mapping: Mapping, base = "col"): { view: Doc; name: string } {
+  const used = new Set((view.columns || []).map((c) => c.name));
+  let name = base;
+  let n = 2;
+  while (used.has(name)) {
+    name = `${base}_${n}`;
+    n += 1;
+  }
+  return {
+    view: { ...view, columns: [...(view.columns || []), { name, mappings: [mapping] }] },
+    name,
+  };
+}
+
+export function removeViewColumn(view: Doc, name: string): Doc {
+  return { ...view, columns: (view.columns || []).filter((c) => c.name !== name) };
+}
+
+export function renameViewColumn(view: Doc, current: string, next: string): Doc {
+  const name = next.trim();
+  if ((view.columns || []).some((c) => c.name === name && c.name !== current)) return view;
+  return {
+    ...view,
+    columns: (view.columns || []).map((c) => (c.name === current ? { ...c, name } : c)),
+  };
+}
+
 export function withSourceOrder(view: Doc, sources: Source[]): Doc {
   return { ...view, sources };
 }

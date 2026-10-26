@@ -9,7 +9,7 @@
 ## 화면
 
 - 위: Database 하나. 라벨은 **Database**, JSON 필드는 `target`. `GET /api/databases`. Database 사이 조인 없음.
-- 왼쪽 탭 **Tables** / **Cubes**. 카탈로그 헤더는 한 줄(Tables · Cubes · 접기). 인스펙터 헤더도 한 줄(접기 · Columns 또는 Members).
+- 왼쪽 탭 **Tables** / **Cubes**. 카탈로그 헤더는 한 줄(Tables · Cubes · 접기). 인스펙터 헤더는 접기 · Columns/Members · 버튼. 폭이 좁으면 버튼은 글자를 세로로 쪼개지 않고 다음 줄로 넘어간다.
 
 ### Tables 탭
 
@@ -21,8 +21,8 @@
   - 테이블은 **캔버스**에 드롭한다.
   - `join`: `@xyflow/react` + `@dagrejs/dagre` JoinCanvas. 노드 위치는 저장하지 않음. 열기·드롭·조인 변경 시 dagre가 조인 그래프(source=노드, join=간선, `rankdir: LR`)로 다시 배치한다. 초기 `fitView`는 `maxZoom: 1`이라 테이블 글자가 UI 폰트를 넘기지 않고, Controls 수동 줌은 그대로다. 드롭은 source만 추가하고 조인을 만들지 않는다. 같은 table을 여러 번 드롭할 수 있다. 별칭은 **view `sources[].alias`**(table 문서 아님). 생략 시=`table`, 뷰 내 유일(중복 드롭은 `table_2` …). 캔버스 노드 선택 시 Detail **Alias**에서 그 뷰 source만 고친다. 핸들 연결 → `view.joins`(`left`/`right`=source 별칭). JoinCanvas는 헤더 아래 남는 칸을 채운다(고정 높이 없음). 드롭 하이라이트 테두리 없음. `relationship`은 선택(D29 카디널리티: many_to_one / one_to_one / one_to_many). 수동 조인의 relationship은 unset이고, 없으면 grain guard가 그 조인을 보지 않는다.
   - `union` / `minus`: 세로 스택 + 드래그 재정렬.
-- 오른쪽 **Columns**: 뷰 컬럼 목록(파생 PK · type · name · description). 뷰 이름은 헤더에만 두고 여기엔 안 보여 준다. 위 **Map columns** → ViewMappingEditor(거의 전체 화면).
-- 아래 Detail: Catalog/Canvas 테이블 · join 링크 · 컬럼 선택에 따라 네 패널. 헤더 한 줄에 접기 · 기본 · 확장. 테이블 상세는 세 칸 비율 **1 : 2 : 2**(헤더+PK : 컬럼 : 필터). 칸은 가로는 숨기고(`overflow-x: hidden`) 컬럼 목록만 세로 스크롤. 헤더 칸 라벨은 Name · Alias(join 뷰 source일 때만) · **Database** · PK. 컬럼 칸은 name · type · nullable · FK 표. FK 셀은 문서 `fk`(물리 DB에서 온 값)를 `table.column`으로 읽기 전용 표시하고, 없으면 `—`. `name`=`table`(물리명), `db`=`target`. 스키마·Physical 중복 표시 없음. join 선택 시 Detail은 세 줄: 시작 테이블+시작 컬럼, 연산자(`op`, 생략=`=`)+Join type(`inner`/`left`/`right`/`full` 콤보)+relationship, 끝 테이블+끝 컬럼. 조인 `left`/`right`는 source 별칭이다.
+- 오른쪽 **Columns**: 뷰 컬럼 목록(파생 PK · type · name). 뷰 이름은 헤더에만 두고 여기엔 안 보여 준다. 헤더 **Map columns** · **Add column** · **Delete column**(좁으면 다음 줄). Add는 첫 source의 첫 물리 컬럼을 매핑한 `col`을 만들고, Delete는 선택된 뷰 컬럼을 뺀다. Map columns → ViewMappingEditor(거의 전체 화면).
+- 아래 Detail: Catalog/Canvas 테이블 · join 링크 · 컬럼 선택에 따라 네 패널. 헤더 한 줄에 접기 · 기본 · 확장. 테이블 상세는 세 칸 비율 **1 : 2 : 2**(헤더+PK : 컬럼 : 필터). 칸은 가로는 숨기고(`overflow-x: hidden`) 컬럼 목록만 세로 스크롤. 헤더 칸 라벨은 Name · Alias(join 뷰 source일 때만) · **Database** · PK. 컬럼 칸은 name · type · nullable · FK 표. FK 셀은 문서 `fk`(물리 DB에서 온 값)를 `table.column`으로 읽기 전용 표시하고, 없으면 `—`. `name`=`table`(물리명), `db`=`target`. 스키마·Physical 중복 표시 없음. join 선택 시 Detail은 세 줄: 시작 테이블+시작 컬럼, 연산자(`op`, 생략=`=`)+Join type(`inner`/`left`/`right`/`full` 콤보)+relationship, 끝 테이블+끝 컬럼. 조인 `left`/`right`는 source 별칭이다. 뷰 컬럼 선택 시 두 칸: **Name**(편집) / Type·PK(매핑에서 파생, 읽기 전용) · **Mappings**(source별 물리 컬럼). 스키마 `viewColumn`은 `name`+`mappings`만.
 
 View 편집은 메모리 JSON; **Save**가 `POST`/`PUT /api/meta`.
 
