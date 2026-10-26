@@ -81,11 +81,6 @@ impl Config {
         Duration::from_millis(self.timeout_ms)
     }
 
-    /// MCP persona: `query` (DW agent, default) or `author` (metadata registration).
-    pub fn mode(&self) -> McpMode {
-        McpMode::from_env()
-    }
-
     pub fn default_role(&self) -> Option<String> {
         env::var("SQL_MCP_DEFAULT_ROLE")
             .ok()
@@ -103,37 +98,6 @@ impl Config {
         env::var("SQL_MCP_CONFIG")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("./server/examples/config.example.toml"))
-    }
-}
-
-/// Server tool surface mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum McpMode {
-    /// DW agent: query tools; metadata mutations forbidden.
-    Query,
-    /// Coding agent: metadata CRUD allowed.
-    Author,
-}
-
-impl McpMode {
-    pub fn from_env() -> Self {
-        match env::var("SQL_MCP_MODE") {
-            Ok(v) => match v.trim().to_ascii_lowercase().as_str() {
-                "author" | "coding" => Self::Author,
-                "query" | "dw" => Self::Query,
-                other => {
-                    eprintln!(
-                        "sql-mcp: unknown SQL_MCP_MODE={other:?}, expected query|author; using query"
-                    );
-                    Self::Query
-                }
-            },
-            Err(_) => Self::Query,
-        }
-    }
-
-    pub fn allows_metadata_mutation(self) -> bool {
-        matches!(self, Self::Author)
     }
 }
 
@@ -173,27 +137,6 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains(path.to_string_lossy().as_ref()), "{msg}");
         assert!(msg.contains("invalid config"), "{msg}");
-    }
-
-    #[test]
-    fn mode_from_env_query_and_author() {
-        // Single test to avoid parallel env races.
-        let prev_mode = env::var("SQL_MCP_MODE").ok();
-        let restore = || match &prev_mode {
-            Some(v) => env::set_var("SQL_MCP_MODE", v),
-            None => env::remove_var("SQL_MCP_MODE"),
-        };
-
-        env::remove_var("SQL_MCP_MODE");
-        assert_eq!(McpMode::from_env(), McpMode::Query);
-
-        env::set_var("SQL_MCP_MODE", "author");
-        assert_eq!(McpMode::from_env(), McpMode::Author);
-
-        env::set_var("SQL_MCP_MODE", "query");
-        assert_eq!(McpMode::from_env(), McpMode::Query);
-
-        restore();
     }
 
     #[test]

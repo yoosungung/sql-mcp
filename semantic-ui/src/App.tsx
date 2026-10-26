@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Badge, Callout, Flex, Select, Separator, Text, Theme } from "@radix-ui/themes";
-import { McpApi } from "./api";
+import { AuthorApi } from "./api";
 import { Canvas } from "./components/Canvas";
 import { Catalog } from "./components/Catalog";
 import { Detail } from "./components/Detail";
@@ -20,11 +20,12 @@ import {
   type Source,
 } from "./model";
 
-export function App({ api }: { api?: McpApi }) {
-  const client = useMemo(() => api ?? new McpApi(), [api]);
+export function App({ api }: { api?: AuthorApi }) {
+  const client = useMemo(() => api ?? new AuthorApi(), [api]);
   const [targets, setTargets] = useState<{ name: string; engine?: string }[]>([]);
   const [target, setTarget] = useState("");
   const [docs, setDocs] = useState<Doc[]>([]);
+  const [physical, setPhysical] = useState<Doc[]>([]);
   const [tab, setTab] = useState<Tab>("physical");
   const [tableName, setTableName] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
@@ -41,13 +42,28 @@ export function App({ api }: { api?: McpApi }) {
   const [navOpen, setNavOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(true);
 
+  async function loadPhysical(database: string) {
+    const items = await client.listPhysicalTables(database);
+    const tables: Doc[] = [];
+    for (const item of items) {
+      const desc = await client.describePhysicalTable(database, item.name, item.schema);
+      tables.push({
+        kind: "table",
+        name: item.name,
+        target: database,
+        columns: (desc.columns || []).map((col) => ({ name: col.name, mappings: [] })),
+      });
+    }
+    setPhysical(tables);
+  }
+
   async function reload(nextTarget = target) {
     const [dbs, all] = await Promise.all([client.listDatabases(), client.listDocs()]);
     setTargets(dbs);
     const chosen = nextTarget || dbs[0]?.name || "";
     if (!nextTarget && chosen) setTarget(chosen);
     setDocs(all);
-    if (chosen) await client.listTables(chosen);
+    if (chosen) await loadPhysical(chosen);
   }
 
   useEffect(() => {
@@ -56,7 +72,7 @@ export function App({ api }: { api?: McpApi }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const tables = forTarget(docs, "table", target);
+  const tables = physical.length ? physical : forTarget(docs, "table", target);
   const views = forTarget(docs, "view", target);
   const cubes = forTarget(docs, "cube", target);
   const selectedTable = tables.find((t) => t.name === tableName) ?? tables[0];
@@ -73,7 +89,7 @@ export function App({ api }: { api?: McpApi }) {
     setChecked([]);
     setPicked([]);
     setMember(null);
-    client.listTables(value).catch((err: Error) => setError(err.message));
+    loadPhysical(value).catch((err: Error) => setError(err.message));
   }
 
   async function save(doc: Doc) {

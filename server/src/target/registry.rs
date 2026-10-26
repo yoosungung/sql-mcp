@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::Serialize;
+use serde_json::{json, Value};
 
 use crate::config::{Config, TargetConfig};
 use crate::error::AppError;
@@ -54,6 +55,17 @@ impl TargetRegistry {
         &self.infos
     }
 
+    /// Shared MCP `list_databases` / `GET /api/databases` payload.
+    pub fn list_json(&self) -> Value {
+        json!({
+            "items": self.list().iter().map(|t| json!({
+                "name": t.id,
+                "description": t.description,
+                "engine": t.engine,
+            })).collect::<Vec<_>>(),
+        })
+    }
+
     pub fn get(&self, id: &str) -> Result<Arc<dyn TargetDb>, AppError> {
         self.targets
             .get(id)
@@ -61,7 +73,6 @@ impl TargetRegistry {
             .ok_or_else(|| AppError::NotFound(format!("database {id}")))
     }
 
-    #[cfg(test)]
     pub fn insert_for_test(&mut self, db: Arc<dyn TargetDb>) {
         let info = db.info();
         self.targets.insert(info.id.clone(), db);

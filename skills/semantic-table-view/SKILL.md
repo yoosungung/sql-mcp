@@ -17,14 +17,14 @@ description: >-
 
 문서마다 `{outdir}/{name}.json` 한 파일(파일명 = `name`, `kind`는 JSON 안). 하위 `tables/` 폴더는 필수가 아니다. `outdir`는 사용자가 준 초안 디렉터리(프로젝트마다 다름).
 
-다수 테이블이면 카탈로그를 읽는 **로컬 스크립트**로 table/view 골격을 만들어도 된다. 결과는 [contract.md](contract.md)를 지켜야 하며, 에이전트가 샘플·`as_code`·필터를 검토한다. **사용자가 요청하기 전에는 `metadata_*`로 MCP 등록하지 않는다.**
+다수 테이블이면 카탈로그를 읽는 **로컬 스크립트**로 table/view 골격을 만들어도 된다. 결과는 [contract.md](contract.md)를 지켜야 하며, 에이전트가 샘플·`as_code`·필터를 검토한다. **사용자가 요청하기 전에는 `/api/meta`로 등록하지 않는다.**
 
 ## Workflow
 
 ```
 Progress:
 - [ ] 1. 타깃 DW를 MCP 밖에서 탐색 (카탈로그·컬럼·샘플)
-- [ ] 2. 이미 등록된 시맨틱 table/view 이름 확인 (선택, metadata_*)
+- [ ] 2. 이미 등록된 시맨틱 table/view 이름 확인 (선택, GET /api/meta)
 - [ ] 3. table JSON 초안 → {outdir}/{name}.json
 - [ ] 4. view JSON 초안 → {outdir}/{name}.json
 - [ ] 5. 등록은 사용자 요청 시에만 semantic-register
@@ -32,7 +32,7 @@ Progress:
 
 ### 1. Explore target DW (not MCP)
 
-**물리 타깃 DB 조회는 MCP로 하지 않는다.** sql-mcp의 코딩 에이전트용 MCP 툴은 시맨틱 메타(`metadata_*`)·스키마 Resource 중심이다. 타깃 카탈로그·DDL·샘플은 환경에 맞게 직접 한다(예: `psql`/`sqlite3`/클라우드 콘솔/기존 DW 클라이언트). 시크릿·DSN은 채팅에 받지 말고 이미 설정된 연결만 쓴다.
+**물리 타깃 카탈로그는 MCP 조회 툴이 아니라 HTTP `/api`다.** `GET /api/databases` · `GET /api/databases/{id}/tables` · 컬럼 describe · column sample. 시크릿·DSN은 채팅에 받지 말고 이미 설정된 연결만 쓴다.
 
 확인할 것:
 
@@ -43,7 +43,7 @@ Progress:
 
 ### 2. Existing semantic names (optional)
 
-이미 sql-mcp에 붙은 경우, 중복·참조용으로만 `metadata_list` / `metadata_get`을 쓴다. 물리 스키마를 알아내는 용도가 아니다.
+이미 sql-mcp에 붙은 경우, 중복·참조용으로만 `GET /api/meta`를 쓴다. 물리 스키마는 `/api/databases/{id}/tables`다.
 
 ### 3. Draft `table`
 

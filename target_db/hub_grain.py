@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import urllib.request
 
 from generate_meta import ROOT, load_semantic_plan
 
@@ -130,7 +131,31 @@ def local_view_grain_failures() -> list[str]:
 
 def mcp_grain_failures(url: str) -> list[str]:
     """dry_run SELECT 1 FROM each hub cube; compiled tables must ⊆ hub+dims."""
-    from register_meta import mcp_call
+
+    def mcp_call(name: str, arguments: dict) -> dict:
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        }
+        req = urllib.request.Request(
+            url if url.rstrip("/").endswith("/mcp") else url.rstrip("/") + "/mcp",
+            data=json.dumps(payload).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            data = json.loads(resp.read().decode())
+        result = data.get("result") or {}
+        text = ""
+        for c in result.get("content") or []:
+            if isinstance(c, dict) and c.get("type") == "text":
+                text = c.get("text") or ""
+        return json.loads(text) if text else {}
 
     failures: list[str] = []
     for db_id in HUB_DBS:
@@ -140,7 +165,6 @@ def mcp_grain_failures(url: str) -> list[str]:
                 continue
             try:
                 result = mcp_call(
-                    url,
                     "execute_sql",
                     {"database": db_id, "sql": f"SELECT 1 FROM {cube}", "dry_run": True},
                 )

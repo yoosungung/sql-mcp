@@ -4,7 +4,7 @@
 
 ## 목표
 
-Rust MCP(`rmcp`) 서버: **임베디드 시맨틱 DB** + **복수 타깃 DB** 조회(SELECT) + **메타데이터 CRUD(JSON)**. Transport는 **일반 HTTP**(기본) + **stdio**(로컬). Frontend / Admin API / 세션형 Streamable HTTP는 취소.
+Rust MCP(`rmcp`) 서버: **임베디드 시맨틱 DB** + **복수 타깃 DB** 조회(SELECT) + **작성 HTTP `/api`(메타 JSON · 물리 카탈로그)**. Transport는 **일반 HTTP**(기본) + **stdio**(로컬 조회). 세션형 Streamable HTTP는 취소.
 
 ## 완료
 
@@ -38,6 +38,7 @@ Rust MCP(`rmcp`) 서버: **임베디드 시맨틱 DB** + **복수 타깃 DB** �
 - D28: expression은 스칼라. `additive: false`면 `SUM`/`AVG`/`COUNT(col)` 거절.
 - 제거: D5 세션형 Streamable HTTP, D10/D11 Frontend. stdio는 로컬용으로 복원.
 - semantic-ui: 루트 Vite React 작성 화면. `GET /ui`가 `semantic-ui/dist`를 서빙. 내용 [`semantic-ui/DESIGN.md`](semantic-ui/DESIGN.md).
+- D30: 메타 CRUD·물리 카탈로그는 HTTP `/api`. MCP는 조회만. `SQL_MCP_MODE` 폐기.
 
 ## 남은 일 — Cube 관계 모델 · 팬아웃 거절 (D29)
 
@@ -63,9 +64,9 @@ Rust MCP(`rmcp`) 서버: **임베디드 시맨틱 DB** + **복수 타깃 DB** �
 
 ## semantic-ui (작성 화면) — 구현됨
 
-D10/D11 Admin API 취소는 유지한다. 이 절은 그 취소와 별개인 **작성용 정적 화면**이다. 조회 계약(`execute_sql` 등)과 `client/` 에이전트는 바꾸지 않는다. 레이아웃 초안은 [`client/docs/semantic_layer_ui.svg`](client/docs/semantic_layer_ui.svg). 정본은 meta JSON이다. `semantic-map.md`는 생성 투영이라 이 화면에서 고치지 않는다.
+D10/D11 조회 Admin API 취소는 유지한다. D30이 작성 HTTP `/api`를 둔다. 조회 계약(`execute_sql` 등)과 `client/` 에이전트는 바꾸지 않는다. 레이아웃 초안은 [`client/docs/semantic_layer_ui.svg`](client/docs/semantic_layer_ui.svg). 정본은 meta JSON이다. `semantic-map.md`는 생성 투영이라 이 화면에서 고치지 않는다.
 
-루트 `semantic-ui/`는 Vite React다. 빌드 산출물은 sql-mcp HTTP가 정적 파일로 서빙한다. 데이터는 기존 MCP 툴만 쓴다. 일반 HTTP JSON-RPC `POST /mcp` (`list_databases`, `list_tables`, `metadata_list`, `metadata_create` / `metadata_get` / `metadata_update` / `metadata_delete`). 메타 변경은 `SQL_MCP_MODE=author`.
+루트 `semantic-ui/`는 Vite React다. 빌드 산출물은 sql-mcp HTTP가 정적 파일로 서빙한다. 데이터는 `/api`(타깃·물리 테이블·`/api/meta`). `POST /mcp`는 DW 조회만.
 
 1. **타깃을 먼저 고른다.** 셀렉터 하나. 타깃 사이 조인은 없다. 목록은 `list_databases`.
 2. **왼쪽 두 탭.** Physical은 물리 테이블을 `join` · `union` · `minus`로 끌어 초안을 만든다. 체크도 된다. Cubes는 뷰 목록과 `New view`(`combine: select`).
@@ -73,12 +74,12 @@ D10/D11 Admin API 취소는 유지한다. 이 절은 그 취소와 별개인 **�
 4. **오른쪽이 컬럼이다.** Physical 초안과 조인 뷰는 물리 컬럼 매핑이다. 셀렉트 뷰는 입력 뷰 컬럼 머지다. 그 외 Cubes는 cube 트리(dimension · fact · metric · segment).
 5. **저장과 삭제는 연 뷰의 막대다.** `Save view`가 생성과 수정이다. `Delete view`는 확인 후 그 뷰의 metric · segment · cube를 지우고 뷰를 지운다. Cubes의 select 생성은 `New view`와 빈 cube.
 6. **아래 상세는 선택 항목의 meta JSON.** 물리 테이블이면 테이블 정보만(컬럼 목록은 오른쪽 매핑에 있다). 뷰를 고르면 뷰 문서. 오른쪽 트리에서 dimension / fact / metric / segment를 고르면 그 항목.
-7. **정적 라우트.** Rust `http`가 `semantic-ui` 빌드 산출물을 서빙한다. `/mcp`와 `/health`는 그대로다.
+7. **정적 라우트.** Rust `http`가 `semantic-ui` 빌드 산출물을 서빙한다. `/health` · `/api` · `/mcp` · `/ui`.
 
 - [x] 루트 `semantic-ui/` Vite React. `server/` 컴파일과 `client/`는 그대로
 - [x] 타깃 셀렉터 · Physical에서 join/union/minus 초안 · Cubes의 select 스택 · 오른쪽 매핑/머지 · 아래 상세
 - [x] 셀렉트 뷰 우선순위 스택(드래그)과 컬럼 머지
-- [x] MCP `list_databases` · `list_tables` · `metadata_list` · metadata CRUD
+- [x] HTTP `/api/databases` · 물리 tables/sample · `/api/meta` CRUD. MCP는 조회만.
 - [x] sql-mcp 정적 파일 라우트. 빌드 산출물 `semantic-ui/dist` → `GET /ui/`
 
 ## 구현 시 작업 규칙

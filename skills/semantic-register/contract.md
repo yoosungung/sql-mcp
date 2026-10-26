@@ -12,14 +12,14 @@
 
 연결 검증에 쓰는 링크: `fk.references`, view `sources`/`mappings`, cube `view`, dimension·fact `column`, metric·segment `cube`, metric `group_by`, **table/view/cube `target` 일치**(MCP 타깃 id; leaf table과 같아야 함).
 
-## metadata_* 동작
+## /api/meta 동작
 
-| 툴 | 동작 |
-|----|------|
-| `metadata_create` | 문서 하나 schema 검증 → 반영 후 **전체 등록 집합** 연결 검증 → 성공 시만 저장 |
-| `metadata_update` | full body replace, 동일 검증 |
-| `metadata_delete` | 뺀 뒤 남은 집합 연결 검증 |
-| `metadata_get` / `metadata_list` | 저장된 JSON 반환 |
+| HTTP | 동작 |
+|------|------|
+| `POST /api/meta` | 문서 하나 schema 검증 → 반영 후 **전체 등록 집합** 연결 검증 → 성공 시만 저장 |
+| `PUT /api/meta/{kind}/{name}` | full body replace, 동일 검증 |
+| `DELETE /api/meta/{kind}/{name}` | 뺀 뒤 남은 집합 연결 검증 |
+| `GET /api/meta` · `GET /api/meta/{kind}/{name}` | 저장된 JSON 반환 |
 
 검증 실패 시 시맨틱 DB는 바꾸지 않는다. 에러 `code` 예: `validation`, `not_found`, …
 
@@ -48,7 +48,7 @@ segments/{name}.json
 
 ## DW vs coding agent
 
-- 코딩 에이전트: `metadata_*` + schema Resource.
+- 코딩 에이전트: HTTP `/api/meta` + schema Resource. 물리 카탈로그는 `/api/databases/{id}/tables`.
 - DW 에이전트: 메타 CRUD를 주지 않는다. 테이블=cube, 컬럼=dimension/fact. metric/segment는 `describe_table.examples`만(D26).
 
 ## Quick checks

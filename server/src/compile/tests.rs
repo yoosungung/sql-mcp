@@ -1,4 +1,3 @@
-
 use super::*;
 use serde_json::json;
 use std::collections::HashSet;
@@ -689,7 +688,10 @@ fn many_to_one_aggregate_and_missing_relationship_pass() {
     let included = HashSet::from(["orders".into(), "items".into(), "payments".into()]);
     let mut view = grain_view("many_to_one");
     super::view_prune::assert_no_fanout_or_chasm(&view, &included, true).unwrap();
-    view["joins"][0].as_object_mut().unwrap().remove("relationship");
+    view["joins"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("relationship");
     super::view_prune::assert_no_fanout_or_chasm(&view, &included, true).unwrap();
     let detail = grain_view("one_to_many");
     super::view_prune::assert_no_fanout_or_chasm(&detail, &included, false).unwrap();
@@ -698,13 +700,10 @@ fn many_to_one_aggregate_and_missing_relationship_pass() {
 #[test]
 fn aggregating_one_to_many_is_fanout_and_two_are_chasm() {
     let included = HashSet::from(["orders".into(), "items".into(), "payments".into()]);
-    let err = super::view_prune::assert_no_fanout_or_chasm(
-        &grain_view("one_to_many"),
-        &included,
-        true,
-    )
-    .unwrap_err()
-    .to_string();
+    let err =
+        super::view_prune::assert_no_fanout_or_chasm(&grain_view("one_to_many"), &included, true)
+            .unwrap_err()
+            .to_string();
     assert!(err.contains("Fan-out rejected"), "{err}");
     assert!(err.contains("orders"), "{err}");
     let mut chasm = grain_view("one_to_many");

@@ -20,7 +20,7 @@ description: >-
 
 ```
 Progress:
-- [ ] 1. view 컬럼 목록 확보 (초안 파일 또는 metadata_get)
+- [ ] 1. view 컬럼 목록 확보 (초안 파일 또는 GET /api/meta)
 - [ ] 2. cube: name/description(사용용; 없으면 "") + dimensions/facts(column XOR expression)
 - [ ] 3. metric: name/description(사용용) · expression · aggregation · group_by · filter
 - [ ] 4. segment: name/description(사용용) + 비어 있지 않은 boolean filter (선택)
@@ -29,7 +29,7 @@ Progress:
 
 ### 1. Bound view
 
-`cube.view`는 view 하나. view `columns[].name`이 dimension/fact `column` 및 expression 식별자의 기준이다. 이미 등록됐으면 `metadata_get`으로 가져온다(물리 DW 조회용이 아님).
+`cube.view`는 view 하나. view `columns[].name`이 dimension/fact `column` 및 expression 식별자의 기준이다. 이미 등록됐으면 `GET /api/meta/view/{name}`으로 가져온다(물리 DW 조회용이 아님).
 
 ### 2–4. Draft
 

@@ -3,8 +3,8 @@ name: semantic-register
 description: >-
   Validates sql-mcp semantic registration JSON against the bundled
   document.schema.json and connection rules, then creates or updates documents
-  via metadata_* MCP tools. Use when registering, updating, or deleting
-  table/view/cube/metric/segment metadata, or when metadata_create returns
+  via HTTP /api/meta. Use when registering, updating, or deleting
+  table/view/cube/metric/segment metadata, or when POST /api/meta returns
   validation errors.
 ---
 
@@ -20,9 +20,9 @@ description: >-
 Progress:
 - [ ] 1. Schema 로드 (MCP Resource `document.schema.json` / 스킬 Resource / 이 폴더 동봉)
 - [ ] 2. 문서 단위 형태 점검
-- [ ] 3. 연결 순서대로 metadata_create / update
+- [ ] 3. 연결 순서대로 POST /api/meta · PUT /api/meta/{kind}/{name}
 - [ ] 4. validation 실패 시 수정 후 재시도
-- [ ] 5. metadata_get으로 round-trip 확인
+- [ ] 5. GET /api/meta/{kind}/{name}으로 round-trip 확인
 ```
 
 ### 1–2. Schema · shape
@@ -33,15 +33,15 @@ Progress:
 
 `table → view → cube → metric|segment`. 한 번에 문서 하나.
 
-- **table 간 FK 순서:** `metadata_create`는 매 호출마다 `fk.references.table`이 이미 등록되어 있는지 검사한다. 피참조(부모) `table`을 먼저 생성하거나, 순서가 섞여 있거나 상호 참조가 있으면 먼저 `"fk": []`로 `metadata_create`한 뒤 모든 테이블 생성 후 원래 `"fk"`로 `metadata_update`한다.
-- **기존 view 교체(`metadata_update`) 시:** 이미 `cube`(및 하위 `metric`/`segment`)가 해당 `view`를 참조 중이면 DB 외래키/연결 제약에 걸릴 수 있으므로, 의존하는 `segment → metric → cube`를 잠시 `metadata_delete`한 뒤 `view`를 `metadata_update`하고 `cube → metric → segment`를 다시 생성한다.
+- **table 간 FK 순서:** `POST /api/meta`는 매 호출마다 `fk.references.table`이 이미 등록되어 있는지 검사한다. 피참조(부모) `table`을 먼저 생성하거나, 순서가 섞여 있거나 상호 참조가 있으면 먼저 `"fk": []`로 POST한 뒤 모든 테이블 생성 후 원래 `"fk"`로 PUT한다.
+- **기존 view 교체(PUT) 시:** 이미 `cube`(및 하위 `metric`/`segment`)가 해당 `view`를 참조 중이면 DB 외래키/연결 제약에 걸릴 수 있으므로, 의존하는 `segment → metric → cube`를 잠시 DELETE한 뒤 view를 PUT하고 `cube → metric → segment`를 다시 생성한다.
 
-| 연산 | 툴 |
-|------|-----|
-| 생성 | `metadata_create` |
-| 교체 | `metadata_update` |
-| 조회 | `metadata_get` / `metadata_list` |
-| 삭제 | `metadata_delete` |
+| 연산 | HTTP |
+|------|------|
+| 생성 | `POST /api/meta` |
+| 교체 | `PUT /api/meta/{kind}/{name}` |
+| 조회 | `GET /api/meta` · `GET /api/meta/{kind}/{name}` |
+| 삭제 | `DELETE /api/meta/{kind}/{name}` |
 
 ### 4. Fix loop
 
@@ -52,12 +52,12 @@ Progress:
 
 ### 5. Verify
 
-`metadata_get(kind, name)`. 검색 인덱스는 서버가 CRUD 성공 후 재구축한다.
+`GET /api/meta/{kind}/{name}`. 검색 인덱스는 서버가 CRUD 성공 후 재구축한다.
 
 프로젝트가 시맨틱 JSON의 다이어그램 투영을 갖고 있으면 초안 디렉터리만 갱신한다. 특정 생성 스크립트 경로는 전제가 아니다.
 
 ## Do not
 
-- DW 에이전트 세션에서 `metadata_*` 사용.
+- DW 에이전트 MCP 세션에서 `/api/meta`를 쓰지 않음. 물리 탐색은 `GET /api/databases/{id}/tables`.
 - 타깃 물리 DB 탐색을 이 스킬의 책임으로 두지 않음.
 - 외부 레포 경로를 schema/계약 정본으로 삼지 않음 — 이 스킬 폴더(+ 가능하면 MCP Resource)만.

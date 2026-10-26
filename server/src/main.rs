@@ -89,7 +89,7 @@ async fn run() -> Result<(), ExitCode> {
             as Arc<dyn Fn() -> Result<SqlMcp, std::io::Error> + Send + Sync>
     };
 
-    sql_mcp::http::serve(addr, factory, &cfg)
+    sql_mcp::http::serve(addr, factory, store, targets, cfg)
         .await
         .map_err(|e| {
             fatal(format!(

@@ -435,7 +435,7 @@ def build_semantic_map(
         "",
         f"# Semantic Map — `{tgt}`",
         "",
-        "> SoT: `metadata_*` / meta JSON. 이 파일은 읽기 전용 다이어그램 투영이다.",
+        "> SoT: `/api/meta` / meta JSON. 이 파일은 읽기 전용 다이어그램 투영이다.",
         f"> {overview}",
         "",
         "## A. Views",

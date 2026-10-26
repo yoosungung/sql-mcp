@@ -13,7 +13,7 @@ use rmcp::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::config::{Config, McpMode};
+use crate::config::Config;
 use crate::error::AppError;
 use crate::semantic::schema::{DOCUMENT_SCHEMA_JSON, DOCUMENT_SCHEMA_URI};
 use crate::semantic::SemanticStore;
@@ -26,46 +26,9 @@ pub struct SqlMcp {
     pub store: SemanticStore,
     pub targets: TargetRegistry,
     pub cfg: Arc<Config>,
-    pub mode: McpMode,
     pub default_role: Option<String>,
     #[allow(dead_code)] // read by rmcp #[tool_handler] generated code
     tool_router: rmcp::handler::server::router::tool::ToolRouter<Self>,
-}
-
-/// Cursor rejects boolean JSON Schema (`true`) for tool `inputSchema` properties.
-fn json_object_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    schemars::json_schema!({
-        "type": "object",
-        "additionalProperties": true
-    })
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct MetadataBodyArgs {
-    /// Semantic registration document (JSON object).
-    #[schemars(schema_with = "json_object_schema")]
-    pub body: Value,
-    pub kind: Option<String>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct KindNameArgs {
-    pub kind: String,
-    pub name: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct MetadataUpdateArgs {
-    pub kind: String,
-    pub name: String,
-    /// Semantic registration document (JSON object).
-    #[schemars(schema_with = "json_object_schema")]
-    pub body: Value,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct MetadataListArgs {
-    pub kind: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -134,21 +97,14 @@ pub struct ExecuteSqlArgs {
 
 impl SqlMcp {
     pub fn new(store: SemanticStore, targets: TargetRegistry, cfg: Config) -> Self {
-        let mode = cfg.mode();
         let default_role = cfg.default_role();
         Self {
             store,
             targets,
             cfg: Arc::new(cfg),
-            mode,
             default_role,
             tool_router: Self::tool_router(),
         }
-    }
-
-    pub fn with_mode(mut self, mode: McpMode) -> Self {
-        self.mode = mode;
-        self
     }
 
     pub fn with_default_role(mut self, role: impl Into<String>) -> Self {
@@ -167,88 +123,7 @@ impl SqlMcp {
         description = "List databases you can query (name, description, engine). Call first when you do not know which database to use; pass the returned name as `database` to the other tools."
     )]
     async fn list_databases(&self) -> Result<CallToolResult, McpError> {
-        let items: Vec<Value> = self
-            .targets
-            .list()
-            .iter()
-            .map(|t| {
-                json!({
-                    "name": t.id,
-                    "description": t.description,
-                    "engine": t.engine,
-                })
-            })
-            .collect();
-        ok_json(json!({ "items": items }))
-    }
-
-    #[tool(description = "Create a semantic registration document (JSON)")]
-    async fn metadata_create(
-        &self,
-        Parameters(args): Parameters<MetadataBodyArgs>,
-    ) -> Result<CallToolResult, McpError> {
-        if !self.mode.allows_metadata_mutation() {
-            return tool_err(AppError::Forbidden(
-                "metadata mutation is disabled (SQL_MCP_MODE=query)".into(),
-            ));
-        }
-        if let Some(kind) = args.kind.as_deref() {
-            if args.body.get("kind").and_then(|v| v.as_str()) != Some(kind) {
-                return tool_err(AppError::Validation(
-                    "optional kind must match body.kind".into(),
-                ));
-            }
-        }
-        map_result(self.store.create(args.body).await)
-    }
-
-    #[tool(description = "Get one semantic document by kind and name")]
-    async fn metadata_get(
-        &self,
-        Parameters(args): Parameters<KindNameArgs>,
-    ) -> Result<CallToolResult, McpError> {
-        map_result(self.store.get(&args.kind, &args.name).await)
-    }
-
-    #[tool(description = "List semantic documents, optionally filtered by kind")]
-    async fn metadata_list(
-        &self,
-        Parameters(args): Parameters<MetadataListArgs>,
-    ) -> Result<CallToolResult, McpError> {
-        let items = match self.store.list(args.kind.as_deref()).await {
-            Ok(v) => v,
-            Err(e) => return tool_err(e),
-        };
-        ok_json(json!({ "items": items }))
-    }
-
-    #[tool(description = "Replace a semantic document (full body replace)")]
-    async fn metadata_update(
-        &self,
-        Parameters(args): Parameters<MetadataUpdateArgs>,
-    ) -> Result<CallToolResult, McpError> {
-        if !self.mode.allows_metadata_mutation() {
-            return tool_err(AppError::Forbidden(
-                "metadata mutation is disabled (SQL_MCP_MODE=query)".into(),
-            ));
-        }
-        map_result(self.store.update(&args.kind, &args.name, args.body).await)
-    }
-
-    #[tool(description = "Delete a semantic document")]
-    async fn metadata_delete(
-        &self,
-        Parameters(args): Parameters<KindNameArgs>,
-    ) -> Result<CallToolResult, McpError> {
-        if !self.mode.allows_metadata_mutation() {
-            return tool_err(AppError::Forbidden(
-                "metadata mutation is disabled (SQL_MCP_MODE=query)".into(),
-            ));
-        }
-        match self.store.delete(&args.kind, &args.name).await {
-            Ok(()) => ok_json(json!({ "deleted": true })),
-            Err(e) => tool_err(e),
-        }
+        ok_json(self.targets.list_json())
     }
 
     #[tool(
@@ -637,13 +512,6 @@ fn ok_json(value: Value) -> Result<CallToolResult, McpError> {
     )]))
 }
 
-fn map_result(result: Result<Value, AppError>) -> Result<CallToolResult, McpError> {
-    match result {
-        Ok(v) => ok_json(v),
-        Err(e) => tool_err(e),
-    }
-}
-
 fn tool_err(err: AppError) -> Result<CallToolResult, McpError> {
     Ok(CallToolResult::error(vec![ContentBlock::text(
         err.to_json().to_string(),
@@ -752,22 +620,9 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use async_trait::async_trait;
-    use schemars::schema_for;
 
-    use crate::config::{Config, McpMode};
+    use crate::config::Config;
     use crate::target::{ColumnInfo, QueryResult, TableInfo, TargetDb, TargetInfo, TargetRegistry};
-
-    #[test]
-    fn metadata_body_schema_is_object_not_boolean() {
-        let create = schema_for!(MetadataBodyArgs);
-        let update = schema_for!(MetadataUpdateArgs);
-        let create_body = &create.as_value()["properties"]["body"];
-        let update_body = &update.as_value()["properties"]["body"];
-        assert_eq!(create_body["type"], "object", "{create_body}");
-        assert_eq!(update_body["type"], "object", "{update_body}");
-        assert!(!create_body.is_boolean(), "Cursor rejects boolean schemas");
-        assert!(!update_body.is_boolean(), "Cursor rejects boolean schemas");
-    }
 
     async fn seed_examples(store: &SemanticStore) {
         for path in [
@@ -1227,19 +1082,7 @@ mod tests {
         });
         let mut targets = TargetRegistry::empty();
         targets.insert_for_test(boom);
-        let mcp = SqlMcp::new(store, targets, cfg)
-            .with_mode(McpMode::Query)
-            .with_default_role("branch");
-
-        // metadata_delete is forbidden in query mode
-        let res = mcp
-            .metadata_delete(Parameters(KindNameArgs {
-                kind: "segment".into(),
-                name: "paid".into(),
-            }))
-            .await
-            .unwrap();
-        assert_eq!(res.is_error, Some(true));
+        let mcp = SqlMcp::new(store, targets, cfg).with_default_role("branch");
 
         // default_role ("branch") is applied when caller_role is None
         let mut params = std::collections::HashMap::new();

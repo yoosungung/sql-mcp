@@ -2,17 +2,27 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { App } from "./App";
-import type { McpApi } from "./api";
+import type { AuthorApi } from "./api";
+import type { Doc } from "./model";
 
-function api(): McpApi {
+function api(docs?: Doc[]): AuthorApi {
+  const list = docs ?? [{ kind: "table", name: "account", target: "bird", description: "Accounts" }];
+  const tables = list.filter((d) => d.kind === "table");
   return {
     listDatabases: async () => [{ name: "bird", engine: "sqlite" }],
-    listTables: async () => [],
-    listDocs: async () => [{ kind: "table", name: "account", target: "bird", description: "Accounts" }],
+    listPhysicalTables: async () => tables.map((t) => ({ schema: "main", name: t.name })),
+    describePhysicalTable: async (_db: string, name: string) => {
+      const table = tables.find((t) => t.name === name);
+      const cols = (table?.columns as { name?: string }[] | undefined) ?? [];
+      const names = cols.map((c) => c.name).filter((n): n is string => Boolean(n));
+      return { columns: (names.length ? names : ["id"]).map((n) => ({ name: n })) };
+    },
+    samplePhysicalColumn: async () => ({ values: [] }),
+    listDocs: async () => list,
     create: async () => {},
     update: async () => {},
     remove: async () => {},
-  } as unknown as McpApi;
+  } as unknown as AuthorApi;
 }
 
 describe("production shell", () => {
@@ -63,14 +73,14 @@ describe("production shell", () => {
         api={
           {
             ...api(),
-            listDocs: async () => [
+            ...api([
               { kind: "table", name: "account", target: "bird", columns },
               { kind: "table", name: "order", target: "bird", columns },
-            ],
+            ]),
             create: async (doc: { combine?: string; joins?: unknown; sources?: unknown }) => {
               created.push(doc);
             },
-          } as unknown as McpApi
+          } as unknown as AuthorApi
         }
       />,
     );
@@ -98,11 +108,11 @@ describe("production shell", () => {
         api={
           {
             ...api(),
-            listDocs: async () => [
+            ...api([
               { kind: "table", name: "account", target: "bird", columns },
               { kind: "table", name: "order", target: "bird", columns },
-            ],
-          } as unknown as McpApi
+            ]),
+          } as unknown as AuthorApi
         }
       />,
     );
@@ -126,16 +136,16 @@ describe("production shell", () => {
         api={
           {
             ...api(),
-            listDocs: async () => [
+            ...api([
               { kind: "table", name: "account", target: "bird" },
               { kind: "view", name: "accounts", target: "bird", combine: "select", description: "Accounts", sources: [], columns: [] },
               { kind: "cube", name: "accounts_cube", target: "bird", view: "accounts" },
               { kind: "metric", name: "rows", target: "bird", cube: "accounts_cube" },
-            ],
+            ]),
             remove: async (kind: string, name: string) => {
               removed.push(`${kind}/${name}`);
             },
-          } as unknown as McpApi
+          } as unknown as AuthorApi
         }
       />,
     );

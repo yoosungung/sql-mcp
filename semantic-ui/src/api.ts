@@ -1,80 +1,84 @@
-import { toolPayload, type Doc } from "./model";
+import { type Doc } from "./model";
 
-type Rpc = {
-  error?: { message?: string };
-  result?: { isError?: boolean; content?: { text?: string }[] };
-};
+export type Database = { name: string; description?: string; engine?: string };
+export type PhysicalTable = { schema: string; name: string };
+export type PhysicalColumn = { name: string; data_type?: string; nullable?: boolean };
 
-export class McpApi {
-  private id = 1;
-  private ready: Promise<void> | null = null;
+function apiError(data: { message?: string; code?: string }, text: string, status: number): Error {
+  return new Error(data.message || data.code || text || `HTTP ${status}`);
+}
 
-  constructor(private readonly url = "/mcp") {}
+export class AuthorApi {
+  constructor(private readonly base = "/api") {}
 
-  private async post(method: string, params?: unknown, note = false): Promise<Rpc> {
-    const body: Record<string, unknown> = { jsonrpc: "2.0", method };
-    if (!note) body.id = this.id++;
-    if (params !== undefined) body.params = params;
-    const res = await fetch(this.url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-      },
-      body: JSON.stringify(body),
+  private async json(path: string, init?: RequestInit): Promise<unknown> {
+    const res = await fetch(`${this.base}${path}`, {
+      ...init,
+      headers: { "Content-Type": "application/json", ...(init?.headers as Record<string, string>) },
     });
-    if (note) return {};
     const text = await res.text();
-    if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
-    return JSON.parse(text) as Rpc;
+    const data = text ? (JSON.parse(text) as { message?: string; code?: string }) : {};
+    if (!res.ok) throw apiError(data, text, res.status);
+    return data;
   }
 
-  async init(): Promise<void> {
-    if (!this.ready) {
-      this.ready = (async () => {
-        await this.post("initialize", {
-          protocolVersion: "2026-07-28",
-          capabilities: {},
-          clientInfo: { name: "semantic-ui", version: "0.1.0" },
-        });
-        await this.post("notifications/initialized", undefined, true);
-      })();
-    }
-    await this.ready;
-  }
-
-  private async call(name: string, args: Record<string, unknown>): Promise<unknown> {
-    await this.init();
-    const rpc = await this.post("tools/call", { name, arguments: args });
-    return toolPayload(rpc);
-  }
-
-  async listDatabases(): Promise<{ name: string; description?: string; engine?: string }[]> {
-    const data = (await this.call("list_databases", {})) as { items?: { name: string }[] };
+  async listDatabases(): Promise<Database[]> {
+    const data = (await this.json("/databases")) as { items?: Database[] };
     return data.items ?? [];
   }
 
-  async listTables(database: string): Promise<{ database: string; name: string; description: string }[]> {
-    const data = (await this.call("list_tables", { database })) as {
-      items?: { database: string; name: string; description: string }[];
+  async listPhysicalTables(database: string): Promise<PhysicalTable[]> {
+    const data = (await this.json(`/databases/${encodeURIComponent(database)}/tables`)) as {
+      items?: PhysicalTable[];
     };
     return data.items ?? [];
   }
 
+  async describePhysicalTable(
+    database: string,
+    table: string,
+    schema?: string,
+  ): Promise<{ columns: PhysicalColumn[] }> {
+    const q = schema ? `?schema=${encodeURIComponent(schema)}` : "";
+    return (await this.json(
+      `/databases/${encodeURIComponent(database)}/tables/${encodeURIComponent(table)}${q}`,
+    )) as { columns: PhysicalColumn[] };
+  }
+
+  async samplePhysicalColumn(
+    database: string,
+    table: string,
+    column: string,
+    schema?: string,
+  ): Promise<{ values: unknown[] }> {
+    const params = new URLSearchParams();
+    if (schema) params.set("schema", schema);
+    const q = params.toString() ? `?${params}` : "";
+    return (await this.json(
+      `/databases/${encodeURIComponent(database)}/tables/${encodeURIComponent(table)}/columns/${encodeURIComponent(column)}/sample${q}`,
+    )) as { values: unknown[] };
+  }
+
   async listDocs(kind?: string): Promise<Doc[]> {
-    const data = (await this.call("metadata_list", kind ? { kind } : {})) as { items?: Doc[] };
+    const q = kind ? `?kind=${encodeURIComponent(kind)}` : "";
+    const data = (await this.json(`/meta${q}`)) as { items?: Doc[] };
     return data.items ?? [];
   }
 
   async create(body: Doc): Promise<void> {
-    await this.call("metadata_create", { body });
+    await this.json("/meta", { method: "POST", body: JSON.stringify(body) });
   }
 
   async update(kind: string, name: string, body: Doc): Promise<void> {
-    await this.call("metadata_update", { kind, name, body });
+    await this.json(`/meta/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
   }
 
   async remove(kind: string, name: string): Promise<void> {
-    await this.call("metadata_delete", { kind, name });
+    await this.json(`/meta/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    });
   }
 }

@@ -1,3 +1,4 @@
+pub mod api;
 pub mod ast_rewrite;
 pub mod ast_select;
 pub mod cli;
@@ -22,7 +23,7 @@ pub mod stdio;
 pub mod target;
 pub mod tools;
 
-pub use config::{Config, McpMode};
+pub use config::Config;
 pub use semantic::SemanticStore;
 pub use target::TargetRegistry;
 pub use tools::SqlMcp;

@@ -10,11 +10,11 @@
 
 ## libSQL 카탈로그
 
-`libsql/catalog.sql`은 MCP 메타 CRUD가 쓰는 시맨틱 DB다. 타깃 DW 물리 테이블이 아니다. `SemanticStore::open`이 매번 적용하므로 DDL은 `IF NOT EXISTS`로 멱등하다.
+`libsql/catalog.sql`은 HTTP `/api/meta`가 쓰는 시맨틱 DB다. 타깃 DW 물리 테이블이 아니다. `SemanticStore::open`이 매번 적용하므로 DDL은 `IF NOT EXISTS`로 멱등하다.
 
 **저장 계층은 타입별 `meta_*` 테이블**이다(`meta_tables`, `meta_views`, `meta_cubes`, `meta_metrics`, `meta_segments` 및 자식 테이블). `document(kind,name,body)` blob은 쓰지 않는다. `meta_tables` / `meta_views` / `meta_cubes`에 MCP 연결 id **`target`** 컬럼이 있다. 연결 검증 시 view·cube와 leaf table의 `target`이 일치해야 한다.
 
-`metadata_*` **입출력은 JSON**이다. create/update 시 schema·연결 검증 후 단일 Write 트랜잭션으로 타입별 행에 분해하고, get/list 시 JSON으로 재조립한다.
+`/api/meta` **입출력은 JSON**이다. create/update 시 schema·연결 검증 후 단일 Write 트랜잭션으로 타입별 행에 분해하고, get/list 시 JSON으로 재조립한다.
 
 ## 검색 인덱스 (D12)
 

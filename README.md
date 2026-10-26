@@ -88,7 +88,7 @@ docker run --rm -p 8080:8080 \
   <release-image>
 ```
 
-HTTP MCP: `POST http://127.0.0.1:8080/mcp` · 헬스: `GET /health`.
+HTTP MCP: `POST http://127.0.0.1:8080/mcp` · 작성 API: `/api` · 헬스: `GET /health`.
 
 ## 2. 에이전트에 연결
 
@@ -106,8 +106,7 @@ HTTP MCP: `POST http://127.0.0.1:8080/mcp` · 헬스: `GET /health`.
       "env": {
         "SQL_MCP_SEMANTIC_PATH": "/Users/YOU/.sql-mcp/semantic.db",
         "SQL_MCP_CONFIG": "/Users/YOU/bin/config.toml",
-        "SQL_MCP_TARGET_DW_URL": "postgres://USER:PASS@HOST:5432/DB",
-        "SQL_MCP_MODE": "auithor"
+        "SQL_MCP_TARGET_DW_URL": "postgres://USER:PASS@HOST:5432/DB"
       }
     }
   }
@@ -131,7 +130,7 @@ HTTP MCP: `POST http://127.0.0.1:8080/mcp` · 헬스: `GET /health`.
 
 ## 3. 메타 구성
 
-물리 DW 카탈로그는 에이전트(또는 기존 DW 클라이언트)가 **MCP 밖에서** 읽고, 아래 순서로 JSON을 만든 뒤 MCP `metadata_`*로 등록합니다.
+물리 DW 카탈로그는 HTTP `GET /api/databases/{id}/tables`로 읽고, 아래 순서로 JSON을 만든 뒤 `POST /api/meta`로 등록합니다.
 
 ```text
 table → view → cube → metric | segment

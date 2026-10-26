@@ -14,7 +14,7 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
 | `ARCHITECTURE.md` | **계약사항(불변 규칙)** + 컴포넌트 *간* 인터페이스 형태(스키마·레이아웃·이벤트) | 루트 |
 | `README.md` | **사용자** 온보딩: Cursor/Claude 등에 설치 · 메타 구성 · DW 질의 (기여자 온보딩 아님) | 루트 |
 | `ROADMAP.md` | 수행 계획(마일스톤·순서·미결정 항목) | 루트 |
-| `<comp>/DESIGN.md` | 컴포넌트 *내부* 설계 + `## Commands` (빌드/실행/테스트) | `server/` (M1+), `semantic/`, `client/`. Frontend/`api/`는 범위 취소 |
+| `<comp>/DESIGN.md` | 컴포넌트 *내부* 설계 + `## Commands` (빌드/실행/테스트) | `server/` (M1+), `semantic/`, `client/`, `semantic-ui/`. 조회 Admin API는 취소. 작성 HTTP `/api`는 D30 |
 | `deploy/SETUP.md` | 배포 런북 | `deploy/` |
 | `.github/workflows/ci.yml` | CI: PR/push `cargo test -p sql-mcp --locked` | `.github/workflows/` |
 | `.github/workflows/cd.yml` | CD: master CI 성공 후 linux/windows/macos release → GitHub Release `current` | `.github/workflows/` |
@@ -23,9 +23,12 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
 | `target_db/<db>/semantic_plan.yaml` | 허브(팩트) 정본 — `generate_meta`가 이 목록만 view+cube로 만듦 (`{db}_all` 없음). git 추적 | `target_db/` |
 | `client/DESIGN.md` · `client/README.md` | LangChain v1 `create_agent` + sql-mcp 예제 (BIRD 질문) | `client/` |
 | `client/docs/eval_report.md` · `client/docs/eval.md` | BIRD eval **요약** / **문항별**(Gold SQL·rows vs Agent SQL·rows) | `client/docs/` |
+| `client/docs/fail_plan.md` | D29 EX FAIL 170건 **문항별** 개선 계획(패치 묶음 + qid) | `client/docs/` |
 | `server/spec.md` | 시맨틱 SQL 6단계 컴파일·타입별 `meta_*` 상세 | `server/` |
 | `skills/` | 코딩 에이전트용 Agent Skills 정본: `semantic-table-view` → `semantic-cube-metric-segment` → (`semantic-from-qa` \| `semantic-from-eval`) → `semantic-register`. MCP Resource(`https://sql-mcp.local/skills/…`). Cursor는 `.cursor/skills` → `../skills` | `skills/` |
 | `client/docs/change_semantic.md` | BIRD eval 기반 시맨틱 메타 수정 계획(결정됨; `generate_meta`+`semantic_plan.yaml`+`enrich_meta_from_qa`) | `client/docs/` |
+| `client/docs/semantic_layer_ui.svg` | 시맨틱 작성 UI 레이아웃 초안(타깃 선택 · Physical/Cubes · 보기 전용 다이어그램 · meta JSON 편집) | `client/docs/` |
+| `semantic-ui/DESIGN.md` | 작성 화면(Vite React). HTTP `/api` · 정적 `GET /ui` | `semantic-ui/` |
 
 #### 규칙:
 
@@ -46,4 +49,4 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
  
 ## 3. Status
  
-M0–M5 완료 + **D26:** metric/segment는 cube 컬럼이 아님(`describe_table.examples`만) · `execute_sql`은 dim/fact ad-hoc · 읽기 ANSI SELECT(서브쿼리·CTE·윈도우·집합연산) · FROM `cube.physical`/`AS alias`는 첫 식별자를 큐브로 라우팅. **D27:** 리터럴-only 프로젝션 → existence dim rewrite · `SELECT *` 거절. **D28:** dim/fact `expression`=스칼라 · fact `additive: false`는 SUM/AVG/COUNT(col) 거절. **D29:** `viewJoin.relationship` + cube `grain`=허브 pk. 팬아웃·캐즘 거절은 `SQL_MCP_GRAIN_GUARD`(기본 끔, 켠 DB 없음). 타입별 `meta_*` · 요약뷰/join·union pruning · 전 계층 RBAC · transport=HTTP+stdio. table/view/cube `target` · DW 표면 `list_databases`/`list_tables`/`describe_table`=cube(D20) · `search_columns`는 dim/fact만. 타깃: Postgres·MySQL·SQLite·Oracle. **D21** DialectProfile · **D22** physical_ident · **D23** Grouped/Ungrouped · **D24** metric `group_by`=기본 grain(allowlist 폐기) · **D25** 표준 날짜 편의(`CURRENT_DATE`/`NOW`/`DATEDIFF`/`EXTRACT`). 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 파이프라인 [server/spec.md](server/spec.md).
+M0–M5 완료 + **D30:** 메타 CRUD·물리 카탈로그는 HTTP `/api`, MCP는 조회만, `SQL_MCP_MODE` 없음. **D26:** metric/segment는 cube 컬럼이 아님(`describe_table.examples`만) · `execute_sql`은 dim/fact ad-hoc · 읽기 ANSI SELECT(서브쿼리·CTE·윈도우·집합연산) · FROM `cube.physical`/`AS alias`는 첫 식별자를 큐브로 라우팅. **D27:** 리터럴-only 프로젝션 → existence dim rewrite · `SELECT *` 거절. **D28:** dim/fact `expression`=스칼라 · fact `additive: false`는 SUM/AVG/COUNT(col) 거절. **D29:** `viewJoin.relationship` + cube `grain`=허브 pk. 팬아웃·캐즘 거절은 `SQL_MCP_GRAIN_GUARD`(기본 끔, 켠 DB 없음). 타입별 `meta_*` · 요약뷰/join·union pruning · 전 계층 RBAC · transport=HTTP+stdio. table/view/cube `target` · DW 표면 `list_databases`/`list_tables`/`describe_table`=cube(D20) · `search_columns`는 dim/fact만. 타깃: Postgres·MySQL·SQLite·Oracle. **D21** DialectProfile · **D22** physical_ident · **D23** Grouped/Ungrouped · **D24** metric `group_by`=기본 grain(allowlist 폐기) · **D25** 표준 날짜 편의(`CURRENT_DATE`/`NOW`/`DATEDIFF`/`EXTRACT`). 계약 [ARCHITECTURE.md](ARCHITECTURE.md), 계획 [ROADMAP.md](ROADMAP.md), 파이프라인 [server/spec.md](server/spec.md).

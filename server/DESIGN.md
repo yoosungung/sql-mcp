@@ -7,7 +7,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 - **일반 HTTP**(기본): `rmcp` `StreamableHttpService`를 **stateless + JSON response**로 기동. 세션 ID·장수 SSE는 쓰지 않는다.
 - **stdio**(로컬): `--stdio` 또는 `SQL_MCP_TRANSPORT=stdio` → `rmcp` `stdio()`. 로그는 stderr. 동일 `SqlMcp` 핸들러.
 - **CLI UX**: `-h`/`--help`는 stdout 도움말 후 exit 0(설정·DB를 열지 않음). 알 수 없는 옵션은 stderr+도움말 후 exit 2. 기동 실패(설정 경로·semantic DB·listen bind)는 `sql-mcp: …` + 경로/env 힌트.
-- **시맨틱**: 프로세스 내 `libsql` 0.9(`core`) · 타입별 `meta_*` + `column_index`/FTS5 · `metadata_*` JSON
+- **시맨틱**: 프로세스 내 `libsql` 0.9(`core`) · 타입별 `meta_*` + `column_index`/FTS5 · HTTP `/api/meta` JSON
 - **컴파일**: `pipeline` (시맨틱 SQL → 물리 SELECT). 상세 [spec.md](spec.md)
 - **방언(D21)**: 컴파일은 엔진 중립. 물리 emit·행상한·(선택) bind/날짜 rewrite만 `DialectProfile`(`TargetConfig.engine`)
 - **타깃**: 엔진 **Postgres**·**MySQL**(`sqlx` 0.9) · **SQLite**(`libsql` 로컬) · **Oracle**(`oracledb` thin, Instant Client 없음) · SELECT only · ADBC/JDBC/ODBC 비채택
@@ -42,7 +42,8 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `target` | 타깃 레지스트리 · Postgres·MySQL(`sqlx`) / SQLite(`libsql`) / Oracle(`oracledb`) |
 | `tools` | MCP 툴 표면 · Resource(schema + `skills/`) |
 | `skill_resources` | `skills/` embed · Resource URI/MIME · list/read |
-| `http` | axum 리스너 `/mcp` (일반 HTTP) |
+| `api` | 작성 HTTP `/api` (메타 CRUD · 물리 tables/columns/sample · `/api/databases`) |
+| `http` | axum `/health` · `/api` · `/mcp` · `/ui` (`semantic-ui/dist` 정적) |
 | `stdio` | 로컬 stdin/stdout MCP (`--stdio`) |
 | `cli` | 바이너리 argv: `-h`/`--help` · 알 수 없는 플래그 · 기동 실패 시 경로/힌트(stderr) |
 
@@ -50,7 +51,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 
 1. `document.schema.json`으로 문서 하나 검증
 2. 반영 후 등록 집합 연결 검증(실패 시 저장소 불변)
-3. `metadata_update`는 **전체 replace**(D15)
+3. `PUT /api/meta/{kind}/{name}`은 **전체 replace**(D15)
 4. CRUD 시 변경된 텍스트만 증분 임베딩한 뒤 **단일 Write 트랜잭션**으로 `meta_*`와 `column_index`/`column_index_fts`를 함께 갱신하고, 인메모리 카탈로그 캐시를 갱신
 
 ## DialectProfile (D21)
@@ -85,7 +86,6 @@ Cube.js `*Query` 어댑터와 같은 역할: **생성기 쪽 방언**, 자유 SQ
 | `SQL_MCP_LISTEN` | 바인드 주소(기본 `127.0.0.1:8080`, HTTP 모드) |
 | `SQL_MCP_TRANSPORT` | `stdio`면 stdio 모드(`--stdio`와 동일). 미설정·기타는 HTTP |
 | `SQL_MCP_MAX_ROWS` / `SQL_MCP_SAMPLE_LIMIT` / `SQL_MCP_TIMEOUT_MS` | 상한 및 쿼리 타임아웃 |
-| `SQL_MCP_MODE` | `query`(기본)=DW 질의 · 메타 변경 금지 · `author`=메타 CRUD 허용 |
 | `SQL_MCP_GRAIN_GUARD` | 쉼표로 구분한 cube `target`. 그 타깃만 D29 팬아웃·캐즘 거절. 미설정이면 꺼짐 |
 | `SQL_MCP_DEFAULT_ROLE` | `caller_role` 미지정 시 기본 적용할 역할 |
 | `SQL_MCP_EMBEDDING_URL` / `SQL_MCP_EMBEDDING_API_KEY` | 둘 다 있으면 임베딩·vector/hybrid. 없으면 keyword(BM25)만(D14) |
@@ -102,7 +102,7 @@ cargo build -p sql-mcp --release
 export SQL_MCP_SEMANTIC_PATH=./data/semantic.db
 export SQL_MCP_CONFIG=./server/examples/config.example.toml
 cargo run -p sql-mcp
-# GET /health · POST /mcp
+# GET /health · /api · POST /mcp · GET /ui/  (semantic-ui/dist, `cd semantic-ui && npm run build`)
 cargo run -p sql-mcp -- --help
 
 # 로컬 stdio (Cursor mcp.json 예: examples/mcp.stdio.example.json)

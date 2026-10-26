@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""target_db/*/meta/*.json → sql-mcp metadata_create/update (HTTP).
+"""target_db/*/meta/*.json → sql-mcp HTTP /api/meta.
 
-필요: SQL_MCP_MODE=author 인 sql-mcp HTTP.
 view update 시 cube가 view를 FK로 참조하므로, 의존 metric/cube를 잠시 지웠다가
 view 교체 후 다시 넣는다.
 
 예:
-  SQL_MCP_URL=http://127.0.0.1:8090/mcp python3 target_db/register_meta.py
+  SQL_MCP_URL=http://127.0.0.1:8090 python3 target_db/register_meta.py
   python3 target_db/register_meta.py --db superhero --prune
 """
 
@@ -90,52 +89,36 @@ def stale_docs_to_prune(catalog: list[dict], local: list[dict]) -> list[dict]:
     return stale
 
 
-def mcp_call(url: str, name: str, arguments: dict) -> dict:
-    payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/call",
-        "params": {"name": name, "arguments": arguments},
-    }
+def api_base(url: str) -> str:
+    u = url.rstrip("/")
+    if u.endswith("/mcp"):
+        u = u[: -len("/mcp")]
+    return u
+
+
+def api_call(url: str, method: str, path: str, body: dict | None = None) -> dict:
     req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode(),
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        },
-        method="POST",
+        api_base(url) + path,
+        data=None if body is None else json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"},
+        method=method,
     )
-    with urllib.request.urlopen(req, timeout=180) as resp:
-        raw = resp.read().decode()
-    data = None
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith("data:"):
-            line = line[5:].strip()
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            raw = resp.read().decode()
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode() if e.fp else str(e)
         try:
-            data = json.loads(line)
-            break
+            data = json.loads(raw) if raw else {}
         except json.JSONDecodeError:
-            continue
-    if data is None:
-        data = json.loads(raw)
-    if "error" in data:
-        raise RuntimeError(data["error"])
-    result = data.get("result") or {}
-    if result.get("isError"):
-        text = ""
-        for c in result.get("content") or []:
-            if isinstance(c, dict) and c.get("type") == "text":
-                text = c.get("text") or text
-        raise RuntimeError(text or str(result))
-    text = ""
-    for c in result.get("content") or []:
-        if isinstance(c, dict) and c.get("type") == "text":
-            text = c.get("text") or ""
-    return json.loads(text) if text else {}
+            data = {}
+        raise RuntimeError(data.get("message") or data.get("code") or raw or str(e)) from e
+    if not raw:
+        return {}
+    data = json.loads(raw)
+    if isinstance(data, dict) and data.get("code") and data.get("message"):
+        raise RuntimeError(data["message"])
+    return data if isinstance(data, dict) else {}
 
 
 def load_docs(db_filter: str | None) -> list[dict]:
@@ -151,15 +134,15 @@ def load_docs(db_filter: str | None) -> list[dict]:
 
 
 def list_all(url: str) -> list[dict]:
-    return list(mcp_call(url, "metadata_list", {}).get("items") or [])
+    return list(api_call(url, "GET", "/api/meta").get("items") or [])
 
 
 def upsert(url: str, doc: dict, keys: set[tuple[str, str]]) -> str:
     kind, name = doc["kind"], doc["name"]
     if (kind, name) in keys:
-        mcp_call(url, "metadata_update", {"kind": kind, "name": name, "body": doc})
+        api_call(url, "PUT", f"/api/meta/{kind}/{name}", doc)
         return "update"
-    mcp_call(url, "metadata_create", {"body": doc})
+    api_call(url, "POST", "/api/meta", doc)
     keys.add((kind, name))
     return "create"
 
@@ -167,7 +150,7 @@ def upsert(url: str, doc: dict, keys: set[tuple[str, str]]) -> str:
 def delete_doc(url: str, kind: str, name: str, keys: set[tuple[str, str]]) -> None:
     if (kind, name) not in keys:
         return
-    mcp_call(url, "metadata_delete", {"kind": kind, "name": name})
+    api_call(url, "DELETE", f"/api/meta/{kind}/{name}")
     keys.discard((kind, name))
     print(f"delete {kind}/{name}")
 
@@ -175,7 +158,7 @@ def delete_doc(url: str, kind: str, name: str, keys: set[tuple[str, str]]) -> No
 def prepare_cube_replace(
     url: str, cube_name: str, all_items: list[dict], keys: set[tuple[str, str]]
 ) -> None:
-    """Detach metrics/segments so metadata_update can replace the cube row."""
+    """Detach metrics/segments so PUT /api/meta can replace the cube row."""
     metrics = [
         d
         for d in all_items
@@ -225,7 +208,7 @@ def main() -> int:
         help="delete catalog segment/metric/cube/view on the same target that are not in local meta",
     )
     args = p.parse_args()
-    url = args.url or os.environ.get("SQL_MCP_URL") or "http://127.0.0.1:8090/mcp"
+    url = args.url or os.environ.get("SQL_MCP_URL") or "http://127.0.0.1:8090"
 
     docs = load_docs(args.db)
     if not docs:
@@ -236,7 +219,7 @@ def main() -> int:
         items = list_all(url)
     except Exception as e:
         print(f"cannot reach {url}: {e}", file=sys.stderr)
-        print("hint: start sql-mcp with SQL_MCP_MODE=author", file=sys.stderr)
+        print("hint: start sql-mcp HTTP and POST /api/meta", file=sys.stderr)
         return 2
 
     keys = {(i["kind"], i["name"]) for i in items if i.get("kind") and i.get("name")}
@@ -312,15 +295,11 @@ def main() -> int:
                 for s in segments:
                     recreate.append(by_kind_name.get(("segment", s["name"]), s))
                 deferred_after_view.extend(recreate)
-                mcp_call(
-                    url,
-                    "metadata_update",
-                    {"kind": "view", "name": name, "body": doc},
-                )
+                api_call(url, "PUT", f"/api/meta/view/{name}", doc)
                 updated += 1
                 print(f"update view/{name}")
             else:
-                mcp_call(url, "metadata_create", {"body": doc})
+                api_call(url, "POST", "/api/meta", doc)
                 keys.add(("view", name))
                 created += 1
                 print(f"create view/{name}")

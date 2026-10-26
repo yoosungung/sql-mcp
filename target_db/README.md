@@ -35,7 +35,7 @@ python3 ./target_db/enrich_meta_from_qa.py
 python3 ./target_db/generate_semantic_map.py
 # → target_db/<db_id>/meta/semantic-map.md  (diagram-first ERD + OLAP Mermaid)
 python3 ./target_db/generate_semantic_map.py financial   # 단일 DB
-python3 ./target_db/register_meta.py --db formula_1 --prune --url http://127.0.0.1:8090/mcp
+python3 ./target_db/register_meta.py --db formula_1 --prune --url http://127.0.0.1:8090
 python3 ./target_db/hub_grain.py --url http://127.0.0.1:8090/mcp
 ```
 
@@ -47,7 +47,7 @@ python3 ./target_db/hub_grain.py --url http://127.0.0.1:8090/mcp
 - **domain metric/segment** (`enrich_meta_from_qa.py`): evidence의 이름 붙은 공식·코호트만 승격하고, dim/fact `description`·expression dim/fact를 빈 칸에만 채운다(`semantic-from-qa`). 동명(`position`/`points`/`wins`)과 혼동 쌍(`GPT`/`GLU`, `colour`/`skin_colour`, `circuitRef`, `EdOpsCode`, `Diagnosis`, `CPK`)은 비어 있지 않아도 덮어쓴다. 행 비율은 `additive: false` fact, 그룹 `SUM/SUM`은 metric(다른 이름, D28). 허브 큐브 `description`은 `Copy: SELECT … FROM {cube}`(JOIN ON/GROUP BY 레시피 없음). tox atom/bond·club expense·CA SAT/FRPM·throm lab/exam은 형제 큐브 JOIN 금지(P1 한 큐브). 허브가 여러 개면 metric/segment마다 `cube` 필수. `generate_meta`가 meta를 비우므로 항상 그 다음에 실행한다.
 - 동일 테이블 쌍 다중 FK는 PK 타깃·컬럼명 일치·짧은 키 순으로 대표 간선을 선택하되, 동일 부모를 2~3회 참조하는 역할(Role-Playing) FK는 **클론 table 없이** view `sources` `{ kind, table, alias? }`로 이중 조인한다(예: `Team` + `alias: away_team`). 소규모 룩업(≤4 cols)은 최대 3역할, 2역할은 더 큰 차원도 허용. 동일 부모 FK가 4개 초과(라인업 슬롯)는 조인 제외·ID만 유지하며, `Player`+`Player_Attributes`는 별도 `player` view/cube로 분리한다.
 - BIRD처럼 물리 컬럼에 공백·기호가 있으면 table/`mappings.column`에는 **물리명 그대로**(D22 `physical_ident`). view 컬럼 `name`은 시맨틱 패턴으로 sanitize하고, cube dim/fact는 그 별칭을 쓴다.
-- JSON 생성만 하면 MCP에는 안 들어간다. **등록은 `.cursor/mcp.json`의 sql-mcp**(stdio · `SQL_MCP_MODE=author` · 동일 `./data/semantic.db`)로 `metadata_*` / `semantic-register` 스킬을 쓰면 된다. 같은 시맨틱 DB를 HTTP `query` 디버그 세션과 **동시에** 열지 말 것(libSQL 파일 락). `metadata_*` 성공 시 해당 프로세스 캐시는 즉시 갱신된다. HTTP author: `python3 ./target_db/register_meta.py --db <db> --prune` — 같은 target의 옛 cube/view/metric/segment를 지운 뒤 허브 JSON을 넣는다. 그레인 게이트: `python3 ./target_db/hub_grain.py --url …` (`SELECT 1 FROM cube` dry_run, 컴파일 테이블 ⊆ yaml 허브).
+- JSON 생성만 하면 서버에는 안 들어간다. **등록은 HTTP `/api/meta`** (`python3 ./target_db/register_meta.py --db <db> --prune`) 또는 `semantic-register` 스킬. 같은 시맨틱 DB를 HTTP와 stdio가 **동시에** 열지 말 것(libSQL 파일 락). CRUD 성공 시 해당 프로세스 캐시는 즉시 갱신된다. 그레인 게이트: `python3 ./target_db/hub_grain.py --url …` (`SELECT 1 FROM cube` dry_run, 컴파일 테이블 ⊆ yaml 허브).
 
 ## Run with sql-mcp
 
