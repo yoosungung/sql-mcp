@@ -1,33 +1,34 @@
-import { Button, Flex, Heading, IconButton, Table, Text, TextField } from "@radix-ui/themes";
-import { mappingFor, setMapping, type Doc } from "../model";
-import type { Pick, Tab } from "./types";
+import { Badge, Button, Flex, Heading, IconButton, Text } from "@radix-ui/themes";
+import type { Doc } from "../model";
+import { columnMeta } from "./docs";
+import type { Selection, Tab } from "./types";
 
 export function Inspector({
   open,
   onToggle,
   tab,
-  mapping,
-  onSaveMapping,
-  source,
-  selectedView,
+  view,
+  tables,
   cube,
   metrics,
   segments,
   selected,
   onSelect,
+  onOpenViewMapping,
+  onOpenCubeMapping,
 }: {
   open: boolean;
   onToggle: () => void;
   tab: Tab;
-  mapping?: Doc;
-  onSaveMapping: (doc: Doc) => void;
-  source?: string;
-  selectedView?: Doc;
+  view?: Doc;
+  tables: Doc[];
   cube?: Doc;
   metrics: Doc[];
   segments: Doc[];
-  selected: Pick;
-  onSelect: (pick: Pick) => void;
+  selected: Selection;
+  onSelect: (pick: Selection) => void;
+  onOpenViewMapping: () => void;
+  onOpenCubeMapping: () => void;
 }) {
   return (
     <aside className={open ? "inspector" : "inspector is-collapsed"} aria-label="Inspector">
@@ -45,18 +46,22 @@ export function Inspector({
       </div>
       {open && (
         <>
-          {tab === "physical" && mapping ? (
-            <JoinMapping view={mapping} source={source} onSave={onSaveMapping} />
-          ) : tab === "physical" ? (
-            <Text size="2" color="gray">Check tables to map columns.</Text>
+          {tab === "tables" ? (
+            <ColumnsPanel
+              view={view}
+              tables={tables}
+              selected={selected}
+              onSelect={onSelect}
+              onOpenMapping={onOpenViewMapping}
+            />
           ) : (
-            <CubeTree
-              view={selectedView}
+            <MembersPanel
               cube={cube}
               metrics={metrics}
               segments={segments}
               selected={selected}
               onSelect={onSelect}
+              onOpenMapping={onOpenCubeMapping}
             />
           )}
         </>
@@ -65,83 +70,78 @@ export function Inspector({
   );
 }
 
-function JoinMapping({
+function ColumnsPanel({
   view,
-  source,
-  onSave,
+  tables,
+  selected,
+  onSelect,
+  onOpenMapping,
 }: {
-  view: Doc;
-  source?: string;
-  onSave: (doc: Doc) => void;
+  view?: Doc;
+  tables: Doc[];
+  selected: Selection;
+  onSelect: (pick: Selection) => void;
+  onOpenMapping: () => void;
 }) {
-  const src = source || view.sources?.find((s) => s.kind === "table")?.table || "";
+  if (!view) return <Text size="2" color="gray">Open a view to list columns.</Text>;
   return (
     <Flex direction="column" gap="2">
-      <Heading size="3" weight="medium">Column mapping</Heading>
-      <Text size="1" color="gray">{view.name} · {src}</Text>
-      <Table.Root size="1" variant="surface">
-        <Table.Header>
-          <Table.Row>
-            <Table.ColumnHeaderCell>View column</Table.ColumnHeaderCell>
-            <Table.ColumnHeaderCell>Physical column</Table.ColumnHeaderCell>
-          </Table.Row>
-        </Table.Header>
-        <Table.Body>
-          {(view.columns || []).map((col) => (
-            <Table.Row key={col.name}>
-              <Table.RowHeaderCell>{col.name}</Table.RowHeaderCell>
-              <Table.Cell>
-                <TextField.Root
-                  size="1"
-                  aria-label={col.name}
-                  defaultValue={mappingFor(col, src)}
-                  onBlur={(e) => {
-                    if (e.target.value !== mappingFor(col, src)) {
-                      onSave(setMapping(view, col.name, src, e.target.value));
-                    }
-                  }}
-                />
-              </Table.Cell>
-            </Table.Row>
-          ))}
-        </Table.Body>
-      </Table.Root>
+      <Flex align="center" justify="between" gap="2">
+        <Heading size="3" weight="medium">Columns</Heading>
+        <Button size="1" variant="soft" onClick={onOpenMapping}>Map columns</Button>
+      </Flex>
+      <Text size="1" color="gray">{view.name}</Text>
+      {(view.columns || []).map((col) => {
+        const meta = columnMeta(view, col.name, tables);
+        const on = selected?.kind === "column" && selected.name === col.name;
+        return (
+          <button
+            key={col.name}
+            type="button"
+            className={on ? "col-row on" : "col-row"}
+            onClick={() => onSelect({ kind: "column", name: col.name })}
+          >
+            <Badge size="1" variant={meta.pk ? "solid" : "soft"} color={meta.pk ? "indigo" : "gray"}>
+              {meta.pk ? "PK" : "—"}
+            </Badge>
+            <Text size="1" color="gray">{meta.type}</Text>
+            <Text size="2" weight="medium">{col.name}</Text>
+            <Text size="1" color="gray">{meta.description || ""}</Text>
+          </button>
+        );
+      })}
+      {!(view.columns || []).length && <Text size="2" color="gray">No columns yet. Use Map columns.</Text>}
     </Flex>
   );
 }
 
-function CubeTree({
-  view,
+function MembersPanel({
   cube,
   metrics,
   segments,
   selected,
   onSelect,
+  onOpenMapping,
 }: {
-  view?: Doc;
   cube?: Doc;
   metrics: Doc[];
   segments: Doc[];
-  selected: Pick;
-  onSelect: (pick: Pick) => void;
+  selected: Selection;
+  onSelect: (pick: Selection) => void;
+  onOpenMapping: () => void;
 }) {
-  if (!view) return <Text size="2" color="gray">Select a view.</Text>;
+  if (!cube) return <Text size="2" color="gray">Select or create a cube.</Text>;
   return (
     <Flex direction="column" gap="2" className="tree">
-      <Heading size="3" weight="medium">Cube</Heading>
-      <Text size="2">view {view.name}</Text>
-      {cube ? (
-        <>
-          <Text size="2">cube {cube.name}</Text>
-          <Group title="Dimensions" items={cube.dimensions || []} kind="dimension" selected={selected} onSelect={onSelect} />
-          <Group title="Facts" items={cube.facts || []} kind="fact" selected={selected} onSelect={onSelect} />
-          <Group title="Metrics" items={metrics} kind="metric" selected={selected} onSelect={onSelect} />
-          <Group title="Segments" items={segments} kind="segment" selected={selected} onSelect={onSelect} />
-          <Text size="1" color="gray">Metrics and segments attach after dimensions and facts.</Text>
-        </>
-      ) : (
-        <Text size="2" color="gray">No cube for this view yet.</Text>
-      )}
+      <Flex align="center" justify="between" gap="2">
+        <Heading size="3" weight="medium">Members</Heading>
+        <Button size="1" variant="soft" onClick={onOpenMapping}>Map members</Button>
+      </Flex>
+      <Text size="2">cube {cube.name}</Text>
+      <Group title="Dimensions" items={cube.dimensions || []} kind="dimension" selected={selected} onSelect={onSelect} />
+      <Group title="Facts" items={cube.facts || []} kind="fact" selected={selected} onSelect={onSelect} />
+      <Group title="Metrics" items={metrics} kind="metric" selected={selected} onSelect={onSelect} />
+      <Group title="Segments" items={segments} kind="segment" selected={selected} onSelect={onSelect} />
     </Flex>
   );
 }
@@ -154,10 +154,10 @@ function Group({
   onSelect,
 }: {
   title: string;
-  items: { name: string }[];
+  items: { name: string; description?: string; type?: string }[];
   kind: "dimension" | "fact" | "metric" | "segment";
-  selected: Pick;
-  onSelect: (pick: Pick) => void;
+  selected: Selection;
+  onSelect: (pick: Selection) => void;
 }) {
   return (
     <Flex direction="column" gap="1">
@@ -165,17 +165,16 @@ function Group({
       {items.map((item) => {
         const on = selected?.kind === kind && selected.name === item.name;
         return (
-          <Button
+          <button
             key={item.name}
             type="button"
-            size="1"
-            variant={on ? "soft" : "ghost"}
-            color={on ? "indigo" : "gray"}
-            style={{ justifyContent: "flex-start" }}
+            className={on ? "col-row on" : "col-row"}
             onClick={() => onSelect({ kind, name: item.name })}
           >
-            {item.name}
-          </Button>
+            <Text size="2" weight="medium">{item.name}</Text>
+            <Text size="1" color="gray">{item.type || ""}</Text>
+            <Text size="1" color="gray">{item.description || ""}</Text>
+          </button>
         );
       })}
     </Flex>

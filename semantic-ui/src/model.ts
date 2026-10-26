@@ -9,7 +9,8 @@ export type Doc = {
   pk?: string[];
   sources?: Source[];
   joins?: Join[];
-  columns?: ViewColumn[];
+  /** view columns (mappings) or table columns (type/nullable) */
+  columns?: Array<{ name: string; mappings?: Mapping[]; type?: string; nullable?: boolean }>;
   dimensions?: Member[];
   facts?: Member[];
   choice?: CubeChoice[];
@@ -19,6 +20,9 @@ export type Doc = {
   filter?: { expression?: string } | null;
   type?: string;
   column?: string;
+  db?: string;
+  schema?: string;
+  table?: string;
   [key: string]: unknown;
 };
 
@@ -30,10 +34,13 @@ export type Source = {
 
 export type CubeChoice = { view: string; summary?: boolean };
 
+export type Relationship = "many_to_one" | "one_to_one" | "one_to_many";
+
 export type Join = {
   left: string;
   right: string;
   type: string;
+  relationship?: Relationship;
   on?: { left_column: string; right_column: string }[];
 };
 
@@ -77,16 +84,17 @@ export function joinViewForTable(views: Doc[], table: string): Doc | undefined {
   );
 }
 
-export function mappingFor(column: ViewColumn, source: string): string {
-  return column.mappings.find((m) => m.source === source)?.column ?? "";
+export function mappingFor(column: { mappings?: Mapping[] }, source: string): string {
+  return (column.mappings || []).find((m) => m.source === source)?.column ?? "";
 }
 
 export function setMapping(view: Doc, viewColumn: string, source: string, physical: string): Doc {
   const columns = (view.columns || []).map((col) => {
     if (col.name !== viewColumn) return col;
-    const rest = col.mappings.filter((m) => m.source !== source);
+    const current = col.mappings || [];
+    const rest = current.filter((m) => m.source !== source);
     const mappings = physical ? [...rest, { source, column: physical }] : rest;
-    return { ...col, mappings: mappings.length ? mappings : col.mappings };
+    return { ...col, mappings: mappings.length ? mappings : current };
   });
   return { ...view, columns };
 }
@@ -144,6 +152,7 @@ export function combineName(names: string[]): string {
   return `sel_${body || "view"}`;
 }
 
+/** @deprecated MCP leftover; prefer AuthorApi JSON errors */
 export function toolPayload(rpc: {
   error?: { message?: string };
   result?: { isError?: boolean; content?: { text?: string }[] };
@@ -160,4 +169,41 @@ export function toolPayload(rpc: {
   } catch {
     return text;
   }
+}
+
+export function setJoinRelationship(view: Doc, index: number, relationship?: Relationship): Doc {
+  const joins = (view.joins || []).map((j, i) => {
+    if (i !== index) return j;
+    if (!relationship) {
+      const next = { ...j };
+      delete (next as { relationship?: string }).relationship;
+      return next;
+    }
+    return { ...j, relationship };
+  });
+  return { ...view, joins };
+}
+
+export function addJoin(
+  view: Doc,
+  left: string,
+  right: string,
+  on?: { left_column: string; right_column: string }[],
+): Doc {
+  const joins = [...(view.joins || [])];
+  if (joins.some((j) => (j.left === left && j.right === right) || (j.left === right && j.right === left))) {
+    return view;
+  }
+  joins.push({
+    left,
+    right,
+    type: "inner",
+    on: on || [{ left_column: "id", right_column: "id" }],
+  });
+  return { ...view, joins };
+}
+
+export function reorderSources(view: Doc, from: number, to: number): Doc {
+  const sources = reorder(view.sources || [], from, to);
+  return { ...view, sources };
 }

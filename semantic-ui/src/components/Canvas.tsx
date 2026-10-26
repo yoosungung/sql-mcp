@@ -1,71 +1,122 @@
 import { useState } from "react";
-import { Badge, Button, Flex, Heading, Text } from "@radix-ui/themes";
-import { sourceLabel, type Doc } from "../model";
+import { Badge, Flex, Heading, Text } from "@radix-ui/themes";
+import type { Doc } from "../model";
 import type { TableCombine } from "./docs";
+import { JoinCanvas } from "./JoinCanvas";
+import { UnionCanvas } from "./UnionCanvas";
+import { CubeHeader, ViewHeader } from "./ViewHeader";
 import type { Tab } from "./types";
 
 export function Canvas({
   tab,
-  selectMode,
   selectedView,
   stackNames,
-  joinView,
   checked,
-  onDrop,
+  onDropStack,
   combine,
   onCombine,
   picked,
   draft,
+  editing,
   busy,
+  views,
+  cube,
+  cubeDirty,
   onSaveView,
   onDeleteView,
-  onDiscard,
-  viewBar,
+  onNewView,
+  onOpenView,
+  onRenameView,
+  onChangeView,
   onDropTable,
+  onSelectTable,
+  onSelectJoin,
+  selectedJoinIndex,
+  onNewCube,
+  onSaveCube,
+  onDeleteCube,
+  onRenameCube,
 }: {
   tab: Tab;
-  selectMode: boolean;
   selectedView?: Doc;
   stackNames?: string[];
-  joinView?: Doc;
   checked: string[];
-  onDrop: (from: number, to: number) => void;
+  onDropStack: (from: number, to: number) => void;
   combine: TableCombine;
   onCombine: (combine: TableCombine) => void;
   picked: string[];
   draft?: Doc;
+  editing?: Doc;
   busy: boolean;
+  views: Doc[];
+  cube?: Doc;
+  cubeDirty: boolean;
   onSaveView: () => void;
   onDeleteView: () => void;
-  onDiscard: () => void;
-  viewBar?: { title: string; unsaved: boolean; canSave: boolean; canDelete: boolean; canDiscard: boolean };
+  onNewView: (combine: TableCombine) => void;
+  onOpenView: (name: string) => void;
+  onRenameView: (name: string) => void;
+  onChangeView: (view: Doc) => void;
   onDropTable: (combine: TableCombine, table: string) => void;
+  onSelectTable: (name: string) => void;
+  onSelectJoin: (index: number) => void;
+  selectedJoinIndex?: number;
+  onNewCube: () => void;
+  onSaveCube: () => void;
+  onDeleteCube: () => void;
+  onRenameCube: (name: string) => void;
 }) {
   const [over, setOver] = useState<TableCombine | null>(null);
+  const live = draft || editing;
+
   if (tab === "cubes") {
     return (
       <main className="canvas" aria-label="Canvas">
-        <Flex direction="column" gap="3">
-          {viewBar && (
-            <ViewBar {...viewBar} busy={busy} onSave={onSaveView} onDelete={onDeleteView} onDiscard={onDiscard} />
-          )}
-          {selectMode && (stackNames || []).length > 1 ? (
-            <Stack names={stackNames || []} onDrop={onDrop} />
-          ) : selectedView && isTableCombine(selectedView.combine) ? (
-            <TableDraft combine={selectedView.combine} names={(selectedView.sources || []).map((s) => sourceLabel(s))} joins={selectedView.joins} />
-          ) : (
-            <CombineDiagram names={checked} />
-          )}
+        <Flex direction="column" gap="3" height="100%">
+          <CubeHeader
+            title={cube?.name || ""}
+            unsaved={cubeDirty}
+            busy={busy}
+            canSave={cubeDirty && Boolean(cube)}
+            canDelete={Boolean(cube)}
+            onNew={onNewCube}
+            onRename={onRenameCube}
+            onSave={onSaveCube}
+            onDelete={onDeleteCube}
+          />
+          <ChoiceStack
+            names={stackNames?.length ? stackNames : checked}
+            onDrop={onDropStack}
+            onSelectView={(name) => onOpenView(name)}
+          />
         </Flex>
       </main>
     );
   }
+
+  const viewDirty = Boolean(draft) || (editing && selectedView && JSON.stringify(editing) !== JSON.stringify(selectedView));
+
   return (
     <main className="canvas" aria-label="Canvas">
-      <Flex direction="column" gap="3">
-        {viewBar && (
-          <ViewBar {...viewBar} busy={busy} onSave={onSaveView} onDelete={onDeleteView} onDiscard={onDiscard} />
-        )}
+      <Flex direction="column" gap="3" height="100%">
+        <ViewHeader
+          title={live?.name || "No view"}
+          combine={(live?.combine as TableCombine) || combine}
+          unsaved={Boolean(viewDirty)}
+          busy={busy}
+          canSave={Boolean(live)}
+          canDelete={Boolean(editing) && !draft}
+          views={views}
+          onNew={onNewView}
+          onOpen={onOpenView}
+          onRename={onRenameView}
+          onSave={onSaveView}
+          onDelete={onDeleteView}
+          onCombineChange={(c) => {
+            onCombine(c);
+            if (live) onChangeView({ ...live, combine: c });
+          }}
+        />
         <div className="combine-switch" role="group" aria-label="Combine">
           {(["join", "union", "minus"] as const).map((kind) => (
             <div
@@ -87,158 +138,57 @@ export function Canvas({
                 if (name) onDropTable(kind, name);
               }}
             >
-              <Button
+              <button
                 type="button"
-                size="1"
-                variant={combine === kind ? "solid" : "soft"}
-                color="gray"
+                className={combine === kind ? "combine-btn on" : "combine-btn"}
                 aria-pressed={combine === kind}
+                aria-label={kind}
                 onClick={() => onCombine(kind)}
               >
                 {kind}
-              </Button>
+              </button>
             </div>
           ))}
         </div>
-        {draft ? (
-          <TableDraft combine={combine} names={picked} joins={draft.joins} />
-        ) : joinView ? (
-          <JoinDiagram view={joinView} />
+        {live && ((live.combine as TableCombine) || combine) === "join" ? (
+          <JoinCanvas
+            view={live}
+            onChange={onChangeView}
+            onSelectJoin={onSelectJoin}
+            onSelectTable={onSelectTable}
+            selectedJoinIndex={selectedJoinIndex}
+          />
+        ) : live ? (
+          <UnionCanvas
+            view={live}
+            combine={((live.combine as TableCombine) || combine) === "minus" ? "minus" : "union"}
+            onChange={onChangeView}
+            onSelectTable={onSelectTable}
+          />
         ) : (
-          <Text size="2" color="gray">Drag a table onto join, union, or minus.</Text>
+          <Text size="2" color="gray">New or Open a view, then drag tables onto join, union, or minus.</Text>
+        )}
+        {!live && picked.length > 0 && (
+          <Text size="1" color="gray">Picked: {picked.join(", ")}</Text>
         )}
       </Flex>
     </main>
   );
 }
 
-function isTableCombine(value: string | undefined): value is TableCombine {
-  return value === "join" || value === "union" || value === "minus";
-}
-
-function ViewBar({
-  title,
-  unsaved,
-  canSave,
-  canDelete,
-  canDiscard,
-  busy,
-  onSave,
-  onDelete,
-  onDiscard,
-}: {
-  title: string;
-  unsaved: boolean;
-  canSave: boolean;
-  canDelete: boolean;
-  canDiscard: boolean;
-  busy: boolean;
-  onSave: () => void;
-  onDelete: () => void;
-  onDiscard: () => void;
-}) {
-  const [ask, setAsk] = useState(false);
-  return (
-    <Flex direction="column" gap="2" className="view-bar">
-      <Flex align="center" justify="between" gap="3">
-        <Flex align="center" gap="2">
-          <Heading size="3" weight="medium">{title}</Heading>
-          {unsaved && <Badge variant="soft">Unsaved</Badge>}
-        </Flex>
-        <Flex align="center" gap="2">
-          {canDiscard && (
-            <Button type="button" size="1" variant="soft" color="gray" disabled={busy} onClick={onDiscard}>Discard</Button>
-          )}
-          {canDelete && (
-            <Button type="button" size="1" variant="soft" color="red" disabled={busy} onClick={() => setAsk(true)}>Delete view</Button>
-          )}
-          <Button type="button" size="1" disabled={!canSave || busy} onClick={onSave}>Save view</Button>
-        </Flex>
-      </Flex>
-      {ask && (
-        <Flex align="center" justify="between" gap="3" role="alertdialog" aria-label="Delete view">
-          <Text size="2">Delete {title}? Its cube, metrics, and segments are deleted with it.</Text>
-          <Flex gap="2">
-            <Button type="button" size="1" variant="soft" color="gray" onClick={() => setAsk(false)}>Cancel</Button>
-            <Button type="button" size="1" color="red" aria-label="Confirm delete" onClick={() => { setAsk(false); onDelete(); }}>Delete</Button>
-          </Flex>
-        </Flex>
-      )}
-    </Flex>
-  );
-}
-
-function TableDraft({
-  combine,
+function ChoiceStack({
   names,
-  joins,
+  onDrop,
+  onSelectView,
 }: {
-  combine: TableCombine;
   names: string[];
-  joins?: Doc["joins"];
+  onDrop: (from: number, to: number) => void;
+  onSelectView: (name: string) => void;
 }) {
-  return (
-    <Flex direction="column" gap="2">
-      <Heading size="3" weight="medium">{combine}</Heading>
-      <Text size="1" color="gray">
-        {combine === "join" ? "Lines connect consecutive tables." : "First table is the base."}
-      </Text>
-      {names.map((name, i) => (
-        <div className={combine === "join" ? "node" : "stack-row"} key={name}>
-          {combine !== "join" && <Text weight="medium">{i + 1}</Text>}
-          <span>{name}</span>
-          {combine !== "join" && i === 0 && <Badge variant="soft" size="1">Base</Badge>}
-        </div>
-      ))}
-      {(joins || []).map((join, i) => (
-        <Text key={i} size="1" color="gray">
-          {join.type} {join.left}.{join.on?.[0]?.left_column} = {join.right}.{join.on?.[0]?.right_column}
-        </Text>
-      ))}
-    </Flex>
-  );
-}
-
-function JoinDiagram({ view }: { view?: Doc }) {
-  if (!view) return <Text size="2" color="gray">No join view for this table.</Text>;
-  return (
-    <Flex direction="column" gap="2">
-      <Heading size="3" weight="medium">Existing join</Heading>
-      <Text size="1" color="gray">{view.name}</Text>
-      {(view.sources || []).map((s) => (
-        <div className="node" key={sourceLabel(s)}>
-          {sourceLabel(s)}
-        </div>
-      ))}
-      {(view.joins || []).map((j, i) => (
-        <Text key={i} size="1" color="gray">
-          {j.type} {j.on?.[0]?.left_column}
-        </Text>
-      ))}
-    </Flex>
-  );
-}
-
-function CombineDiagram({ names }: { names: string[] }) {
-  if (!names.length) return <Text size="2" color="gray">Check views to preview the combine.</Text>;
-  return (
-    <Flex direction="column" gap="2">
-      <Heading size="3" weight="medium">Choice</Heading>
-      <Text size="1" color="gray">Checked views become one cube. Last is the base.</Text>
-      {names.map((n) => (
-        <div className="node" key={n}>
-          {n}
-        </div>
-      ))}
-    </Flex>
-  );
-}
-
-function Stack({ names, onDrop }: { names: string[]; onDrop: (from: number, to: number) => void }) {
   const [from, setFrom] = useState<number | null>(null);
   return (
-    <Flex direction="column" gap="2">
-      <Heading size="3" weight="medium">Priority</Heading>
+    <Flex direction="column" gap="2" aria-label="Choice stack">
+      <Heading size="3" weight="medium">Choice stack</Heading>
       <Text size="1" color="gray">Top is summary first. Last is the cube base. Drag to reorder.</Text>
       {names.map((name, i) => (
         <div
@@ -251,14 +201,18 @@ function Stack({ names, onDrop }: { names: string[]; onDrop: (from: number, to: 
             if (from !== null) onDrop(from, i);
             setFrom(null);
           }}
+          onClick={() => onSelectView(name)}
+          role="button"
+          tabIndex={0}
         >
           <Text size="1" color="gray">⋮⋮</Text>
           <Text weight="medium">{i + 1}</Text>
           <Text>{name}</Text>
-          {i === 0 && <Badge variant="soft" size="1">Priority 1</Badge>}
-          {i === names.length - 1 && i > 0 && <Badge variant="soft" color="gray" size="1">Base</Badge>}
+          {i === 0 && names.length > 1 && <Badge variant="soft" size="1">Priority 1</Badge>}
+          {i === names.length - 1 && <Badge variant="soft" color="gray" size="1">Base</Badge>}
         </div>
       ))}
+      {!names.length && <Text size="2" color="gray">Check views on the left to build a stack.</Text>}
     </Flex>
   );
 }
