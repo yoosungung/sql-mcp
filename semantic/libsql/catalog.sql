@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS meta_cube_dimensions (
   cube_name TEXT NOT NULL REFERENCES meta_cubes(name) ON DELETE CASCADE,
   name TEXT NOT NULL,
   description TEXT NOT NULL,
-  type TEXT CHECK (type IN ('code', 'date', 'time', 'datetime', 'string')),
+  type TEXT CHECK (type IN ('id', 'code', 'date', 'time', 'datetime', 'string')),
   column_ref TEXT,
   expression TEXT,
   encryption INTEGER NOT NULL,

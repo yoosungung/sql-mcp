@@ -178,6 +178,26 @@ mod tests {
     }
 
     #[test]
+    fn accepts_dimension_type_id() {
+        let body = json!({
+            "kind": "cube",
+            "name": "sales",
+            "target": "dw",
+            "view": "orders_customer",
+            "description": "",
+            "dimensions": [{
+                "name": "order_id",
+                "description": "",
+                "type": "id",
+                "column": "order_id",
+                "encryption": false
+            }],
+            "facts": []
+        });
+        validate_document(&body).unwrap();
+    }
+
+    #[test]
     fn accepts_non_additive_expression_fact() {
         let body = json!({
             "kind": "cube",

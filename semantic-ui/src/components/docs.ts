@@ -191,6 +191,28 @@ export function columnMeta(
   };
 }
 
+export function suggestMemberKind(physType: string, pk: boolean): "dimension" | "fact" {
+  if (pk) return "dimension";
+  if (/\b(int|integer|bigint|smallint|tinyint|real|float|double|decimal|numeric|number|money)\b/i.test(physType)) {
+    return "fact";
+  }
+  return "dimension";
+}
+
+export function suggestMemberType(
+  kind: "dimension" | "fact",
+  physType: string,
+  pk: boolean,
+): string {
+  if (kind === "fact") return "quantity";
+  if (pk) return "id";
+  const t = physType.toLowerCase();
+  if (t.includes("timestamp") || t.includes("datetime")) return "datetime";
+  if (/\bdate\b/.test(t)) return "date";
+  if (t.includes("time")) return "time";
+  return "string";
+}
+
 export function logicalTableName(physical: string): string {
   return physical.replace(/[^A-Za-z0-9_]/g, "_").replace(/^([^A-Za-z_])/, "_$1") || "table";
 }

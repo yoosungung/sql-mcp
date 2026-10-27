@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button, Checkbox, Dialog, Flex, Heading, Text } from "@radix-ui/themes";
 import { choiceStack, type Doc, type Member } from "../model";
+import { columnMeta, suggestMemberKind, suggestMemberType } from "./docs";
 
 type Row = {
   kind: "dimension" | "fact";
@@ -16,12 +17,14 @@ export function CubeMappingEditor({
   onOpenChange,
   cube,
   views,
+  tables = [],
   onApply,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   cube: Doc;
   views: Doc[];
+  tables?: Doc[];
   onApply: (cube: Doc) => void;
 }) {
   const stack = useMemo(() => choiceStack(cube), [cube]);
@@ -32,7 +35,7 @@ export function CubeMappingEditor({
 
   const [rows, setRows] = useState<Row[]>([]);
   useEffect(() => {
-    if (open) setRows(buildRows(cube, viewDocs));
+    if (open) setRows(buildRows(cube, viewDocs, tables));
     // Seed only when the dialog opens so checkbox/kind edits are not reset.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -48,10 +51,12 @@ export function CubeMappingEditor({
       const base = stack[stack.length - 1];
       const column = row.byView[base] || Object.values(row.byView).find(Boolean) || "";
       if (!column) continue;
+      const viewDoc = viewDocs.find((v) => v.name === base) || viewDocs.find((v) => row.byView[v.name]);
+      const meta = viewDoc ? columnMeta(viewDoc, column, tables) : { type: "", pk: false };
       const member: Member = {
         name: row.name,
         description: "",
-        type: row.kind === "dimension" ? "string" : "quantity",
+        type: suggestMemberType(row.kind, meta.type === "—" ? "" : meta.type, meta.pk),
         column,
         encryption: false,
       };
@@ -186,7 +191,7 @@ function MemberRow({
   );
 }
 
-function buildRows(cube: Doc, views: Doc[]): Row[] {
+function buildRows(cube: Doc, views: Doc[], tables: Doc[]): Row[] {
   const rows: Row[] = [];
   for (const d of cube.dimensions || []) {
     const byView: Record<string, string> = {};
@@ -218,8 +223,9 @@ function buildRows(cube: Doc, views: Doc[]): Row[] {
     for (const c of v.columns || []) {
       if (used.has(c.name)) continue;
       used.add(c.name);
+      const meta = columnMeta(v, c.name, tables);
       rows.push({
-        kind: "dimension",
+        kind: suggestMemberKind(meta.type === "—" ? "" : meta.type, meta.pk),
         name: c.name,
         active: false,
         byView: { [v.name]: c.name },

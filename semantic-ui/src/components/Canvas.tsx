@@ -1,18 +1,20 @@
 import { useState, type DragEvent } from "react";
-import { Badge, Flex, Heading, Text } from "@radix-ui/themes";
+import { Badge, Flex, Heading, IconButton, Text } from "@radix-ui/themes";
 import { applyCombine, type Doc } from "../model";
 import type { TableCombine } from "./docs";
 import { JoinCanvas } from "./JoinCanvas";
 import { UnionCanvas } from "./UnionCanvas";
 import { CubeHeader, ViewHeader } from "./ViewHeader";
+import { DragHandle } from "./DragHandle";
 import type { Tab } from "./types";
 
 export function Canvas({
   tab,
   selectedView,
   stackNames,
-  checked,
   onDropStack,
+  onRemoveFromStack,
+  onViewDrop,
   combine,
   onCombine,
   picked,
@@ -21,6 +23,7 @@ export function Canvas({
   busy,
   views,
   cube,
+  cubes,
   cubeDirty,
   onSaveView,
   onDeleteView,
@@ -33,6 +36,7 @@ export function Canvas({
   onSelectJoin,
   selectedJoinIndex,
   onNewCube,
+  onOpenCube,
   onSaveCube,
   onDeleteCube,
   onRenameCube,
@@ -40,8 +44,9 @@ export function Canvas({
   tab: Tab;
   selectedView?: Doc;
   stackNames?: string[];
-  checked: string[];
   onDropStack: (from: number, to: number) => void;
+  onRemoveFromStack: (name: string) => void;
+  onViewDrop: (name: string) => void;
   combine: TableCombine;
   onCombine: (combine: TableCombine) => void;
   picked: string[];
@@ -50,6 +55,7 @@ export function Canvas({
   busy: boolean;
   views: Doc[];
   cube?: Doc;
+  cubes: Doc[];
   cubeDirty: boolean;
   onSaveView: () => void;
   onDeleteView: () => void;
@@ -62,6 +68,7 @@ export function Canvas({
   onSelectJoin: (index: number) => void;
   selectedJoinIndex?: number;
   onNewCube: () => void;
+  onOpenCube: (name: string) => void;
   onSaveCube: () => void;
   onDeleteCube: () => void;
   onRenameCube: (name: string) => void;
@@ -78,7 +85,21 @@ export function Canvas({
 
   if (tab === "cubes") {
     return (
-      <main className="canvas" aria-label="Canvas">
+      <main
+        className="canvas"
+        aria-label="Canvas"
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+        }}
+        onDrop={(event) => {
+          const name = event.dataTransfer.getData("text/plain");
+          if (name) {
+            event.preventDefault();
+            onViewDrop(name);
+          }
+        }}
+      >
         <Flex direction="column" gap="3" height="100%">
           <CubeHeader
             title={cube?.name || ""}
@@ -86,15 +107,19 @@ export function Canvas({
             busy={busy}
             canSave={cubeDirty && Boolean(cube)}
             canDelete={Boolean(cube)}
+            cubes={cubes}
             onNew={onNewCube}
+            onOpen={onOpenCube}
             onRename={onRenameCube}
             onSave={onSaveCube}
             onDelete={onDeleteCube}
           />
           <ChoiceStack
-            names={cube ? stackNames || [] : checked}
+            names={stackNames || []}
             onDrop={onDropStack}
+            onRemove={onRemoveFromStack}
             onSelectView={(name) => onOpenView(name)}
+            onViewDrop={onViewDrop}
           />
         </Flex>
       </main>
@@ -163,17 +188,39 @@ export function Canvas({
 function ChoiceStack({
   names,
   onDrop,
+  onRemove,
   onSelectView,
+  onViewDrop,
 }: {
   names: string[];
   onDrop: (from: number, to: number) => void;
+  onRemove: (name: string) => void;
   onSelectView: (name: string) => void;
+  onViewDrop: (name: string) => void;
 }) {
   const [from, setFrom] = useState<number | null>(null);
   return (
-    <Flex direction="column" gap="2" aria-label="Choice stack">
+    <Flex
+      className="stack-canvas"
+      direction="column"
+      gap="2"
+      aria-label="Choice stack"
+      onDragOver={(event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+      }}
+      onDrop={(event) => {
+        if (from !== null) return;
+        const name = event.dataTransfer.getData("text/plain");
+        if (name) {
+          event.preventDefault();
+          event.stopPropagation();
+          onViewDrop(name);
+        }
+      }}
+    >
       <Heading size="3" weight="medium">Choice stack</Heading>
-      <Text size="1" color="gray">Top is summary first. Last is the cube base. Drag to reorder.</Text>
+      <Text size="1" color="gray">Top is summary first. Last is the cube base. Drag views from the catalog. × removes a view.</Text>
       {names.map((name, i) => (
         <div
           key={`${name}-${i}`}
@@ -181,22 +228,40 @@ function ChoiceStack({
           draggable
           onDragStart={() => setFrom(i)}
           onDragOver={(e) => e.preventDefault()}
-          onDrop={() => {
-            if (from !== null) onDrop(from, i);
-            setFrom(null);
+          onDrop={(event) => {
+            if (from !== null) {
+              event.preventDefault();
+              event.stopPropagation();
+              if (from !== i) onDrop(from, i);
+              setFrom(null);
+              return;
+            }
           }}
           onClick={() => onSelectView(name)}
           role="button"
           tabIndex={0}
         >
-          <Text size="1" color="gray">⋮⋮</Text>
+          <DragHandle />
           <Text weight="medium">{i + 1}</Text>
           <Text>{name}</Text>
           {i === 0 && names.length > 1 && <Badge variant="soft" size="1">Priority 1</Badge>}
           {i === names.length - 1 && <Badge variant="soft" color="gray" size="1">Base</Badge>}
+          <IconButton
+            size="1"
+            variant="ghost"
+            color="gray"
+            aria-label={`Remove ${name} from stack`}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove(name);
+            }}
+          >
+            ×
+          </IconButton>
         </div>
       ))}
-      {!names.length && <Text size="2" color="gray">Check views on the left to build a stack.</Text>}
+      {!names.length && <Text size="2" color="gray">Drag views from the catalog.</Text>}
     </Flex>
   );
 }

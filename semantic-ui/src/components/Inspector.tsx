@@ -8,6 +8,7 @@ export function Inspector({
   onToggle,
   tab,
   view,
+  views,
   tables,
   cube,
   metrics,
@@ -24,6 +25,7 @@ export function Inspector({
   onToggle: () => void;
   tab: Tab;
   view?: Doc;
+  views?: Doc[];
   tables: Doc[];
   cube?: Doc;
   metrics: Doc[];
@@ -110,6 +112,8 @@ export function Inspector({
           ) : (
             <MembersPanel
               cube={cube}
+              view={(cube?.view && views?.find((v) => v.name === cube.view)) || view}
+              tables={tables}
               metrics={metrics}
               segments={segments}
               selected={selected}
@@ -161,12 +165,16 @@ function ColumnsPanel({
 
 function MembersPanel({
   cube,
+  view,
+  tables,
   metrics,
   segments,
   selected,
   onSelect,
 }: {
   cube?: Doc;
+  view?: Doc;
+  tables: Doc[];
   metrics: Doc[];
   segments: Doc[];
   selected: Selection;
@@ -182,10 +190,10 @@ function MembersPanel({
       >
         <Text size="2" weight="medium">cube {cube.name}</Text>
       </button>
-      <Group title="Dimensions" items={cube.dimensions || []} kind="dimension" selected={selected} onSelect={onSelect} />
-      <Group title="Facts" items={cube.facts || []} kind="fact" selected={selected} onSelect={onSelect} />
-      <Group title="Metrics" items={metrics} kind="metric" selected={selected} onSelect={onSelect} />
-      <Group title="Segments" items={segments} kind="segment" selected={selected} onSelect={onSelect} />
+      <Group title="Dimensions" items={cube.dimensions || []} kind="dimension" view={view} tables={tables} selected={selected} onSelect={onSelect} />
+      <Group title="Facts" items={cube.facts || []} kind="fact" view={view} tables={tables} selected={selected} onSelect={onSelect} />
+      <Group title="Metrics" items={metrics} kind="metric" view={view} tables={tables} selected={selected} onSelect={onSelect} />
+      <Group title="Segments" items={segments} kind="segment" view={view} tables={tables} selected={selected} onSelect={onSelect} />
     </Flex>
   );
 }
@@ -194,12 +202,16 @@ function Group({
   title,
   items,
   kind,
+  view,
+  tables,
   selected,
   onSelect,
 }: {
   title: string;
-  items: { name: string; description?: string; type?: string }[];
+  items: { name: string; type?: string; column?: string }[];
   kind: "dimension" | "fact" | "metric" | "segment";
+  view?: Doc;
+  tables: Doc[];
   selected: Selection;
   onSelect: (pick: Selection) => void;
 }) {
@@ -208,6 +220,7 @@ function Group({
       <Text size="1" weight="medium" color="gray" className="group-label">{title}</Text>
       {items.map((item) => {
         const on = selected?.kind === kind && selected.name === item.name;
+        const pk = Boolean(view && item.column && columnMeta(view, item.column, tables).pk);
         return (
           <button
             key={item.name}
@@ -215,9 +228,11 @@ function Group({
             className={on ? "col-row on" : "col-row"}
             onClick={() => onSelect({ kind, name: item.name })}
           >
-            <Text size="2" weight="medium">{item.name}</Text>
+            <Badge size="1" variant={pk ? "solid" : "soft"} color={pk ? "indigo" : "gray"}>
+              {pk ? "PK" : "—"}
+            </Badge>
             <Text size="1" color="gray">{item.type || ""}</Text>
-            <Text size="1" color="gray">{item.description || ""}</Text>
+            <Text size="2" weight="medium">{item.name}</Text>
           </button>
         );
       })}

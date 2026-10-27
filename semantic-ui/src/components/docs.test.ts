@@ -7,6 +7,8 @@ import {
   mappingRowsFromView,
   mappingSourceColumns,
   physicalTableDoc,
+  suggestMemberKind,
+  suggestMemberType,
 } from "./docs";
 import type { Doc } from "../model";
 
@@ -145,6 +147,20 @@ describe("autoMatch / mapping rows", () => {
       { source: "account", column: "name" },
       { source: "bill_to", column: "name" },
     ]);
+  });
+});
+
+describe("suggestMemberKind", () => {
+  it("uses pk and numeric physical types to pick dimension or fact", () => {
+    expect(suggestMemberKind("int", true)).toBe("dimension");
+    expect(suggestMemberKind("REAL", false)).toBe("fact");
+    expect(suggestMemberKind("text", false)).toBe("dimension");
+  });
+
+  it("picks member type from physical type", () => {
+    expect(suggestMemberType("dimension", "int", true)).toBe("id");
+    expect(suggestMemberType("dimension", "timestamp", false)).toBe("datetime");
+    expect(suggestMemberType("fact", "REAL", false)).toBe("quantity");
   });
 });
 

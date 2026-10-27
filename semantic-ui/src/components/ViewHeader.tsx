@@ -148,7 +148,9 @@ export function CubeHeader({
   busy,
   canSave,
   canDelete,
+  cubes,
   onNew,
+  onOpen,
   onRename,
   onSave,
   onDelete,
@@ -158,14 +160,18 @@ export function CubeHeader({
   busy: boolean;
   canSave: boolean;
   canDelete: boolean;
+  cubes: { name: string }[];
   onNew: () => void;
+  onOpen: (name: string) => void;
   onRename: (name: string) => void;
   onSave: () => void;
   onDelete: () => void;
 }) {
   const [askDelete, setAskDelete] = useState(false);
+  const [openPicker, setOpenPicker] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [draftName, setDraftName] = useState(title);
+  const [openName, setOpenName] = useState(cubes[0]?.name || "");
   return (
     <div className="view-bar" role="region" aria-label="Cube header">
     <Flex direction="column" gap="2">
@@ -176,6 +182,7 @@ export function CubeHeader({
         </Flex>
         <Flex align="center" gap="2">
           <Button type="button" size="1" variant="soft" onClick={onNew}>New</Button>
+          <Button type="button" size="1" variant="soft" onClick={() => { setOpenName(cubes[0]?.name || ""); setOpenPicker(true); }}>Open</Button>
           <Button type="button" size="1" variant="soft" disabled={!title} onClick={() => { setDraftName(title); setRenameOpen(true); }}>Rename</Button>
           <Button type="button" size="1" disabled={!canSave || busy} onClick={onSave}>Save</Button>
           <Button type="button" size="1" variant="soft" color="red" disabled={!canDelete || busy} onClick={() => setAskDelete(true)} aria-label="Delete cube">Delete</Button>
@@ -190,6 +197,27 @@ export function CubeHeader({
           </Flex>
         </Flex>
       )}
+      <Dialog.Root open={openPicker} onOpenChange={setOpenPicker}>
+        <Dialog.Content maxWidth="360px">
+          <Dialog.Title>Open cube</Dialog.Title>
+          {cubes.length ? (
+            <Select.Root value={openName} onValueChange={setOpenName}>
+              <Select.Trigger aria-label="Open cube name" />
+              <Select.Content>
+                {cubes.map((c) => (
+                  <Select.Item key={c.name} value={c.name}>{c.name}</Select.Item>
+                ))}
+              </Select.Content>
+            </Select.Root>
+          ) : (
+            <Text size="2" color="gray">No saved cubes.</Text>
+          )}
+          <Flex gap="3" mt="4" justify="end">
+            <Dialog.Close><Button variant="soft" color="gray">Cancel</Button></Dialog.Close>
+            <Button disabled={!openName} onClick={() => { onOpen(openName); setOpenPicker(false); }}>Open</Button>
+          </Flex>
+        </Dialog.Content>
+      </Dialog.Root>
       <Dialog.Root open={renameOpen} onOpenChange={setRenameOpen}>
         <Dialog.Content maxWidth="360px">
           <Dialog.Title>Rename cube</Dialog.Title>

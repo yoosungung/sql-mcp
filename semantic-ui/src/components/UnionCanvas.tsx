@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Badge, Flex, Heading, Text } from "@radix-ui/themes";
 import { reorder, sourceLabel, type Doc } from "../model";
 import type { TableCombine } from "./docs";
+import { DragHandle } from "./DragHandle";
 
 export function UnionCanvas({
   view,
@@ -20,6 +21,7 @@ export function UnionCanvas({
   const names = (view.sources || []).map((s) => sourceLabel(s));
   return (
     <Flex
+      className="stack-canvas"
       direction="column"
       gap="2"
       aria-label={`${combine} canvas`}
@@ -56,7 +58,7 @@ export function UnionCanvas({
           role="button"
           tabIndex={0}
         >
-          <Text size="1" color="gray">⋮⋮</Text>
+          <DragHandle />
           <Text weight="medium">{i + 1}</Text>
           <Text>{name}</Text>
           {i === 0 && <Badge variant="soft" size="1">Base</Badge>}

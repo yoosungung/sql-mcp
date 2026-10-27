@@ -59,6 +59,7 @@ impl SemanticStore {
         migrate_drop_member_default_filter(&conn).await?;
         migrate_fact_type_from_amount_fx(&conn).await?;
         migrate_as_code_json(&conn).await?;
+        migrate_dim_type_allow_id(&conn).await?;
         migrate_add_target_columns(&conn).await?;
         migrate_add_cube_role(&conn).await?;
         migrate_add_column_index_target(&conn).await?;
@@ -313,6 +314,54 @@ async fn migrate_fact_type_from_amount_fx(conn: &Connection) -> Result<(), AppEr
         FROM meta_cube_facts;
         DROP TABLE meta_cube_facts;
         ALTER TABLE meta_cube_facts_new RENAME TO meta_cube_facts;
+        PRAGMA foreign_keys=ON;
+        "#,
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(())
+}
+
+/// Older catalogs omit `id` from dimension type CHECK; rebuild (idempotent).
+async fn migrate_dim_type_allow_id(conn: &Connection) -> Result<(), AppError> {
+    let mut rows = conn
+        .query(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'meta_cube_dimensions'",
+            (),
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    let Some(row) = rows
+        .next()
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?
+    else {
+        return Ok(());
+    };
+    let sql: String = row.get(0).map_err(|e| AppError::Internal(e.into()))?;
+    if sql.contains("'id'") {
+        return Ok(());
+    }
+    conn.execute_batch(
+        r#"
+        PRAGMA foreign_keys=OFF;
+        CREATE TABLE meta_cube_dimensions_new (
+          cube_name TEXT NOT NULL REFERENCES meta_cubes(name) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          description TEXT NOT NULL,
+          type TEXT CHECK (type IN ('id', 'code', 'date', 'time', 'datetime', 'string')),
+          column_ref TEXT,
+          expression TEXT,
+          encryption INTEGER NOT NULL,
+          as_code_json TEXT,
+          role_json TEXT NOT NULL DEFAULT '"all"',
+          PRIMARY KEY (cube_name, name)
+        ) STRICT;
+        INSERT INTO meta_cube_dimensions_new (cube_name, name, description, type, column_ref, expression, encryption, as_code_json, role_json)
+        SELECT cube_name, name, description, type, column_ref, expression, encryption, as_code_json, role_json
+        FROM meta_cube_dimensions;
+        DROP TABLE meta_cube_dimensions;
+        ALTER TABLE meta_cube_dimensions_new RENAME TO meta_cube_dimensions;
         PRAGMA foreign_keys=ON;
         "#,
     )

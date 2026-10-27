@@ -19,7 +19,6 @@ import type { MappingEditor, Selection, Tab } from "./components/types";
 import { ViewMappingEditor } from "./components/ViewMappingEditor";
 import {
   choiceStack,
-  cubeForView,
   dropViewFromCube,
   forTarget,
   metricsForCube,
@@ -46,8 +45,8 @@ export function App({ api }: { api?: AuthorApi }) {
   const [cubeDraft, setCubeDraft] = useState<Doc>();
   const [metricDrafts, setMetricDrafts] = useState<Doc[]>([]);
   const [segmentDrafts, setSegmentDrafts] = useState<Doc[]>([]);
-  const [checked, setChecked] = useState<string[]>([]);
   const [viewName, setViewName] = useState("");
+  const [cubeName, setCubeName] = useState("");
   const [selection, setSelection] = useState<Selection>(null);
   const [selectedJoinIndex, setSelectedJoinIndex] = useState<number | undefined>();
   const [error, setError] = useState<BannerError | null>(null);
@@ -98,22 +97,12 @@ export function App({ api }: { api?: AuthorApi }) {
   const selectedTable = tables.find((t) => t.name === tableName) ?? tables[0];
   const selectedView = views.find((v) => v.name === viewName);
   const liveView = draft || editing;
-  const cube = selectedView ? cubeForView(cubes, selectedView.name) : cubeDraft;
-  const liveCube =
-    cubeDraft && cube && cubeDraft.name === cube.name
-      ? cubeDraft
-      : cubeDraft && !cube
-        ? cubeDraft
-        : cube
-          ? cubeDraft && cubeDraft.name === cube.name
-            ? cubeDraft
-            : cube
-          : cubeDraft;
+  const cube = cubes.find((c) => c.name === cubeName);
+  const liveCube = cubeDraft ?? cube;
   const engine = targets.find((t) => t.name === target)?.engine;
 
   const selectedViewKey = selectedView ? `${selectedView.name}:${JSON.stringify(selectedView)}` : "";
-  const selectedCube = selectedView ? cubeForView(cubes, selectedView.name) : undefined;
-  const selectedCubeKey = selectedCube ? `${selectedCube.name}:${JSON.stringify(selectedCube)}` : "";
+  const selectedCubeKey = cube ? `${cube.name}:${JSON.stringify(cube)}` : "";
 
   useEffect(() => {
     if (draft) return;
@@ -145,7 +134,8 @@ export function App({ api }: { api?: AuthorApi }) {
     setTarget(value);
     setTableName("");
     setViewName("");
-    setChecked([]);
+    setCubeName("");
+    setCubeDraft(undefined);
     setPicked([]);
     setSelection(null);
     setDraft(undefined);
@@ -174,7 +164,9 @@ export function App({ api }: { api?: AuthorApi }) {
             );
           }
         }
-        await client.remove(doc.kind, previousName);
+        if (docs.some((d) => d.kind === doc.kind && d.name === previousName)) {
+          await client.remove(doc.kind, previousName);
+        }
       } else {
         const exists =
           doc.kind === "view"
@@ -236,6 +228,7 @@ export function App({ api }: { api?: AuthorApi }) {
           else await client.create(s);
         }
       }
+      setCubeName(liveCube.name);
       await reload();
     } catch (e) {
       setError(bannerError(e));
@@ -315,7 +308,6 @@ export function App({ api }: { api?: AuthorApi }) {
         await client.update("cube", cubeDoc.name, next);
       }
       await client.remove("view", name);
-      setChecked((cur) => cur.filter((n) => n !== name));
       setViewName((cur) => (cur === name ? "" : cur));
       setDraft((d) => (d?.name === name ? undefined : d));
       setEditing(undefined);
@@ -337,6 +329,7 @@ export function App({ api }: { api?: AuthorApi }) {
       for (const s of segmentsForCube(docs, liveCube.name)) await client.remove("segment", s.name);
       await client.remove("cube", liveCube.name);
       setCubeDraft(undefined);
+      setCubeName("");
       await reload();
     } catch (e) {
       setError(bannerError(e));
@@ -372,6 +365,16 @@ export function App({ api }: { api?: AuthorApi }) {
     if (v?.combine === "join" || v?.combine === "union" || v?.combine === "minus") {
       setTableCombine(v.combine);
     }
+  }
+
+  function openCube(name: string) {
+    const found = cubes.find((c) => c.name === name);
+    if (!found) return;
+    setCubeName(name);
+    setCubeDraft(found);
+    setMetricDrafts(metricsForCube(docs, found.name).map((d) => JSON.parse(JSON.stringify(d)) as Doc));
+    setSegmentDrafts(segmentsForCube(docs, found.name).map((d) => JSON.parse(JSON.stringify(d)) as Doc));
+    setSelection({ kind: "cube", name });
   }
 
   function renameView(name: string) {
@@ -427,58 +430,70 @@ export function App({ api }: { api?: AuthorApi }) {
       setPicked(nextSources.map((s) => s.table));
       return;
     }
+    if ((kind === "union" || kind === "minus") && base) {
+      const sources = base.sources || [];
+      if (sources.some((s) => s.table === name)) return;
+      const nextSources = [...sources, { kind: "table", table: name }];
+      const pickedTables = nextSources
+        .map((s) => tables.find((t) => t.name === s.table))
+        .filter((t): t is Doc => Boolean(t));
+      const rebuilt = draftView(kind, pickedTables, target);
+      const next = rebuilt
+        ? { ...rebuilt, name: base.name, description: base.description || "" }
+        : { ...base, sources: nextSources };
+      if (draft) setDraft(next);
+      else setEditing(next);
+      setPicked(nextSources.map((s) => s.table));
+      return;
+    }
     setPicked((cur) => {
       const next = cur.includes(name) ? cur : [...cur, name];
       const pickedTables = next
         .map((n) => tables.find((t) => t.name === n))
         .filter((t): t is Doc => Boolean(t));
-      if (base) {
-        const rebuilt = draftView(kind, pickedTables, target);
-        if (rebuilt) {
-          const merged = { ...rebuilt, name: base.name, description: base.description || "" };
-          if (draft) setDraft(merged);
-          else setEditing(merged);
-        }
-      } else {
-        const rebuilt = draftView(kind, pickedTables, target);
-        if (rebuilt) {
-          rebuilt.name = uniqueName(rebuilt.name, views);
-          setDraft(rebuilt);
-        }
+      const rebuilt = draftView(kind, pickedTables, target);
+      if (rebuilt) {
+        rebuilt.name = uniqueName(rebuilt.name, views);
+        setDraft(rebuilt);
       }
       return next;
     });
   }
 
-  function combineIntoCube() {
-    if (!checked.length) return;
-    const canonical = checked[checked.length - 1];
-    const existing = cubeForView(cubes, canonical);
+  function dropViewOntoStack(name: string) {
+    if (!views.some((v) => v.name === name)) return;
+    if (liveCube) {
+      const stack = choiceStack(liveCube);
+      if (stack.includes(name)) return;
+      setCubeDraft(withChoiceStack(liveCube, [...stack, name]));
+      return;
+    }
     const cubeDoc = withChoiceStack(
       {
         kind: "cube",
-        name: existing?.name ?? uniqueName(`cube_${canonical}`, cubes),
+        name: uniqueName(`cube_${name}`, cubes),
         target,
-        view: canonical,
-        description: existing?.description ?? "",
-        dimensions: existing?.dimensions ?? [],
-        facts: existing?.facts ?? [],
+        view: name,
+        description: "",
+        dimensions: [],
+        facts: [],
       },
-      checked,
+      [name],
     );
     setCubeDraft(cubeDoc);
-    setViewName(canonical);
-    setSelection({ kind: "view", name: canonical });
+    setCubeName(cubeDoc.name);
+    setMetricDrafts([]);
+    setSegmentDrafts([]);
+    setSelection({ kind: "cube", name: cubeDoc.name });
   }
 
   function newCube() {
     const name = uniqueName("cube", cubes);
-    const viewName0 = checked[checked.length - 1] || views[0]?.name;
+    setCubeName(name);
     setCubeDraft({
       kind: "cube",
       name,
       target,
-      ...(viewName0 ? { view: viewName0 } : {}),
       description: "",
       dimensions: [],
       facts: [],
@@ -601,15 +616,10 @@ export function App({ api }: { api?: AuthorApi }) {
             }
             views={views}
             viewName={viewName}
-            checked={checked}
-            onToggleCheck={(name) =>
-              setChecked((cur) => (cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name]))
-            }
             onSelectView={(name) => {
               openView(name);
             }}
             busy={busy}
-            onCombine={combineIntoCube}
             physicalCandidates={physicalCandidates}
             onRegister={registerTables}
             onDeleteTable={deleteTable}
@@ -618,11 +628,14 @@ export function App({ api }: { api?: AuthorApi }) {
             tab={tab}
             selectedView={selectedView}
             stackNames={stack}
-            checked={checked}
             onDropStack={(from, to) => {
               if (!liveCube) return;
               setCubeDraft(withChoiceStack(liveCube, reorder(choiceStack(liveCube), from, to)));
             }}
+            onRemoveFromStack={(name) => {
+              if (liveCube) setCubeDraft(dropViewFromCube(liveCube, name));
+            }}
+            onViewDrop={dropViewOntoStack}
             combine={tableCombine}
             onCombine={setTableCombine}
             picked={picked}
@@ -631,6 +644,7 @@ export function App({ api }: { api?: AuthorApi }) {
             busy={busy}
             views={views}
             cube={liveCube}
+            cubes={cubes}
             cubeDirty={cubeDirty}
             onSaveView={() => void saveOpenView()}
             onDeleteView={() => void deleteOpenView()}
@@ -650,6 +664,7 @@ export function App({ api }: { api?: AuthorApi }) {
             }}
             selectedJoinIndex={selectedJoinIndex}
             onNewCube={newCube}
+            onOpenCube={openCube}
             onSaveCube={() => void saveOpenCube()}
             onDeleteCube={() => void deleteOpenCube()}
             onRenameCube={(name) => liveCube && setCubeDraft({ ...liveCube, name })}
@@ -659,6 +674,7 @@ export function App({ api }: { api?: AuthorApi }) {
             onToggle={() => setInspectorOpen((o) => !o)}
             tab={tab}
             view={liveView}
+            views={views}
             tables={tables}
             cube={liveCube}
             metrics={liveCube ? metricDrafts.length ? metricDrafts : metricsForCube(docs, liveCube.name) : []}
@@ -684,7 +700,7 @@ export function App({ api }: { api?: AuthorApi }) {
                 aria-label="Collapse detail"
                 onClick={() => setDetailSize("collapsed")}
               >
-                ▾
+                <DetailSizeGlyph kind="collapse" />
               </IconButton>
               <IconButton
                 size="1"
@@ -694,7 +710,7 @@ export function App({ api }: { api?: AuthorApi }) {
                 aria-label="Standard detail"
                 onClick={() => setDetailSize("standard")}
               >
-                —
+                <DetailSizeGlyph kind="standard" />
               </IconButton>
               <IconButton
                 size="1"
@@ -704,7 +720,7 @@ export function App({ api }: { api?: AuthorApi }) {
                 aria-label="Expand detail"
                 onClick={() => setDetailSize("expanded")}
               >
-                ▴
+                <DetailSizeGlyph kind="expand" />
               </IconButton>
             </Flex>
           </div>
@@ -712,6 +728,7 @@ export function App({ api }: { api?: AuthorApi }) {
             <div className="detail-body">
               <Detail
                 selection={selection}
+                tab={tab}
                 table={selectedTable}
                 view={liveView}
                 tables={tables}
@@ -720,30 +737,32 @@ export function App({ api }: { api?: AuthorApi }) {
                 metrics={metricDrafts}
                 segments={segmentDrafts}
                 busy={busy}
-                onSave={(doc) => {
+                onSave={(doc, previousName) => {
                   if (doc.kind === "cube") {
                     setCubeDraft(doc);
-                    void saveDoc(doc);
                     return;
                   }
                   if (doc.kind === "metric") {
                     setMetricDrafts((cur) => {
-                      const next = cur.some((m) => m.name === doc.name)
-                        ? cur.map((m) => (m.name === doc.name ? doc : m))
-                        : [...cur, doc];
-                      return next;
+                      const key = previousName || doc.name;
+                      if (cur.some((m) => m.name === key)) {
+                        return cur.map((m) => (m.name === key ? doc : m));
+                      }
+                      return [...cur, doc];
                     });
                   }
                   if (doc.kind === "segment") {
                     setSegmentDrafts((cur) => {
-                      const next = cur.some((m) => m.name === doc.name)
-                        ? cur.map((m) => (m.name === doc.name ? doc : m))
-                        : [...cur, doc];
-                      return next;
+                      const key = previousName || doc.name;
+                      if (cur.some((m) => m.name === key)) {
+                        return cur.map((m) => (m.name === key ? doc : m));
+                      }
+                      return [...cur, doc];
                     });
                   }
-                  void saveDoc(doc);
+                  void saveDoc(doc, previousName);
                 }}
+                onSelect={setSelection}
                 onChangeView={changeView}
               />
             </div>
@@ -764,10 +783,21 @@ export function App({ api }: { api?: AuthorApi }) {
             onOpenChange={(o) => !o && setMappingEditor(null)}
             cube={liveCube}
             views={views}
+            tables={tables}
             onApply={setCubeDraft}
           />
         )}
       </div>
     </Theme>
+  );
+}
+
+function DetailSizeGlyph({ kind }: { kind: "collapse" | "standard" | "expand" }) {
+  return (
+    <svg className="detail-size-glyph" viewBox="0 0 16 16" width="18" height="18" aria-hidden="true" fill="currentColor">
+      {kind === "collapse" ? <path d="M2.5 5 L8 12.5 L13.5 5 Z" /> : null}
+      {kind === "standard" ? <rect x="2" y="6.75" width="12" height="2.5" rx="0.6" /> : null}
+      {kind === "expand" ? <path d="M2.5 11 L8 3.5 L13.5 11 Z" /> : null}
+    </svg>
   );
 }

@@ -23,10 +23,11 @@ import {
   type Relationship,
 } from "../model";
 import { columnMeta, mappingSourceColumns, tableColumnNames } from "./docs";
-import type { Selection } from "./types";
+import type { Selection, Tab } from "./types";
 
 export function Detail({
   selection,
+  tab,
   table,
   view,
   tables,
@@ -36,9 +37,11 @@ export function Detail({
   segments,
   busy,
   onSave,
+  onSelect,
   onChangeView,
 }: {
   selection: Selection;
+  tab?: Tab;
   table?: Doc;
   view?: Doc;
   tables: Doc[];
@@ -47,7 +50,8 @@ export function Detail({
   metrics?: Doc[];
   segments?: Doc[];
   busy: boolean;
-  onSave: (doc: Doc) => void;
+  onSave: (doc: Doc, previousName?: string) => void;
+  onSelect?: (pick: Selection) => void;
   onChangeView?: (doc: Doc) => void;
 }) {
   if (selection?.kind === "table" || (!selection && table && !view)) {
@@ -98,9 +102,10 @@ export function Detail({
           const key = memberKind === "dimension" ? "dimensions" : "facts";
           const payload = memberPayload(member, memberKind);
           const next = ((cube[key] as Member[]) || []).map((m) =>
-            m.name === payload.name ? payload : m,
+            m.name === found.name ? payload : m,
           );
           onSave({ ...cube, [key]: next });
+          onSelect?.({ kind: memberKind, name: payload.name });
         }}
       />
     );
@@ -110,13 +115,28 @@ export function Detail({
     const doc =
       pool?.find((d) => d.name === selection.name) ||
       docs.find((d) => d.kind === selection.kind && d.name === selection.name);
-    return <EditableDocDetail doc={doc} view={view} busy={busy} onSave={onSave} />;
+    return (
+      <EditableDocDetail
+        doc={doc}
+        view={view}
+        busy={busy}
+        onSave={(next) => onSave(next, doc?.name)}
+        onSelect={onSelect}
+      />
+    );
   }
   if (selection?.kind === "cube" && cube) {
     return <CubeDetail cube={cube} view={view} tables={tables} busy={busy} onSave={onSave} />;
   }
   if (selection?.kind === "view" || view) {
-    return <ViewDetail doc={view} onChangeView={onChangeView} />;
+    return (
+      <ViewDetail
+        doc={view}
+        tables={tables}
+        showColumns={tab === "cubes"}
+        onChangeView={onChangeView}
+      />
+    );
   }
   return <Text size="2" color="gray">Select a table, join, column, view, or cube member.</Text>;
 }
@@ -167,7 +187,7 @@ function TableDetail({
   const fks = Array.isArray(doc.fk) ? (doc.fk as TableFk[]) : [];
   const source = view?.sources?.find((s) => sourceLabel(s) === sourceKey);
 
-  function saveTable() {
+  function applyFilters() {
     const parsed = parseRole(role);
     const next = {
       ...doc,
@@ -237,7 +257,7 @@ function TableDetail({
       <div className="table-detail-col" role="region" aria-label="Table filters">
         <Flex align="center" justify="between" mb="2">
           <Heading size="2">Filters</Heading>
-          <Button size="1" disabled={busy} onClick={saveTable}>Save filters</Button>
+          <Button size="1" disabled={busy} onClick={applyFilters}>Apply</Button>
         </Flex>
         <div className="filter-stack">
           <Flex className="filter-row" gap="2" align="center">
@@ -567,10 +587,20 @@ function ColumnDetail({
   );
 }
 
-function ViewDetail({ doc, onChangeView }: { doc?: Doc; onChangeView?: (doc: Doc) => void }) {
+function ViewDetail({
+  doc,
+  tables,
+  showColumns,
+  onChangeView,
+}: {
+  doc?: Doc;
+  tables: Doc[];
+  showColumns: boolean;
+  onChangeView?: (doc: Doc) => void;
+}) {
   if (!doc) return <Text size="2" color="gray">No view open.</Text>;
-  return (
-    <div>
+  const fields = (
+    <>
       <Heading size="3" weight="medium" mb="3">view · {doc.name}</Heading>
       <div className="fields">
         <Field label="Combine"><Text size="2">{doc.combine}</Text></Field>
@@ -583,6 +613,40 @@ function ViewDetail({ doc, onChangeView }: { doc?: Doc; onChangeView?: (doc: Doc
         </Field>
       </div>
       <Text size="1" color="gray" as="p" mt="3">Save from the view header.</Text>
+    </>
+  );
+  if (!showColumns) return <div>{fields}</div>;
+  const columns = (doc.columns || []).map((c) => columnMeta(doc, c.name, tables));
+  return (
+    <div className="table-detail view-detail">
+      <div className="table-detail-col" role="region" aria-label="View">
+        {fields}
+      </div>
+      <div className="table-detail-col" role="region" aria-label="View columns">
+        <Heading size="2" mb="2">Columns</Heading>
+        {columns.length ? (
+          <table className="col-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Type</th>
+                <th>PK</th>
+              </tr>
+            </thead>
+            <tbody>
+              {columns.map((c) => (
+                <tr key={c.name}>
+                  <td><Text size="2" weight="medium">{c.name}</Text></td>
+                  <td><Text size="2" color="gray">{c.type}</Text></td>
+                  <td><Text size="2" color="gray">{c.pk ? "yes" : "no"}</Text></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <Text size="2" color="gray">No columns.</Text>
+        )}
+      </div>
     </div>
   );
 }
@@ -607,11 +671,24 @@ function MemberDetail({
     <div>
       <Flex align="center" justify="between" mb="3">
         <Heading size="3" weight="medium">{kind} · {local.name}</Heading>
-        <Button disabled={busy} onClick={() => onSave(local)}>Save</Button>
+        <Button disabled={busy} onClick={() => onSave(local)}>Apply</Button>
       </Flex>
       <div className="fields">
+        <Field label="Name">
+          <TextField.Root
+            size="2"
+            value={local.name}
+            onChange={(e) => setLocal({ ...local, name: e.target.value })}
+            aria-label="Member name"
+          />
+        </Field>
         <Field label="Description">
-          <TextField.Root size="2" value={local.description || ""} onChange={(e) => setLocal({ ...local, description: e.target.value })} />
+          <TextField.Root
+            size="2"
+            value={local.description || ""}
+            onChange={(e) => setLocal({ ...local, description: e.target.value })}
+            aria-label="Member description"
+          />
         </Field>
         <Field label="Type">
           <Select.Root
@@ -761,7 +838,7 @@ function CubeDetail({
     <div>
       <Flex align="center" justify="between" mb="3">
         <Heading size="3" weight="medium">cube · {local.name}</Heading>
-        <Button disabled={busy} onClick={() => onSave(stripEmptyGrain(local))}>Save</Button>
+        <Button disabled={busy} onClick={() => onSave(stripEmptyGrain(local))}>Apply</Button>
       </Flex>
       <div className="fields">
         <Field label="Description">
@@ -769,6 +846,7 @@ function CubeDetail({
             size="2"
             value={local.description || ""}
             onChange={(e) => setLocal({ ...local, description: e.target.value })}
+            aria-label="Cube description"
           />
         </Field>
         <Field label="Grain">
@@ -830,11 +908,13 @@ function EditableDocDetail({
   view,
   busy,
   onSave,
+  onSelect,
 }: {
   doc?: Doc;
   view?: Doc;
   busy: boolean;
   onSave: (doc: Doc) => void;
+  onSelect?: (pick: Selection) => void;
 }) {
   const [local, setLocal] = useState(doc);
   useEffect(() => setLocal(doc), [doc]);
@@ -848,12 +928,26 @@ function EditableDocDetail({
         <Heading size="3" weight="medium">{local.kind} · {local.name}</Heading>
         <Button
           disabled={busy}
-          onClick={() => onSave(metricOrSegmentPayload(local))}
+          onClick={() => {
+            const next = metricOrSegmentPayload(local);
+            onSave(next);
+            if (next.kind === "metric" || next.kind === "segment") {
+              onSelect?.({ kind: next.kind, name: next.name });
+            }
+          }}
         >
           Save
         </Button>
       </Flex>
       <div className="fields">
+        <Field label="Name">
+          <TextField.Root
+            size="2"
+            value={local.name}
+            onChange={(e) => setLocal({ ...local, name: e.target.value })}
+            aria-label={local.kind === "metric" ? "Metric name" : "Segment name"}
+          />
+        </Field>
         <Field label="Description">
           <TextField.Root size="2" value={local.description || ""} onChange={(e) => setLocal({ ...local, description: e.target.value })} />
         </Field>

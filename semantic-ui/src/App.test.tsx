@@ -178,7 +178,7 @@ describe("production shell", () => {
     expect(within(filters).getByRole("textbox", { name: "Permission expression" }).closest(".filter-role")).toBeNull();
     await user.type(within(filters).getByRole("textbox", { name: "Permission role" }), "branch");
     await user.type(within(filters).getByRole("textbox", { name: "Permission expression" }), "region = :r");
-    await user.click(within(filters).getByRole("button", { name: "Save filters" }));
+    await user.click(within(filters).getByRole("button", { name: "Apply" }));
     expect(updated[0]?.scope_filter).toEqual({ expression: "id > 0" });
     expect(updated[0]?.default_filter).toEqual({ expression: "id IS NOT NULL" });
     expect(updated[0]?.permission_filters).toEqual([{ role: "branch", expression: "region = :r" }]);
@@ -216,7 +216,7 @@ describe("production shell", () => {
     await user.click(within(filters).getByRole("button", { name: "Remove default filter" }));
     await user.click(within(filters).getByRole("button", { name: "Remove permission filter" }));
     expect(within(filters).queryByRole("textbox", { name: "Permission role" })).toBeNull();
-    await user.click(within(filters).getByRole("button", { name: "Save filters" }));
+    await user.click(within(filters).getByRole("button", { name: "Apply" }));
     expect(updated[0]?.scope_filter).toBeNull();
     expect(updated[0]?.default_filter).toBeNull();
     expect(updated[0]?.permission_filters).toEqual([]);
@@ -315,6 +315,8 @@ describe("production shell", () => {
     const user = userEvent.setup();
     render(<App api={api()} />);
     const header = await screen.findByRole("toolbar", { name: "Detail header" });
+    expect(within(header).getByRole("button", { name: "Collapse detail" }).className).toMatch(/size-1/);
+    expect(within(header).getByRole("button", { name: "Collapse detail" }).querySelector("svg")?.getAttribute("width")).toBe("18");
     expect(within(header).getByRole("button", { name: "Standard detail" }).getAttribute("aria-pressed")).toBe("true");
     expect(document.querySelector(".detail-body")).toBeTruthy();
 
@@ -356,7 +358,308 @@ describe("production shell", () => {
     const user = userEvent.setup();
     render(<App api={api()} />);
     await user.click(await screen.findByRole("tab", { name: /Cubes/ }));
-    expect(screen.getByRole("region", { name: "Cube header" })).toBeTruthy();
+    const header = screen.getByRole("region", { name: "Cube header" });
+    expect(header).toBeTruthy();
+    expect(within(header).getByRole("button", { name: "New" })).toBeTruthy();
+    expect(within(header).getByRole("button", { name: "Open" })).toBeTruthy();
+    expect(within(header).getByRole("button", { name: "Rename" })).toBeTruthy();
+    expect(within(header).getByRole("button", { name: "Save" })).toBeTruthy();
+    expect(within(header).getByRole("button", { name: "Delete cube" })).toBeTruthy();
+  });
+
+  it("opens a saved cube from the Open dialog", async () => {
+    const user = userEvent.setup();
+    render(
+      <App
+        api={api([
+          { kind: "table", name: "account", target: "bird", table: "account", columns: [{ name: "id", type: "int", nullable: false }], pk: ["id"] },
+          {
+            kind: "view",
+            name: "accounts",
+            target: "bird",
+            combine: "join",
+            description: "",
+            sources: [{ kind: "table", table: "account" }],
+            columns: [{ name: "id", mappings: [{ source: "account", column: "id" }] }],
+            joins: [],
+          },
+          {
+            kind: "view",
+            name: "loans",
+            target: "bird",
+            combine: "join",
+            description: "",
+            sources: [{ kind: "table", table: "account" }],
+            columns: [{ name: "id", mappings: [{ source: "account", column: "id" }] }],
+            joins: [],
+          },
+          {
+            kind: "cube",
+            name: "accounts_cube",
+            target: "bird",
+            view: "accounts",
+            description: "",
+            dimensions: [],
+            facts: [],
+          },
+          {
+            kind: "cube",
+            name: "loans_cube",
+            target: "bird",
+            view: "loans",
+            description: "",
+            dimensions: [],
+            facts: [],
+          },
+        ])}
+      />,
+    );
+    await user.click(await screen.findByRole("tab", { name: /Cubes/ }));
+    expect(screen.getByRole("heading", { name: "No cube" })).toBeTruthy();
+    await openSavedCube(user, "loans_cube");
+    expect(screen.getByRole("heading", { name: "loans_cube" })).toBeTruthy();
+    expect(screen.getByLabelText("Choice stack").textContent).toContain("loans");
+    expect(screen.queryByRole("heading", { name: "accounts_cube" })).toBeNull();
+  });
+
+  it("does not open a cube when a catalog view is clicked", async () => {
+    const user = userEvent.setup();
+    render(
+      <App
+        api={api([
+          { kind: "table", name: "account", target: "bird", table: "account", columns: [{ name: "id", type: "int", nullable: false }], pk: ["id"] },
+          {
+            kind: "view",
+            name: "accounts",
+            target: "bird",
+            combine: "join",
+            description: "",
+            sources: [{ kind: "table", table: "account" }],
+            columns: [{ name: "id", mappings: [{ source: "account", column: "id" }] }],
+            joins: [],
+          },
+          {
+            kind: "cube",
+            name: "cube_a",
+            target: "bird",
+            view: "accounts",
+            description: "",
+            dimensions: [],
+            facts: [],
+          },
+          {
+            kind: "cube",
+            name: "cube_b",
+            target: "bird",
+            view: "accounts",
+            description: "",
+            dimensions: [],
+            facts: [],
+          },
+        ])}
+      />,
+    );
+    await user.click(await screen.findByRole("tab", { name: /Cubes/ }));
+    await user.click(screen.getByRole("button", { name: "accounts" }));
+    expect(screen.getByRole("heading", { name: "No cube" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "cube cube_a" })).toBeNull();
+    await openSavedCube(user, "cube_b");
+    expect(screen.getByRole("heading", { name: "cube_b" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "accounts" }));
+    expect(screen.getByRole("heading", { name: "cube_b" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "cube_a" })).toBeNull();
+  });
+
+  it("adds catalog views to the choice stack by dragging and has no add button", async () => {
+    const user = userEvent.setup();
+    render(
+      <App
+        api={api([
+          { kind: "table", name: "account", target: "bird", table: "account", columns: [{ name: "id", type: "int", nullable: false }], pk: ["id"] },
+          {
+            kind: "view",
+            name: "accounts",
+            target: "bird",
+            combine: "join",
+            description: "",
+            sources: [{ kind: "table", table: "account" }],
+            columns: [{ name: "id", mappings: [{ source: "account", column: "id" }] }],
+            joins: [],
+          },
+          {
+            kind: "view",
+            name: "loans",
+            target: "bird",
+            combine: "join",
+            description: "",
+            sources: [{ kind: "table", table: "account" }],
+            columns: [{ name: "id", mappings: [{ source: "account", column: "id" }] }],
+            joins: [],
+          },
+        ])}
+      />,
+    );
+    await user.click(await screen.findByRole("tab", { name: /Cubes/ }));
+    expect(screen.queryByRole("button", { name: "Add to cube stack" })).toBeNull();
+    const stack = screen.getByLabelText("Choice stack");
+    dropOnto(screen.getByRole("button", { name: "accounts" }), stack);
+    expect(screen.getByLabelText("Choice stack").textContent).toContain("accounts");
+    dropOnto(screen.getByRole("button", { name: "loans" }), stack);
+    expect(screen.getByLabelText("Choice stack").textContent).toContain("accounts");
+    expect(screen.getByLabelText("Choice stack").textContent).toContain("loans");
+  });
+
+  it("shows mapped view columns beside view detail on the cubes tab", async () => {
+    const user = userEvent.setup();
+    render(
+      <App
+        api={api([
+          { kind: "table", name: "account", target: "bird", table: "account", columns: [{ name: "id", type: "int", nullable: false }], pk: ["id"] },
+          {
+            kind: "view",
+            name: "accounts",
+            target: "bird",
+            combine: "join",
+            description: "",
+            sources: [{ kind: "table", table: "account" }],
+            columns: [{ name: "id", mappings: [{ source: "account", column: "id" }] }],
+            joins: [],
+          },
+        ])}
+      />,
+    );
+    await user.click(await screen.findByRole("tab", { name: /Cubes/ }));
+    await user.click(screen.getByRole("button", { name: "accounts" }));
+    const detail = screen.getByRole("region", { name: "Detail" });
+    expect(within(detail).getByRole("heading", { name: "view · accounts" })).toBeTruthy();
+    expect(within(detail).getByText("join")).toBeTruthy();
+    const cols = within(detail).getByRole("region", { name: "View columns" });
+    expect(within(cols).getByRole("columnheader", { name: "Name" })).toBeTruthy();
+    expect(within(cols).getByRole("columnheader", { name: "Type" })).toBeTruthy();
+    expect(within(cols).getByRole("columnheader", { name: "PK" })).toBeTruthy();
+    expect(within(cols).getByText("id")).toBeTruthy();
+    expect(within(cols).getByText("int")).toBeTruthy();
+    expect(within(cols).getByText("yes")).toBeTruthy();
+  });
+
+  it("applies cube and dimension drafts until the cube header saves", async () => {
+    const updated: Doc[] = [];
+    const user = userEvent.setup();
+    render(
+      <App
+        api={
+          {
+            ...api([
+              { kind: "table", name: "account", target: "bird", table: "account", columns: [{ name: "id", type: "int", nullable: false }], pk: ["id"] },
+              {
+                kind: "view",
+                name: "accounts",
+                target: "bird",
+                combine: "join",
+                description: "",
+                sources: [{ kind: "table", table: "account" }],
+                columns: [{ name: "id", mappings: [{ source: "account", column: "id" }] }],
+                joins: [],
+              },
+              {
+                kind: "cube",
+                name: "accounts_cube",
+                target: "bird",
+                view: "accounts",
+                description: "",
+                dimensions: [{ name: "id", description: "", type: "code", column: "id", encryption: false }],
+                facts: [],
+              },
+            ]),
+            update: async (_kind: string, _name: string, doc: Doc) => {
+              updated.push(doc);
+            },
+          } as unknown as AuthorApi
+        }
+      />,
+    );
+    await user.click(await screen.findByRole("tab", { name: /Cubes/ }));
+    await openSavedCube(user, "accounts_cube");
+    await user.click(screen.getByRole("button", { name: "cube accounts_cube" }));
+    await user.type(screen.getByRole("textbox", { name: "Cube description" }), "cube note");
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    expect(updated).toEqual([]);
+    await user.click(within(screen.getByRole("complementary", { name: "Inspector" })).getByRole("button", { name: "PKcodeid" }));
+    await user.type(screen.getByRole("textbox", { name: "Member description" }), "dim note");
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    expect(updated).toEqual([]);
+    await user.click(within(screen.getByRole("region", { name: "Cube header" })).getByRole("button", { name: "Save" }));
+    expect(updated.some((d) => d.kind === "cube" && String(d.description || "").includes("cube note"))).toBe(true);
+    expect(
+      updated.some(
+        (d) =>
+          d.kind === "cube" &&
+          (d.dimensions || []).some((m) => m.name === "id" && String(m.description || "").includes("dim note")),
+      ),
+    ).toBe(true);
+  });
+
+  it("removes a view from the choice stack without deleting the view document", async () => {
+    const removed: string[] = [];
+    const user = userEvent.setup();
+    render(
+      <App
+        api={
+          {
+            ...api([
+              { kind: "table", name: "account", target: "bird", table: "account", columns: [{ name: "id", type: "int", nullable: false }], pk: ["id"] },
+              {
+                kind: "view",
+                name: "loans",
+                target: "bird",
+                combine: "join",
+                description: "",
+                sources: [{ kind: "table", table: "account" }],
+                columns: [{ name: "id", mappings: [{ source: "account", column: "id" }] }],
+                joins: [],
+              },
+              {
+                kind: "view",
+                name: "accounts",
+                target: "bird",
+                combine: "join",
+                description: "",
+                sources: [{ kind: "table", table: "account" }],
+                columns: [{ name: "id", mappings: [{ source: "account", column: "id" }] }],
+                joins: [],
+              },
+              {
+                kind: "cube",
+                name: "accounts_cube",
+                target: "bird",
+                view: "accounts",
+                description: "",
+                dimensions: [],
+                facts: [],
+                choice: [{ view: "loans", summary: true }],
+              },
+            ]),
+            remove: async (kind: string, name: string) => {
+              removed.push(`${kind}/${name}`);
+            },
+          } as unknown as AuthorApi
+        }
+      />,
+    );
+    await user.click(await screen.findByRole("tab", { name: /Cubes/ }));
+    await openSavedCube(user, "accounts_cube");
+    const stack = screen.getByLabelText("Choice stack");
+    const handle = stack.querySelector(".drag-handle svg");
+    expect(handle).toBeTruthy();
+    expect(handle?.getAttribute("width")).toBe("12");
+    expect(handle?.getAttribute("height")).toBe("16");
+    expect(stack.textContent).not.toContain("⋮");
+    expect(stack.textContent).toContain("loans");
+    expect(stack.textContent).toContain("accounts");
+    await user.click(within(stack).getByRole("button", { name: "Remove loans from stack" }));
+    expect(screen.getByLabelText("Choice stack").textContent).not.toContain("loans");
+    expect(screen.getByLabelText("Choice stack").textContent).toContain("accounts");
+    expect(removed).toEqual([]);
   });
 
   it("does not duplicate join/union/minus under the view name", async () => {
@@ -592,6 +895,87 @@ describe("production shell", () => {
     expect(created.some((c) => c.combine === "union")).toBe(true);
   });
 
+  it("keeps five union sources after catalog drops", async () => {
+    const columns = [
+      { name: "id", type: "int", nullable: false },
+      { name: "name", type: "text", nullable: true },
+    ];
+    const names = ["t1", "t2", "t3", "t4", "t5"];
+    render(
+      <App
+        api={api(
+          names.map((name) => ({
+            kind: "table",
+            name,
+            target: "bird",
+            table: name,
+            columns,
+            pk: ["id"],
+          })),
+        )}
+      />,
+    );
+    await screen.findByRole("button", { name: "t1" });
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText("View type"));
+    await user.click(await screen.findByRole("option", { name: "union" }));
+    const canvas = screen.getByRole("main", { name: "Canvas" });
+    for (const name of names) {
+      dropOnto(screen.getByRole("button", { name }), canvas);
+    }
+    const union = screen.getByLabelText("union canvas");
+    for (const name of names) {
+      expect(union.textContent).toContain(name);
+    }
+  });
+
+  it("appends a table onto an opened union view that already has sources", async () => {
+    const columns = [
+      { name: "id", type: "int", nullable: false },
+      { name: "name", type: "text", nullable: true },
+    ];
+    render(
+      <App
+        api={api([
+          { kind: "table", name: "t1", target: "bird", table: "t1", columns, pk: ["id"] },
+          { kind: "table", name: "t2", target: "bird", table: "t2", columns, pk: ["id"] },
+          { kind: "table", name: "t3", target: "bird", table: "t3", columns, pk: ["id"] },
+          {
+            kind: "view",
+            name: "u",
+            target: "bird",
+            combine: "union",
+            description: "",
+            sources: [
+              { kind: "table", table: "t1" },
+              { kind: "table", table: "t2" },
+            ],
+            columns: [
+              {
+                name: "id",
+                mappings: [
+                  { source: "t1", column: "id" },
+                  { source: "t2", column: "id" },
+                ],
+              },
+            ],
+          },
+        ])}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Open" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("combobox", { name: "Open view name" }));
+    await user.click(await screen.findByRole("option", { name: "u" }));
+    await user.click(within(dialog).getByRole("button", { name: "Open" }));
+    dropOnto(screen.getByRole("button", { name: "t3" }), screen.getByLabelText("union canvas"));
+    const union = screen.getByLabelText("union canvas");
+    expect(union.textContent).toContain("t1");
+    expect(union.textContent).toContain("t2");
+    expect(union.textContent).toContain("t3");
+  });
+
   it("guards table delete when a view references it", async () => {
     const user = userEvent.setup();
     const removed: string[] = [];
@@ -654,7 +1038,7 @@ describe("production shell", () => {
       />,
     );
     await user.click(await screen.findByRole("tab", { name: /Cubes/ }));
-    await user.click(screen.getByRole("button", { name: "accounts" }));
+    await openSavedCube(user, "accounts_cube");
     await user.click(screen.getByRole("button", { name: "Add metric" }));
     expect(screen.getByRole("heading", { name: /metric · / })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Add segment" }));
@@ -662,6 +1046,175 @@ describe("production shell", () => {
     await user.click(within(screen.getByRole("region", { name: "Cube header" })).getByRole("button", { name: "Save" }));
     expect(created.some((c) => c.kind === "metric")).toBe(true);
     expect(created.some((c) => c.kind === "segment")).toBe(true);
+  });
+
+  it("applies a renamed dimension into the cube draft", async () => {
+    const updated: Doc[] = [];
+    const user = userEvent.setup();
+    render(
+      <App
+        api={
+          {
+            ...api([
+              { kind: "table", name: "account", target: "bird", table: "account", columns: [{ name: "id", type: "int", nullable: false }], pk: ["id"] },
+              {
+                kind: "view",
+                name: "accounts",
+                target: "bird",
+                combine: "join",
+                description: "",
+                sources: [{ kind: "table", table: "account" }],
+                columns: [{ name: "id", mappings: [{ source: "account", column: "id" }] }],
+                joins: [],
+              },
+              {
+                kind: "cube",
+                name: "accounts_cube",
+                target: "bird",
+                view: "accounts",
+                description: "",
+                dimensions: [{ name: "id", description: "", type: "code", column: "id", encryption: false }],
+                facts: [],
+              },
+            ]),
+            update: async (_kind: string, _name: string, doc: Doc) => {
+              updated.push(doc);
+            },
+          } as unknown as AuthorApi
+        }
+      />,
+    );
+    await user.click(await screen.findByRole("tab", { name: /Cubes/ }));
+    await openSavedCube(user, "accounts_cube");
+    await user.click(within(screen.getByRole("complementary", { name: "Inspector" })).getByRole("button", { name: "PKcodeid" }));
+    const name = screen.getByRole("textbox", { name: "Member name" });
+    await user.clear(name);
+    await user.type(name, "account_id");
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    expect(updated).toEqual([]);
+    expect(within(screen.getByRole("complementary", { name: "Inspector" })).getByText("account_id")).toBeTruthy();
+    await user.click(within(screen.getByRole("region", { name: "Cube header" })).getByRole("button", { name: "Save" }));
+    expect(updated.some((d) => d.kind === "cube" && (d.dimensions || []).some((m) => m.name === "account_id"))).toBe(true);
+    expect(updated.some((d) => d.kind === "cube" && (d.dimensions || []).some((m) => m.name === "id"))).toBe(false);
+  });
+
+  it("lists cube members as PK, type, then name like view columns", async () => {
+    const user = userEvent.setup();
+    render(
+      <App
+        api={api([
+          { kind: "table", name: "account", target: "bird", table: "account", columns: [{ name: "id", type: "int", nullable: false }], pk: ["id"] },
+          {
+            kind: "view",
+            name: "accounts",
+            target: "bird",
+            combine: "join",
+            description: "",
+            sources: [{ kind: "table", table: "account" }],
+            columns: [{ name: "id", mappings: [{ source: "account", column: "id" }] }],
+            joins: [],
+          },
+          {
+            kind: "cube",
+            name: "accounts_cube",
+            target: "bird",
+            view: "accounts",
+            description: "",
+            dimensions: [{ name: "account_id", description: "account key", type: "code", column: "id", encryption: false }],
+            facts: [],
+          },
+        ])}
+      />,
+    );
+    await user.click(await screen.findByRole("tab", { name: /Cubes/ }));
+    await openSavedCube(user, "accounts_cube");
+    const inspector = screen.getByRole("complementary", { name: "Inspector" });
+    const row = within(inspector).getByRole("button", { name: "PKcodeaccount_id" });
+    expect(row.className).toMatch(/col-row/);
+    const pk = within(row).getByText("PK");
+    const type = within(row).getByText("code");
+    const name = within(row).getByText("account_id");
+    expect(pk.compareDocumentPosition(type) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(type.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("offers id as a dimension type", async () => {
+    const user = userEvent.setup();
+    render(
+      <App
+        api={api([
+          { kind: "table", name: "account", target: "bird", table: "account", columns: [{ name: "id", type: "int", nullable: false }], pk: ["id"] },
+          {
+            kind: "view",
+            name: "accounts",
+            target: "bird",
+            combine: "join",
+            description: "",
+            sources: [{ kind: "table", table: "account" }],
+            columns: [{ name: "id", mappings: [{ source: "account", column: "id" }] }],
+            joins: [],
+          },
+          {
+            kind: "cube",
+            name: "accounts_cube",
+            target: "bird",
+            view: "accounts",
+            description: "",
+            dimensions: [{ name: "id", description: "", type: "code", column: "id", encryption: false }],
+            facts: [],
+          },
+        ])}
+      />,
+    );
+    await user.click(await screen.findByRole("tab", { name: /Cubes/ }));
+    await openSavedCube(user, "accounts_cube");
+    await user.click(within(screen.getByRole("complementary", { name: "Inspector" })).getByRole("button", { name: "PKcodeid" }));
+    await user.click(screen.getByRole("combobox", { name: "Member type" }));
+    expect(await screen.findByRole("option", { name: "id" })).toBeTruthy();
+  });
+
+  it("saves a renamed metric as a new document name", async () => {
+    const created: Doc[] = [];
+    const removed: string[] = [];
+    const user = userEvent.setup();
+    render(
+      <App
+        api={
+          {
+            ...api([
+              { kind: "table", name: "account", target: "bird", table: "account", columns: [{ name: "id", type: "int", nullable: false }], pk: ["id"] },
+              {
+                kind: "view",
+                name: "accounts",
+                target: "bird",
+                combine: "join",
+                description: "",
+                sources: [{ kind: "table", table: "account" }],
+                columns: [{ name: "id", mappings: [{ source: "account", column: "id" }] }],
+                joins: [],
+              },
+              { kind: "cube", name: "accounts_cube", target: "bird", view: "accounts", description: "", dimensions: [], facts: [] },
+              { kind: "metric", name: "rows", target: "bird", cube: "accounts_cube", description: "", expression: "1", aggregation: "group", filter: null },
+            ]),
+            create: async (doc: Doc) => {
+              created.push(doc);
+            },
+            remove: async (kind: string, name: string) => {
+              removed.push(`${kind}/${name}`);
+            },
+          } as unknown as AuthorApi
+        }
+      />,
+    );
+    await user.click(await screen.findByRole("tab", { name: /Cubes/ }));
+    await openSavedCube(user, "accounts_cube");
+    await user.click(within(screen.getByRole("complementary", { name: "Inspector" })).getByRole("button", { name: /rows/ }));
+    const name = screen.getByRole("textbox", { name: "Metric name" });
+    await user.clear(name);
+    await user.type(name, "row_count");
+    await user.click(within(screen.getByRole("region", { name: "Detail" })).getByRole("button", { name: "Save" }));
+    expect(created.some((d) => d.kind === "metric" && d.name === "row_count")).toBe(true);
+    expect(removed).toEqual(["metric/rows"]);
   });
 
   it("shows API code and message and can dismiss the banner", async () => {
@@ -801,6 +1354,7 @@ describe("production shell", () => {
     expect(removed).toEqual(["view/accounts"]);
     expect(updated.some((c) => c.kind === "cube" && c.view === "loans")).toBe(true);
     await user.click(screen.getByRole("tab", { name: /Cubes/ }));
+    await openSavedCube(user, "accounts_cube");
     expect(screen.getByRole("heading", { name: "accounts_cube" })).toBeTruthy();
     expect(screen.getByLabelText("Choice stack").textContent).toContain("loans");
     expect(screen.getByLabelText("Choice stack").textContent).not.toContain("accounts");
@@ -878,6 +1432,17 @@ describe("production shell", () => {
     expect(created).toEqual([]);
   });
 });
+
+async function openSavedCube(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.click(within(screen.getByRole("region", { name: "Cube header" })).getByRole("button", { name: "Open" }));
+  const dialog = await screen.findByRole("dialog");
+  const combo = within(dialog).getByRole("combobox", { name: "Open cube name" });
+  if (combo.textContent !== name) {
+    await user.click(combo);
+    await user.click(await screen.findByRole("option", { name }));
+  }
+  await user.click(within(dialog).getByRole("button", { name: "Open" }));
+}
 
 function dropOnto(source: HTMLElement, target: HTMLElement) {
   const store: Record<string, string> = {};

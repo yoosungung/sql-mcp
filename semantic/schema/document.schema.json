@@ -443,8 +443,8 @@
           "description": "메타 사용(검색·동의어·업무 의미). 생성 출처(from table.column 등) 금지. 없으면 빈 문자열. search_columns 투영."
         },
         "type": {
-          "enum": ["code", "date", "time", "datetime", "string"],
-          "description": "dimension 타입."
+          "enum": ["id", "code", "date", "time", "datetime", "string"],
+          "description": "dimension 타입. id=식별 키, code=코드값."
         },
         "column": {
           "$ref": "#/$defs/name",

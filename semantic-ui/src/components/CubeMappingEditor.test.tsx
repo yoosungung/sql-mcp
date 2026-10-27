@@ -34,6 +34,41 @@ describe("CubeMappingEditor", () => {
     expect(screen.getByRole("checkbox", { name: "map id" }).getAttribute("data-state")).toBe("checked");
   });
 
+  it("defaults unmapped numeric columns to fact and pk columns to dimension", async () => {
+    const numericView: Doc = {
+      kind: "view",
+      name: "heroes",
+      sources: [{ kind: "table", table: "superhero" }],
+      columns: [
+        { name: "id", mappings: [{ source: "superhero", column: "id" }] },
+        { name: "strength", mappings: [{ source: "superhero", column: "strength" }] },
+      ],
+    };
+    const table: Doc = {
+      kind: "table",
+      name: "superhero",
+      columns: [
+        { name: "id", type: "int", nullable: false },
+        { name: "strength", type: "REAL", nullable: true },
+      ],
+      pk: ["id"],
+    };
+    render(
+      <Theme>
+        <CubeMappingEditor
+          open
+          onOpenChange={() => {}}
+          cube={cube}
+          views={[numericView]}
+          tables={[table]}
+          onApply={vi.fn()}
+        />
+      </Theme>,
+    );
+    expect((await screen.findByRole("combobox", { name: "kind id" }))).toHaveProperty("value", "dimension");
+    expect(screen.getByRole("combobox", { name: "kind strength" })).toHaveProperty("value", "fact");
+  });
+
   it("applies schema member fields including encryption", async () => {
     const user = userEvent.setup();
     const onApply = vi.fn();

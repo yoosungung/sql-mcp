@@ -87,7 +87,7 @@ export type Member = {
   role?: Role;
 };
 
-export const DIM_TYPES = ["code", "date", "time", "datetime", "string"] as const;
+export const DIM_TYPES = ["id", "code", "date", "time", "datetime", "string"] as const;
 export const FACT_TYPES = ["amount", "fx", "quantity"] as const;
 export const AGGREGATIONS = ["group", "rollup", "cube", "grouping_sets"] as const;
 

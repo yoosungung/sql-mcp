@@ -20,11 +20,8 @@ export function Catalog({
   onTogglePick,
   views,
   viewName,
-  checked,
-  onToggleCheck,
   onSelectView,
   busy,
-  onCombine,
   physicalCandidates,
   onRegister,
   onDeleteTable,
@@ -40,11 +37,8 @@ export function Catalog({
   onTogglePick: (name: string) => void;
   views: Doc[];
   viewName: string;
-  checked: string[];
-  onToggleCheck: (name: string) => void;
   onSelectView: (name: string) => void;
   busy: boolean;
-  onCombine: () => void;
   physicalCandidates: { schema: string; name: string }[];
   onRegister: (physical: { schema: string; name: string }[]) => Promise<void>;
   onDeleteTable: (name: string) => Promise<void>;
@@ -181,23 +175,23 @@ export function Catalog({
             </Box>
           ) : (
             <Box mt="3">
-              <Text size="1" color="gray" as="p" mb="2">Saved views. Check to build a cube choice stack.</Text>
+              <Text size="1" color="gray" as="p" mb="2">Saved views. Drag onto the choice stack.</Text>
               {views.map((v) => (
                 <Flex key={v.name} align="center" gap="2" className={viewName === v.name ? "nav-item on" : "nav-item"}>
-                  <Checkbox
-                    size="1"
-                    aria-label={`check ${v.name}`}
-                    checked={checked.includes(v.name)}
-                    onCheckedChange={() => onToggleCheck(v.name)}
-                  />
-                  <button type="button" className="nav-label" onClick={() => onSelectView(v.name)}>
+                  <button
+                    type="button"
+                    className="nav-label"
+                    draggable
+                    onDragStart={(event) => {
+                      event.dataTransfer.setData("text/plain", v.name);
+                      event.dataTransfer.effectAllowed = "copy";
+                    }}
+                    onClick={() => onSelectView(v.name)}
+                  >
                     {v.name}
                   </button>
                 </Flex>
               ))}
-              <Button mt="3" style={{ width: "100%" }} disabled={checked.length < 1 || busy} onClick={onCombine}>
-                Add to cube stack
-              </Button>
             </Box>
           )}
         </>
