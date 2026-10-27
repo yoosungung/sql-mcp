@@ -47,14 +47,29 @@ function sharedNames(tables: Doc[]): string[] {
 }
 
 /** Same-name columns across tables → one view column with multi-source mappings. */
+const NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+export function viewColumnName(physical: string, used: Set<string>): string {
+  let name = NAME_RE.test(physical) ? physical : logicalTableName(physical);
+  if (!used.has(name)) return name;
+  let n = 2;
+  while (used.has(`${name}_${n}`)) n += 1;
+  return `${name}_${n}`;
+}
+
 export function autoMatchColumns(tables: Doc[], preferNames?: string[]): ViewColumn[] {
   const names = preferNames?.length ? preferNames : unionNames(tables);
-  return names.map((name) => ({
-    name,
-    mappings: tables
-      .filter((t) => tableColumnNames(t).includes(name))
-      .map((t) => ({ source: t.name, column: name })),
-  })).filter((col) => col.mappings.length > 0);
+  const used = new Set<string>();
+  return names.map((physical) => {
+    const name = viewColumnName(physical, used);
+    used.add(name);
+    return {
+      name,
+      mappings: tables
+        .filter((t) => tableColumnNames(t).includes(physical))
+        .map((t) => ({ source: t.name, column: physical })),
+    };
+  }).filter((col) => col.mappings.length > 0);
 }
 
 export function autoMatchColumnsForSources(sources: Source[], tables: Doc[]): ViewColumn[] {
@@ -64,15 +79,20 @@ export function autoMatchColumnsForSources(sources: Source[], tables: Doc[]): Vi
     if (!table) continue;
     for (const col of tableColumnNames(table)) if (!names.includes(col)) names.push(col);
   }
+  const used = new Set<string>();
   return names
-    .map((name) => ({
-      name,
-      mappings: sources.flatMap((source) => {
-        const table = tables.find((t) => t.name === source.table);
-        if (!table || !tableColumnNames(table).includes(name)) return [];
-        return [{ source: sourceLabel(source), column: name }];
-      }),
-    }))
+    .map((physical) => {
+      const name = viewColumnName(physical, used);
+      used.add(name);
+      return {
+        name,
+        mappings: sources.flatMap((source) => {
+          const table = tables.find((t) => t.name === source.table);
+          if (!table || !tableColumnNames(table).includes(physical)) return [];
+          return [{ source: sourceLabel(source), column: physical }];
+        }),
+      };
+    })
     .filter((col) => col.mappings.length > 0);
 }
 
@@ -149,7 +169,7 @@ export function columnMeta(
   view: Doc,
   columnName: string,
   tables: Doc[],
-): { name: string; type: string; description: string; pk: boolean; mappings: ViewColumn["mappings"] } {
+): { name: string; type: string; pk: boolean; mappings: ViewColumn["mappings"] } {
   const col = (view.columns || []).find((c) => c.name === columnName);
   const mappings = col?.mappings || [];
   let type = "";
@@ -166,7 +186,6 @@ export function columnMeta(
   return {
     name: columnName,
     type: type || "—",
-    description: "",
     pk,
     mappings,
   };
@@ -189,7 +208,7 @@ export function physicalTableDoc(
     description: "",
     db: target,
     schema: physical.schema || "main",
-    table: logical,
+    table: physical.name,
     columns: columns.map((c) => ({
       name: c.name,
       type: c.data_type || "unknown",

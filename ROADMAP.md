@@ -82,6 +82,17 @@ D10/D11 조회 Admin API 취소는 유지한다. D30이 작성 HTTP `/api`를 �
 - [x] HTTP `/api/databases` · 물리 tables/sample · `/api/meta` CRUD. MCP는 조회만.
 - [x] sql-mcp 정적 파일 라우트. 빌드 산출물 `semantic-ui/dist` → `GET /ui/`
 
+## 남은 일 — semantic-ui · 스키마 화면 + API 오류
+
+정본 [`semantic/schema/document.schema.json`](semantic/schema/document.schema.json). **화면이 스키마 필드**를 편집한다. 없는 필드(view 컬럼 `description`)는 두지 않는다. **클라 JSON Schema 가드·Save 비활성은 없다.** 거절은 `POST`/`PUT /api/meta` 400 `{ code, message }`를 배너에 나눈다. 내용 [`semantic-ui/DESIGN.md`](semantic-ui/DESIGN.md).
+
+- [x] `/api` 오류 배너: code · message · 닫기
+- [x] Columns/Column Detail은 PK · type · name · mappings. `table.table`=물리명
+- [x] View type 전환이 join 화면/`joins` 키를 맞춘다
+- [x] Map members Kind dim/fact. Member: type enum · column XOR expression · encryption · as_code · additive · role
+- [x] 큐브 Detail: description · grain · role. Add metric/segment · aggregation/`group_by`/filter/`role`
+- [x] Rename은 새 문서 저장 후 옛 DELETE. 마지막 뷰 Delete는 큐브를 `view: ""`로 고치지 않음
+
 ## 구현 시 작업 규칙
 
 1. 계획 → 이 파일 · 계약 → `ARCHITECTURE.md` · 등록 스키마 → `semantic/` · 서버 내부 → `server/DESIGN.md`

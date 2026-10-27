@@ -16,6 +16,8 @@ export function Inspector({
   onSelect,
   onOpenViewMapping,
   onOpenCubeMapping,
+  onAddMetric,
+  onAddSegment,
   onChangeView,
 }: {
   open: boolean;
@@ -30,6 +32,8 @@ export function Inspector({
   onSelect: (pick: Selection) => void;
   onOpenViewMapping: () => void;
   onOpenCubeMapping: () => void;
+  onAddMetric?: () => void;
+  onAddSegment?: () => void;
   onChangeView?: (view: Doc) => void;
 }) {
   return (
@@ -85,7 +89,11 @@ export function Inspector({
               </>
             )}
             {tab === "cubes" && cube && (
-              <Button size="1" variant="soft" onClick={onOpenCubeMapping}>Map members</Button>
+              <>
+                <Button size="1" variant="soft" onClick={onOpenCubeMapping}>Map members</Button>
+                <Button size="1" variant="soft" onClick={onAddMetric}>Add metric</Button>
+                <Button size="1" variant="soft" onClick={onAddSegment}>Add segment</Button>
+              </>
             )}
           </>
         )}
@@ -143,7 +151,6 @@ function ColumnsPanel({
             </Badge>
             <Text size="1" color="gray">{meta.type}</Text>
             <Text size="2" weight="medium">{col.name}</Text>
-            <Text size="1" color="gray">{meta.description || ""}</Text>
           </button>
         );
       })}
@@ -168,7 +175,13 @@ function MembersPanel({
   if (!cube) return <Text size="2" color="gray">Select or create a cube.</Text>;
   return (
     <Flex direction="column" gap="2" className="tree">
-      <Text size="2">cube {cube.name}</Text>
+      <button
+        type="button"
+        className={selected?.kind === "cube" ? "nav-item on" : "nav-item"}
+        onClick={() => onSelect({ kind: "cube", name: cube.name })}
+      >
+        <Text size="2" weight="medium">cube {cube.name}</Text>
+      </button>
       <Group title="Dimensions" items={cube.dimensions || []} kind="dimension" selected={selected} onSelect={onSelect} />
       <Group title="Facts" items={cube.facts || []} kind="fact" selected={selected} onSelect={onSelect} />
       <Group title="Metrics" items={metrics} kind="metric" selected={selected} onSelect={onSelect} />

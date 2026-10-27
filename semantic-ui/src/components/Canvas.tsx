@@ -1,6 +1,6 @@
 import { useState, type DragEvent } from "react";
 import { Badge, Flex, Heading, Text } from "@radix-ui/themes";
-import type { Doc } from "../model";
+import { applyCombine, type Doc } from "../model";
 import type { TableCombine } from "./docs";
 import { JoinCanvas } from "./JoinCanvas";
 import { UnionCanvas } from "./UnionCanvas";
@@ -129,7 +129,7 @@ export function Canvas({
           onDelete={onDeleteView}
           onCombineChange={(c) => {
             onCombine(c);
-            if (live) onChangeView({ ...live, combine: c });
+            if (live) onChangeView(applyCombine(live, c));
           }}
         />
         {live && kind === "join" ? (

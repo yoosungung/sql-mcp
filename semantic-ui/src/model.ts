@@ -15,6 +15,11 @@ export type Doc = {
   facts?: Member[];
   choice?: CubeChoice[];
   prefer?: string;
+  grain?: string[];
+  role?: Role;
+  group_by?: string[];
+  encryption?: boolean;
+  additive?: boolean;
   expression?: string;
   aggregation?: string;
   filter?: { expression?: string } | null;
@@ -61,13 +66,68 @@ export type Mapping = { source: string; column: string };
 
 export type ViewColumn = { name: string; mappings: Mapping[] };
 
+export type AsCode = {
+  table: string;
+  key_column: string;
+  value_column: string;
+  where?: string;
+};
+
+export type Role = "all" | string[];
+
 export type Member = {
   name: string;
   description?: string;
   type?: string;
   column?: string;
   expression?: string;
+  encryption?: boolean;
+  as_code?: AsCode;
+  additive?: boolean;
+  role?: Role;
 };
+
+export const DIM_TYPES = ["code", "date", "time", "datetime", "string"] as const;
+export const FACT_TYPES = ["amount", "fx", "quantity"] as const;
+export const AGGREGATIONS = ["group", "rollup", "cube", "grouping_sets"] as const;
+
+export function roleText(role?: Role): string {
+  if (!role || role === "all") return "all";
+  return role.join(", ");
+}
+
+export function parseRole(text: string): Role | undefined {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed === "all") return undefined;
+  return trimmed.split(/[,\s]+/).filter(Boolean);
+}
+
+export function memberPayload(member: Member, kind: "dimension" | "fact"): Member {
+  const next: Member = {
+    name: member.name,
+    description: member.description ?? "",
+    type: member.type || (kind === "fact" ? "quantity" : "string"),
+    encryption: member.encryption ?? false,
+  };
+  if ((member.expression || "").trim()) next.expression = member.expression!.trim();
+  else if ((member.column || "").trim()) next.column = member.column!.trim();
+  if (kind === "dimension" && member.as_code?.table && member.as_code.key_column && member.as_code.value_column) {
+    next.as_code = { ...member.as_code };
+  }
+  if (kind === "fact" && member.additive === false) next.additive = false;
+  if (member.role && member.role !== "all") next.role = member.role;
+  return next;
+}
+
+export function applyCombine(view: Doc, combine: "join" | "union" | "minus"): Doc {
+  const next: Doc = { ...view, combine };
+  if (combine === "join") {
+    next.joins = view.joins || [];
+    return next;
+  }
+  delete next.joins;
+  return next;
+}
 
 export function forTarget(docs: Doc[], kind: string, target: string): Doc[] {
   return docs
@@ -184,7 +244,8 @@ export function choiceStack(cube?: Doc): string[] {
 
 export function withChoiceStack(cube: Doc, names: string[]): Doc {
   if (names.length === 0) {
-    const next = { ...cube, view: "" };
+    const next = { ...cube };
+    delete next.view;
     delete next.choice;
     delete next.prefer;
     return next;

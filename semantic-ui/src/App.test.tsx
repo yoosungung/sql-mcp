@@ -2,7 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import type { AuthorApi } from "./api";
+import { ApiError, type AuthorApi } from "./api";
 import type { Doc } from "./model";
 
 vi.mock("./components/JoinCanvas", () => ({
@@ -167,7 +167,7 @@ describe("production shell", () => {
           update: async (_kind, _name, doc) => {
             updated.push(doc);
           },
-        }}
+        } as AuthorApi}
       />,
     );
     const filters = await screen.findByRole("region", { name: "Table filters" });
@@ -207,7 +207,7 @@ describe("production shell", () => {
           update: async (_kind, _name, doc) => {
             updated.push(doc);
           },
-        }}
+        } as AuthorApi}
       />,
     );
     const filters = await screen.findByRole("region", { name: "Table filters" });
@@ -296,6 +296,7 @@ describe("production shell", () => {
     const col = within(detail).getByRole("region", { name: "Column" });
     const maps = within(detail).getByRole("region", { name: "Column mappings" });
     expect(col.compareDocumentPosition(maps) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(maps.querySelector(".column-map-fields")).toBeTruthy();
     await user.click(within(detail).getByRole("combobox", { name: "Map account" }));
     await user.click(await screen.findByRole("option", { name: "name" }));
     expect(within(detail).getByRole("combobox", { name: "Map account" }).textContent).toMatch(/name/);
@@ -658,9 +659,80 @@ describe("production shell", () => {
     expect(screen.getByRole("heading", { name: /metric · / })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Add segment" }));
     expect(screen.getByRole("heading", { name: /segment · / })).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(within(screen.getByRole("region", { name: "Cube header" })).getByRole("button", { name: "Save" }));
     expect(created.some((c) => c.kind === "metric")).toBe(true);
     expect(created.some((c) => c.kind === "segment")).toBe(true);
+  });
+
+  it("shows API code and message and can dismiss the banner", async () => {
+    const user = userEvent.setup();
+    render(
+      <App
+        api={
+          {
+            ...api(),
+            create: async () => {
+              throw new ApiError("validation", "view columns required", 400);
+            },
+          } as unknown as AuthorApi
+        }
+      />,
+    );
+    await user.click(await screen.findByRole("button", { name: "New" }));
+    await user.type(screen.getByRole("textbox", { name: "New view name" }), "draft");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/validation/);
+    expect(alert.textContent).toMatch(/view columns required/);
+    await user.click(screen.getByRole("button", { name: "Dismiss error" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("deletes the previous view after a rename save", async () => {
+    const created: string[] = [];
+    const removed: string[] = [];
+    const user = userEvent.setup();
+    const docs: Doc[] = [
+      { kind: "table", name: "account", target: "bird", table: "account", columns: [{ name: "id", type: "int", nullable: false }], pk: ["id"] },
+      {
+        kind: "view",
+        name: "accounts",
+        target: "bird",
+        combine: "join",
+        description: "",
+        sources: [{ kind: "table", table: "account" }],
+        columns: [{ name: "id", mappings: [{ source: "account", column: "id" }] }],
+        joins: [],
+      },
+    ];
+    render(
+      <App
+        api={
+          {
+            ...api(docs),
+            create: async (doc: Doc) => {
+              created.push(`${doc.kind}/${doc.name}`);
+            },
+            remove: async (kind: string, name: string) => {
+              removed.push(`${kind}/${name}`);
+            },
+          } as unknown as AuthorApi
+        }
+      />,
+    );
+    await user.click(await screen.findByRole("button", { name: "Open" }));
+    const openDialog = await screen.findByRole("dialog");
+    await user.click(within(openDialog).getByRole("button", { name: "Open" }));
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    const renameDialog = await screen.findByRole("dialog");
+    const rename = within(renameDialog).getByRole("textbox", { name: "Rename view name" });
+    await user.clear(rename);
+    await user.type(rename, "heroes");
+    await user.click(within(renameDialog).getByRole("button", { name: "Rename" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(created).toEqual(["view/heroes"]);
+    expect(removed).toEqual(["view/accounts"]);
   });
 
   it("deletes an open view without deleting its cube and drops it from the stack", async () => {
@@ -707,7 +779,7 @@ describe("production shell", () => {
           {
             ...api(list),
             listDocs: async () => list,
-            update: async (_kind: string, _name: string, doc: { kind?: string; view?: string; choice?: unknown }) => {
+            update: async (_kind: string, _name: string, doc: Doc) => {
               updated.push(doc);
               list = list.map((d) => (d.kind === doc.kind && d.name === _name ? { ...d, ...doc } : d));
             },

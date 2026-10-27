@@ -4,8 +4,27 @@ export type Database = { name: string; description?: string; engine?: string };
 export type PhysicalTable = { schema: string; name: string };
 export type PhysicalColumn = { name: string; data_type?: string; nullable?: boolean };
 
-function apiError(data: { message?: string; code?: string }, text: string, status: number): Error {
-  return new Error(data.message || data.code || text || `HTTP ${status}`);
+export type BannerError = { code?: string; message: string };
+
+export class ApiError extends Error {
+  readonly code?: string;
+  readonly status: number;
+  constructor(code: string | undefined, message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
+export function bannerError(e: unknown): BannerError {
+  if (e instanceof ApiError) return { code: e.code, message: e.message };
+  if (e instanceof Error) return { message: e.message };
+  return { message: String(e) };
+}
+
+function apiError(data: { message?: string; code?: string }, text: string, status: number): ApiError {
+  return new ApiError(data.code, data.message || data.code || text || `HTTP ${status}`, status);
 }
 
 export class AuthorApi {

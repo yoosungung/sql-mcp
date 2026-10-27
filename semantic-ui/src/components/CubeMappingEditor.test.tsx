@@ -31,6 +31,26 @@ describe("CubeMappingEditor", () => {
     const box = await screen.findByRole("checkbox", { name: "map id" });
     expect(box.getAttribute("data-state")).toBe("unchecked");
     await user.click(box);
-    expect(box.getAttribute("data-state")).toBe("checked");
+    expect(screen.getByRole("checkbox", { name: "map id" }).getAttribute("data-state")).toBe("checked");
+  });
+
+  it("applies schema member fields including encryption", async () => {
+    const user = userEvent.setup();
+    const onApply = vi.fn();
+    render(
+      <Theme>
+        <CubeMappingEditor open onOpenChange={() => {}} cube={cube} views={[view]} onApply={onApply} />
+      </Theme>,
+    );
+    await user.selectOptions(await screen.findByRole("combobox", { name: "kind id" }), "fact");
+    await user.click(screen.getByRole("checkbox", { name: "map id" }));
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    expect(onApply.mock.calls[0][0].facts[0]).toMatchObject({
+      name: "id",
+      type: "quantity",
+      column: "id",
+      encryption: false,
+    });
+    expect(onApply.mock.calls[0][0].dimensions).toEqual([]);
   });
 });

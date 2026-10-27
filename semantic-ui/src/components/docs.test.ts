@@ -160,4 +160,12 @@ describe("physicalTableDoc", () => {
     expect(doc.db).toBe("bird");
     expect(doc.columns).toEqual([{ name: "id", type: "INTEGER", nullable: false }]);
   });
+
+  it("keeps the physical table name when it is not a semantic identifier", () => {
+    const doc = physicalTableDoc("bird", { schema: "main", name: "order details" }, [
+      { name: "id", data_type: "INTEGER", nullable: false },
+    ]);
+    expect(doc.name).toBe("order_details");
+    expect(doc.table).toBe("order details");
+  });
 });

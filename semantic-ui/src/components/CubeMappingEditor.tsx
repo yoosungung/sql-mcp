@@ -24,7 +24,7 @@ export function CubeMappingEditor({
   views: Doc[];
   onApply: (cube: Doc) => void;
 }) {
-  const stack = choiceStack(cube);
+  const stack = useMemo(() => choiceStack(cube), [cube]);
   const viewDocs = useMemo(
     () => stack.map((n) => views.find((v) => v.name === n)).filter((v): v is Doc => Boolean(v)),
     [stack, views],
@@ -33,7 +33,9 @@ export function CubeMappingEditor({
   const [rows, setRows] = useState<Row[]>([]);
   useEffect(() => {
     if (open) setRows(buildRows(cube, viewDocs));
-  }, [open, cube, viewDocs]);
+    // Seed only when the dialog opens so checkbox/kind edits are not reset.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const [drag, setDrag] = useState<{ view: string; column: string } | null>(null);
 
@@ -51,6 +53,7 @@ export function CubeMappingEditor({
         description: "",
         type: row.kind === "dimension" ? "string" : "quantity",
         column,
+        encryption: false,
       };
       if (row.kind === "dimension") dimensions.push(member);
       else facts.push(member);
@@ -77,7 +80,7 @@ export function CubeMappingEditor({
         <Text size="2" color="gray" as="p" mb="3">
           Drag a view column onto a dimension/fact row to remap. Unmapped members sit under 미매핑.
         </Text>
-        <div className="mapping-grid" style={{ gridTemplateColumns: `32px 80px minmax(120px, 1fr) repeat(${Math.max(viewDocs.length, 1)}, minmax(120px, 1fr))` }}>
+        <div className="mapping-grid" style={{ gridTemplateColumns: `32px 140px minmax(120px, 1fr) repeat(${Math.max(viewDocs.length, 1)}, minmax(120px, 1fr))` }}>
           <div />
           <Text size="1" weight="medium">Kind</Text>
           <Text size="1" weight="medium">Member</Text>
@@ -151,7 +154,15 @@ function MemberRow({
         aria-label={`map ${row.name}`}
         onCheckedChange={(v) => onChange({ ...row, active: v === true })}
       />
-      <Text size="1">{row.kind}</Text>
+      <select
+        className="map-select"
+        aria-label={`kind ${row.name}`}
+        value={row.kind}
+        onChange={(e) => onChange({ ...row, kind: e.target.value as Row["kind"] })}
+      >
+        <option value="dimension">dimension</option>
+        <option value="fact">fact</option>
+      </select>
       <Text size="2">{row.name}</Text>
       {views.map((v) => (
         <div

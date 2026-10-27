@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyCombine,
   combineName,
   joinOnOp,
   mappingFor,
+  memberPayload,
   reorder,
   addViewColumn,
   removeViewColumn,
@@ -60,7 +62,7 @@ describe("withChoiceStack", () => {
   it("clears cube.view when the stack is empty", () => {
     const cube: Doc = { kind: "cube", name: "sales", view: "orders_customer" };
     const next = withChoiceStack(cube, []);
-    expect(next.view).toBe("");
+    expect(next.view).toBeUndefined();
     expect(next.choice).toBeUndefined();
   });
 
@@ -125,5 +127,51 @@ describe("setSourceAlias", () => {
     ]);
     expect(next.joins?.[0].right).toBe("bill_to");
     expect(next.columns?.[0].mappings?.[0].source).toBe("bill_to");
+  });
+});
+
+describe("memberPayload", () => {
+  it("drops kind and keeps schema fields", () => {
+    const payload = memberPayload(
+      {
+        name: "id",
+        description: "",
+        type: "string",
+        column: "id",
+        encryption: false,
+      },
+      "dimension",
+    );
+    expect(payload).toEqual({
+      name: "id",
+      description: "",
+      type: "string",
+      column: "id",
+      encryption: false,
+    });
+    expect("kind" in payload).toBe(false);
+  });
+
+  it("keeps expression instead of column when both were typed", () => {
+    const payload = memberPayload(
+      { name: "age", description: "", type: "quantity", column: "x", expression: "a - b", encryption: false },
+      "fact",
+    );
+    expect(payload.expression).toBe("a - b");
+    expect(payload.column).toBeUndefined();
+  });
+});
+
+describe("applyCombine", () => {
+  it("removes joins when switching to union", () => {
+    const view: Doc = {
+      kind: "view",
+      name: "v",
+      combine: "join",
+      joins: [{ left: "a", right: "b", type: "inner", on: [{ left_column: "id", right_column: "id" }] }],
+    };
+    const next = applyCombine(view, "union");
+    expect(next.combine).toBe("union");
+    expect(next.joins).toBeUndefined();
   });
 });

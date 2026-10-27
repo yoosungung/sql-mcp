@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Badge, Callout, Flex, IconButton, Select, Separator, Text, Theme } from "@radix-ui/themes";
-import { AuthorApi } from "./api";
+import { AuthorApi, bannerError, type BannerError } from "./api";
 import { Canvas } from "./components/Canvas";
 import { Catalog } from "./components/Catalog";
 import { CubeMappingEditor } from "./components/CubeMappingEditor";
@@ -50,7 +50,7 @@ export function App({ api }: { api?: AuthorApi }) {
   const [viewName, setViewName] = useState("");
   const [selection, setSelection] = useState<Selection>(null);
   const [selectedJoinIndex, setSelectedJoinIndex] = useState<number | undefined>();
-  const [error, setError] = useState("");
+  const [error, setError] = useState<BannerError | null>(null);
   const [busy, setBusy] = useState(false);
   const [navOpen, setNavOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(true);
@@ -67,7 +67,7 @@ export function App({ api }: { api?: AuthorApi }) {
       setPhysicalCandidates(items.filter((i) => !registered.has(i.name)));
     } catch (e) {
       setPhysicalCandidates([]);
-      setError(e instanceof Error ? e.message : String(e));
+      setError(bannerError(e));
     }
   }
 
@@ -88,7 +88,7 @@ export function App({ api }: { api?: AuthorApi }) {
   }
 
   useEffect(() => {
-    reload("").catch((e: Error) => setError(e.message));
+    reload("").catch((e: Error) => setError(bannerError(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -153,19 +153,39 @@ export function App({ api }: { api?: AuthorApi }) {
     void loadPhysicalCandidates(value);
   }
 
-  async function saveDoc(doc: Doc) {
+  async function saveDoc(doc: Doc, previousName?: string) {
     setBusy(true);
-    setError("");
+    setError(null);
     try {
-      const exists =
-        doc.kind === "view"
-          ? knownViews.has(doc.name) || views.some((v) => v.name === doc.name)
-          : docs.some((d) => d.kind === doc.kind && d.name === doc.name);
-      if (exists) await client.update(doc.kind, doc.name, doc);
-      else await client.create(doc);
+      const renamed = Boolean(previousName && previousName !== doc.name);
+      if (renamed && previousName) {
+        await client.create(doc);
+        if (doc.kind === "view") {
+          for (const cubeDoc of cubes) {
+            const stack = choiceStack(cubeDoc);
+            if (!stack.includes(previousName)) continue;
+            await client.update(
+              "cube",
+              cubeDoc.name,
+              withChoiceStack(
+                cubeDoc,
+                stack.map((n) => (n === previousName ? doc.name : n)),
+              ),
+            );
+          }
+        }
+        await client.remove(doc.kind, previousName);
+      } else {
+        const exists =
+          doc.kind === "view"
+            ? knownViews.has(doc.name) || views.some((v) => v.name === doc.name)
+            : docs.some((d) => d.kind === doc.kind && d.name === doc.name);
+        if (exists) await client.update(doc.kind, doc.name, doc);
+        else await client.create(doc);
+      }
       await reload();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(bannerError(e));
     } finally {
       setBusy(false);
     }
@@ -174,7 +194,8 @@ export function App({ api }: { api?: AuthorApi }) {
   async function saveOpenView() {
     const doc = draft || editing;
     if (!doc) return;
-    await saveDoc(doc);
+    const previous = !draft && viewName && viewName !== doc.name ? viewName : undefined;
+    await saveDoc(doc, previous);
     setDraft(undefined);
     setViewName(doc.name);
   }
@@ -182,24 +203,42 @@ export function App({ api }: { api?: AuthorApi }) {
   async function saveOpenCube() {
     if (!liveCube) return;
     setBusy(true);
-    setError("");
+    setError(null);
     try {
-      const exists = cubes.some((c) => c.name === liveCube.name);
-      if (exists) await client.update("cube", liveCube.name, liveCube);
-      else await client.create(liveCube);
-      for (const m of metricDrafts) {
-        const ex = docs.some((d) => d.kind === "metric" && d.name === m.name);
-        if (ex) await client.update("metric", m.name, m);
-        else await client.create(m);
-      }
-      for (const s of segmentDrafts) {
-        const ex = docs.some((d) => d.kind === "segment" && d.name === s.name);
-        if (ex) await client.update("segment", s.name, s);
-        else await client.create(s);
+      const previous = cube && cube.name !== liveCube.name ? cube.name : undefined;
+      if (previous) {
+        await client.create(liveCube);
+        for (const m of metricDrafts) {
+          const body = { ...m, cube: liveCube.name };
+          const ex = docs.some((d) => d.kind === "metric" && d.name === m.name);
+          if (ex) await client.update("metric", m.name, body);
+          else await client.create(body);
+        }
+        for (const s of segmentDrafts) {
+          const body = { ...s, cube: liveCube.name };
+          const ex = docs.some((d) => d.kind === "segment" && d.name === s.name);
+          if (ex) await client.update("segment", s.name, body);
+          else await client.create(body);
+        }
+        await client.remove("cube", previous);
+      } else {
+        const exists = cubes.some((c) => c.name === liveCube.name);
+        if (exists) await client.update("cube", liveCube.name, liveCube);
+        else await client.create(liveCube);
+        for (const m of metricDrafts) {
+          const ex = docs.some((d) => d.kind === "metric" && d.name === m.name);
+          if (ex) await client.update("metric", m.name, m);
+          else await client.create(m);
+        }
+        for (const s of segmentDrafts) {
+          const ex = docs.some((d) => d.kind === "segment" && d.name === s.name);
+          if (ex) await client.update("segment", s.name, s);
+          else await client.create(s);
+        }
       }
       await reload();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(bannerError(e));
     } finally {
       setBusy(false);
     }
@@ -207,7 +246,7 @@ export function App({ api }: { api?: AuthorApi }) {
 
   async function registerTables(physicals: { schema: string; name: string }[]) {
     setBusy(true);
-    setError("");
+    setError(null);
     try {
       for (const physical of physicals) {
         const desc = await client.describePhysicalTable(target, physical.name, physical.schema);
@@ -230,7 +269,7 @@ export function App({ api }: { api?: AuthorApi }) {
       }
       await reload();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(bannerError(e));
     } finally {
       setBusy(false);
     }
@@ -239,22 +278,22 @@ export function App({ api }: { api?: AuthorApi }) {
   async function deleteTable(name: string) {
     const usedViews = viewsReferencingTable(views, name);
     if (usedViews.length) {
-      setError(`${name} is used by view ${usedViews.map((v) => v.name).join(", ")}`);
+      setError({ message: `${name} is used by view ${usedViews.map((v) => v.name).join(", ")}` });
       return;
     }
     const usedCubes = cubesReferencingTable(cubes, views, name);
     if (usedCubes.length) {
-      setError(`${name} is used by cube ${usedCubes.map((c) => c.name).join(", ")}`);
+      setError({ message: `${name} is used by cube ${usedCubes.map((c) => c.name).join(", ")}` });
       return;
     }
     setBusy(true);
-    setError("");
+    setError(null);
     try {
       await client.remove("table", name);
       if (tableName === name) setTableName("");
       await reload();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(bannerError(e));
     } finally {
       setBusy(false);
     }
@@ -267,10 +306,11 @@ export function App({ api }: { api?: AuthorApi }) {
       (c) => c.view === name || (c.choice || []).some((item) => item.view === name),
     );
     setBusy(true);
-    setError("");
+    setError(null);
     try {
       for (const cubeDoc of affected) {
         const next = dropViewFromCube(cubeDoc, name);
+        if (!next.view) continue;
         if (liveCube?.name === cubeDoc.name) setCubeDraft(next);
         await client.update("cube", cubeDoc.name, next);
       }
@@ -282,7 +322,7 @@ export function App({ api }: { api?: AuthorApi }) {
       setSelection(null);
       await reload();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(bannerError(e));
     } finally {
       setBusy(false);
     }
@@ -291,7 +331,7 @@ export function App({ api }: { api?: AuthorApi }) {
   async function deleteOpenCube() {
     if (!liveCube) return;
     setBusy(true);
-    setError("");
+    setError(null);
     try {
       for (const m of metricsForCube(docs, liveCube.name)) await client.remove("metric", m.name);
       for (const s of segmentsForCube(docs, liveCube.name)) await client.remove("segment", s.name);
@@ -299,7 +339,7 @@ export function App({ api }: { api?: AuthorApi }) {
       setCubeDraft(undefined);
       await reload();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(bannerError(e));
     } finally {
       setBusy(false);
     }
@@ -433,17 +473,60 @@ export function App({ api }: { api?: AuthorApi }) {
 
   function newCube() {
     const name = uniqueName("cube", cubes);
+    const viewName0 = checked[checked.length - 1] || views[0]?.name;
     setCubeDraft({
       kind: "cube",
       name,
       target,
-      view: checked[checked.length - 1] || views[0]?.name || "",
+      ...(viewName0 ? { view: viewName0 } : {}),
       description: "",
       dimensions: [],
       facts: [],
     });
     setMetricDrafts([]);
     setSegmentDrafts([]);
+    setSelection({ kind: "cube", name });
+  }
+
+  function addMetric() {
+    if (!liveCube) return;
+    const name = uniqueName("metric", [
+      ...metricDrafts,
+      ...docs.filter((d) => d.kind === "metric"),
+    ]);
+    const viewDoc = views.find((v) => v.name === liveCube.view) || liveView;
+    const first = viewDoc?.columns?.[0]?.name;
+    const doc: Doc = {
+      kind: "metric",
+      name,
+      description: "",
+      cube: liveCube.name,
+      expression: "",
+      aggregation: "group",
+      filter: null,
+    };
+    if (first) doc.group_by = [first];
+    setMetricDrafts((cur) => [...cur, doc]);
+    setSelection({ kind: "metric", name });
+  }
+
+  function addSegment() {
+    if (!liveCube) return;
+    const name = uniqueName("segment", [
+      ...segmentDrafts,
+      ...docs.filter((d) => d.kind === "segment"),
+    ]);
+    setSegmentDrafts((cur) => [
+      ...cur,
+      {
+        kind: "segment",
+        name,
+        description: "",
+        cube: liveCube.name,
+        filter: { expression: "" },
+      },
+    ]);
+    setSelection({ kind: "segment", name });
   }
 
   const cubeDirty = Boolean(
@@ -484,9 +567,19 @@ export function App({ api }: { api?: AuthorApi }) {
           </Flex>
         </header>
         {error && (
-          <div className="alert">
-            <Callout.Root color="red" size="1" variant="soft">
-              <Callout.Text>{error}</Callout.Text>
+          <div className="alert" role="alert">
+            <Callout.Root color={error.code === "forbidden" ? "amber" : "red"} size="1" variant="soft">
+              <Flex align="start" justify="between" gap="3">
+                <div>
+                  {error.code && (
+                    <Text size="1" weight="medium" className="error-code">{error.code}</Text>
+                  )}
+                  <Callout.Text>{error.message}</Callout.Text>
+                </div>
+                <IconButton size="1" variant="ghost" color="gray" aria-label="Dismiss error" onClick={() => setError(null)}>
+                  ×
+                </IconButton>
+              </Flex>
             </Callout.Root>
           </div>
         )}
@@ -574,6 +667,8 @@ export function App({ api }: { api?: AuthorApi }) {
             onSelect={setSelection}
             onOpenViewMapping={() => setMappingEditor({ mode: "view" })}
             onOpenCubeMapping={() => setMappingEditor({ mode: "cube" })}
+            onAddMetric={addMetric}
+            onAddSegment={addSegment}
             onChangeView={changeView}
           />
         </div>
@@ -622,6 +717,8 @@ export function App({ api }: { api?: AuthorApi }) {
                 tables={tables}
                 docs={docs}
                 cube={liveCube}
+                metrics={metricDrafts}
+                segments={segmentDrafts}
                 busy={busy}
                 onSave={(doc) => {
                   if (doc.kind === "cube") {
