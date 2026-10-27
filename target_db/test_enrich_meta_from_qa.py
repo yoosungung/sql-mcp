@@ -486,6 +486,55 @@ def test_round4_confusion_force_overwrites():
     assert cube["dimensions"][1]["description"] == "eye not skin_colour"
 
 
+def test_fail_plan_copy_keeps_cube_descriptions_free_of_join_recipes():
+    """fail_plan: alias/no-sql Copy는 큐브 description. GROUP BY JOIN은 metric만."""
+    join_on = re.compile(r"\bJOIN\s+\w+\s+ON\b", re.I)
+    for db_id in (
+        "formula_1",
+        "toxicology",
+        "california_schools",
+        "student_club",
+        "thrombosis_prediction",
+        "superhero",
+    ):
+        for cube, text in DOMAIN_SPECS[db_id]["cube_descriptions"].items():
+            assert "not T1" in text, f"{db_id}.{cube}"
+            assert join_on.search(text) is None, cube
+            assert "GROUP BY" not in text, cube
+    tox = {m["name"]: m["description"] for m in DOMAIN_SPECS["toxicology"]["metrics"]}
+    assert "GROUP BY" in tox["carbon_atom_pct"]
+    assert "tox_bond" in tox["carbon_atom_pct"]
+    club = {m["name"]: m["description"] for m in DOMAIN_SPECS["student_club"]["metrics"]}
+    assert "event_name" in club["total_expense_cost"]
+    assert "not T1" in club["total_expense_cost"]
+
+
+def test_clauses_for_members_skips_person_names_and_filled_text():
+    from enrich_meta_from_qa import apply_evidence_clauses, clauses_for_members
+
+    evidence = (
+        "Bruno Senna refers to the full name of the driver; "
+        "driver reference name refers to driverRef; "
+        "full name refers to forename and surname"
+    )
+    got = clauses_for_members(evidence, {"driverRef", "forename", "surname", "id", "name"})
+    assert "driverRef" in got["driverRef"]
+    assert "forename" in got and "surname" in got
+    assert "id" not in got
+    assert "Bruno" not in " ".join(got.values())
+    cube = {
+        "dimensions": [
+            {"name": "driverRef", "description": ""},
+            {"name": "forename", "description": "kept"},
+        ],
+        "facts": [],
+    }
+    assert apply_evidence_clauses(cube, evidence)
+    assert "driverRef" in cube["dimensions"][0]["description"]
+    assert cube["dimensions"][1]["description"] == "kept"
+    assert not apply_evidence_clauses(cube, evidence)
+
+
 def test_evidence_signal_present_for_key_cohorts():
     """주요 cohort 키워드가 해당 DB evidence에 실제로 등장하는지 스모크."""
     checks = {

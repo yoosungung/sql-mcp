@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 from generate_meta import default_group_by, rewrite_divide
@@ -1660,6 +1661,136 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
 }
 
 
+_FAIL_PLAN_CUBE_EXTRA: dict[str, dict[str, str]] = {
+    "formula_1": {
+        "f1_qualifying": "q1 is the first qualifying session. raceId is the race number.",
+        "f1_lap_times": "A race number filters raceId on this cube.",
+        "f1_driver_standings": "Championship position and points are this cube.",
+        "f1_constructor_standings": "Championship points of 0 are points = 0 on this cube.",
+        "f1_race_results": "fastestLapSpeed is this race, not a lap-time row.",
+    },
+    "student_club": {
+        "club_member": "City and county use this cube's zip columns.",
+        "club_expense": "Event cost uses event_name and cost on this cube.",
+        "club_event": "Money and attendance are not this cube.",
+    },
+    "california_schools": {
+        "schools_sat": "SAT scores and school address columns are this cube.",
+        "schools_frpm": "Free meal eligibility is this cube.",
+    },
+    "thrombosis_prediction": {
+        "throm_patient": "Birthday and SEX are this cube.",
+        "throm_laboratory": "ALB, UN, CRE, and GPT are lab columns on this cube.",
+        "throm_examination": "Symptoms and Thrombosis are this cube.",
+    },
+    "toxicology": {
+        "tox_atom": "element counts use this cube. atom_id is here.",
+        "tox_bond": "bond_type counts use this cube.",
+        "tox_connected": "atom_id and atom_id2 together use this cube.",
+    },
+    "superhero": {
+        "hero_attribute": "Intelligence and Strength scores are attribute_name plus attribute_value.",
+    },
+}
+
+_FAIL_PLAN_METRIC_EXTRA: dict[str, dict[str, str]] = {
+    "toxicology": {
+        "carbon_atom_pct": (
+            "Cross atom and bond only as SELECT element FROM tox_atom "
+            "JOIN tox_bond ON tox_atom.molecule_id = tox_bond.molecule_id "
+            "GROUP BY element. atom_id is not on tox_bond. "
+            "Alias is the cube name, not T1."
+        ),
+        "pct_double_bond": (
+            "Order by an alias: SELECT bond_type AS b, COUNT(bond_id) AS n "
+            "FROM tox_bond GROUP BY bond_type ORDER BY n."
+        ),
+    },
+    "student_club": {
+        "total_expense_cost": "Use event_name and cost. Alias is club_expense, not T1.",
+    },
+    "thrombosis_prediction": {
+        "avg_acl_igm": "Alias is the cube name, not T1.",
+    },
+    "formula_1": {
+        "driver_standing_points": "Alias is f1_driver_standings, not T1.",
+        "avg_lap_time_ms": "Alias is f1_lap_times, not T1.",
+    },
+    "california_schools": {
+        "sat_excellence_share": "Alias is the cube name, not T1.",
+    },
+}
+
+_ALIAS_NOTE = "Alias is the cube name, not T1."
+_REFERS_RE = re.compile(r"([^;.]{3,90}?)\s+refers to\s+([^;.]{2,140})", re.I)
+_PERSON_RE = re.compile(r"\b[A-Z][a-z]+\s+[A-Z][a-z]+\b")
+
+
+def apply_fail_plan_copies() -> None:
+    """fail_plan.md: Copy/alias는 큐브 description, GROUP BY JOIN은 metric description."""
+    for db_id, spec in DOMAIN_SPECS.items():
+        descs = spec.get("cube_descriptions") or {}
+        extras = _FAIL_PLAN_CUBE_EXTRA.get(db_id) or {}
+        for cube, text in list(descs.items()):
+            extra = extras.get(cube)
+            parts = [text.rstrip()]
+            if extra and extra not in text:
+                parts.append(extra)
+            if _ALIAS_NOTE not in text:
+                parts.append(_ALIAS_NOTE)
+            descs[cube] = " ".join(parts)
+        for met in spec.get("metrics") or []:
+            extra = (_FAIL_PLAN_METRIC_EXTRA.get(db_id) or {}).get(met["name"])
+            if extra and extra not in (met.get("description") or ""):
+                met["description"] = (met.get("description") or "").rstrip() + " " + extra
+
+
+def clauses_for_members(evidence: str, names: set[str]) -> dict[str, str]:
+    """evidence의 'refers to'를 멤버 이름에만 붙인다. 사람 이름·짧은 토큰은 제외."""
+    usable = {n for n in names if len(n) >= 4}
+    out: dict[str, str] = {}
+    for match in _REFERS_RE.finditer(evidence or ""):
+        left, right = match.group(1).strip(), match.group(2).strip()
+        if _PERSON_RE.search(left):
+            continue
+        if "DIVIDE" in right.upper() or re.search(r"\bT\d\b", right):
+            continue
+        hits = [n for n in usable if re.search(rf"\b{re.escape(n)}\b", right)]
+        if not hits:
+            continue
+        clause = f"{left} refers to {right}."
+        for name in hits:
+            if any(name != other and name in other for other in hits):
+                continue
+            out.setdefault(name, clause)
+    return out
+
+
+def apply_evidence_clauses(cube: dict, evidence: str) -> bool:
+    """빈 dim/fact description만 evidence 문장으로 채운다."""
+    names = {
+        m.get("name")
+        for m in (cube.get("dimensions") or []) + (cube.get("facts") or [])
+        if m.get("name")
+    }
+    return apply_member_descriptions(cube, clauses_for_members(evidence, names))
+
+
+def fill_empty_from_evidence(db_id: str) -> int:
+    blob = " ".join(evidence_mentions(db_id))
+    if not blob:
+        return 0
+    n = 0
+    for cube in list_cubes(db_id).values():
+        if apply_evidence_clauses(cube, blob):
+            write_cube(db_id, cube)
+            n += 1
+    return n
+
+
+apply_fail_plan_copies()
+
+
 def evidence_mentions(db_id: str) -> list[str]:
     """Load evidence strings for a db (for tests / audit)."""
     if not QA_PATH.is_file():
@@ -1815,6 +1946,7 @@ def main() -> int:
             print(f"skip unknown db {db_id}")
             continue
         patched = apply_knowledge(db_id)
+        patched += fill_empty_from_evidence(db_id)
         docs = build_docs(db_id)
         n = write_docs(db_id, docs)
         stale = prune_stale_metric_segment(db_id)
