@@ -324,27 +324,35 @@ async fn migrate_fact_type_from_amount_fx(conn: &Connection) -> Result<(), AppEr
 
 /// Older catalogs omit `id` from dimension type CHECK; rebuild (idempotent).
 async fn migrate_dim_type_allow_id(conn: &Connection) -> Result<(), AppError> {
-    let mut rows = conn
-        .query(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'meta_cube_dimensions'",
-            (),
-        )
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
-    let Some(row) = rows
-        .next()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?
-    else {
-        return Ok(());
+    let sql = {
+        let mut rows = conn
+            .query(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'meta_cube_dimensions'",
+                (),
+            )
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?;
+        let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?
+        else {
+            return Ok(());
+        };
+        let sql: String = row.get(0).map_err(|e| AppError::Internal(e.into()))?;
+        drop(rows);
+        sql
     };
-    let sql: String = row.get(0).map_err(|e| AppError::Internal(e.into()))?;
     if sql.contains("'id'") {
+        conn.execute("DROP TABLE IF EXISTS meta_cube_dimensions_new", ())
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?;
         return Ok(());
     }
     conn.execute_batch(
         r#"
         PRAGMA foreign_keys=OFF;
+        DROP TABLE IF EXISTS meta_cube_dimensions_new;
         CREATE TABLE meta_cube_dimensions_new (
           cube_name TEXT NOT NULL REFERENCES meta_cubes(name) ON DELETE CASCADE,
           name TEXT NOT NULL,

@@ -49,7 +49,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 
 ## 검증
 
-1. `document.schema.json`으로 문서 하나 검증
+1. `document.schema.json`으로 문서 하나 검증. 실패 메시지는 JSON Pointer(예: `/dimensions/0/type`)와 키워드 이유이며, 문서 전체 덤프가 아니다.
 2. 반영 후 등록 집합 연결 검증(실패 시 저장소 불변)
 3. `PUT /api/meta/{kind}/{name}`은 **전체 replace**(D15)
 4. CRUD 시 변경된 텍스트만 증분 임베딩한 뒤 **단일 Write 트랜잭션**으로 `meta_*`와 `column_index`/`column_index_fts`를 함께 갱신하고, 인메모리 카탈로그 캐시를 갱신

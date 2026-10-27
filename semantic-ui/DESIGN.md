@@ -35,7 +35,7 @@ View 편집은 메모리 JSON; **Save**가 `POST`/`PUT /api/meta`.
 - 오른쪽: dimension · fact · metric · segment 목록. Columns와 같은 `.col-row`(36px PK · 72px type · 이름 1fr, 이름은 한 줄·말줄임). PK는 멤버 `column`이 뷰 PK일 때. dim `type`은 `id`/`code`/`date`/`time`/`datetime`/`string`. 위 **Map members** · **Add metric** · **Add segment**. Map members → CubeMappingEditor. 행 Kind는 dimension/fact 콤보.
 - 아래: 왼쪽에서 **뷰**를 고르면 Detail 2단 — 왼쪽 combine·description, 오른쪽 매핑 컬럼(`name` · 파생 물리 `type` · PK). `viewColumn`은 `name`+`mappings`만이고 type은 table `columns[].type`을 mappings로 파생한다. 큐브(description · grain · role) 또는 멤버 타입별 Detail. dim/fact Detail **Name**은 별도 Rename UI 없이 **Apply**로 큐브 초안에 반영(헤더 **Save**가 `POST`/`PUT`). metric/segment Detail **Name**은 **Save** 때 `/api/meta`(이름 바뀌면 새 문서 저장 뒤 옛 `DELETE`). dim/fact는 type enum, column XOR expression, encryption, dim `as_code`, fact `additive`, `role`. metric은 expression · aggregation · (`group`이면 `group_by`) · filter(`null` 허용) · role. segment는 filter · role.
 - cube 로드 시 붙은 metric/segment를 함께 읽고, 큐브 헤더 Save 시 cube 초안과 함께 저장.
-- **검증은 HTTP `/api/meta`.** 클라에서 스키마를 다시 검사하거나 Save를 막지 않는다. 400 `{ code, message }`는 상단 배너(code · 본문 · 닫기). 뷰 Delete는 큐브를 `view: ""`로 고치지 않는다. 참조 중이면 서버 메시지를 보여 준다. Rename 후 Save는 새 이름 저장 뒤 옛 문서를 `DELETE`.
+- **검증은 HTTP `/api/meta`.** 클라에서 스키마를 다시 검사하거나 Save를 막지 않는다. 400 `{ code, message }`는 상단 배너(code · 본문 · 닫기). Map members의 PK 디멘션 `type`은 `id`다. 뷰 Delete는 큐브를 `view: ""`로 고치지 않는다. 참조 중이면 서버 메시지를 보여 준다. Rename 후 Save는 새 이름 저장 뒤 옛 문서를 `DELETE`.
 
 ### 매핑 팝업
 

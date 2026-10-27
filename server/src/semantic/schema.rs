@@ -1,5 +1,6 @@
 use std::sync::OnceLock;
 
+use jsonschema::error::{ValidationError, ValidationErrorKind};
 use jsonschema::Validator;
 use serde_json::Value;
 
@@ -24,12 +25,54 @@ pub fn validate_document(body: &Value) -> Result<(), AppError> {
     if validator().is_valid(body) {
         return Ok(());
     }
-    let msg = validator()
-        .iter_errors(body)
-        .map(|e| e.to_string())
-        .collect::<Vec<_>>()
-        .join("; ");
-    Err(AppError::Validation(msg))
+    let kind = body.get("kind").and_then(|v| v.as_str());
+    let mut parts = Vec::new();
+    for err in validator().iter_errors(body) {
+        collect_validation_messages(&err, kind, &mut parts);
+    }
+    if parts.is_empty() {
+        parts.push("document does not match table, view, cube, metric, or segment".into());
+    }
+    parts.sort();
+    parts.dedup();
+    Err(AppError::Validation(parts.join("; ")))
+}
+
+fn collect_validation_messages(err: &ValidationError<'_>, kind: Option<&str>, out: &mut Vec<String>) {
+    match err.kind() {
+        ValidationErrorKind::OneOfNotValid { context } | ValidationErrorKind::AnyOf { context } => {
+            let idx = match kind {
+                Some("table") => Some(0),
+                Some("view") => Some(1),
+                Some("cube") => Some(2),
+                Some("metric") => Some(3),
+                Some("segment") => Some(4),
+                _ => None,
+            };
+            let branch = idx
+                .and_then(|i| context.get(i))
+                .filter(|errors| !errors.is_empty())
+                .or_else(|| context.iter().find(|errors| !errors.is_empty()));
+            if let Some(errors) = branch {
+                for inner in errors {
+                    collect_validation_messages(inner, kind, out);
+                }
+            } else {
+                out.push(leaf_message(err));
+            }
+        }
+        _ => out.push(leaf_message(err)),
+    }
+}
+
+fn leaf_message(err: &ValidationError<'_>) -> String {
+    let path = err.instance_path().to_string();
+    let msg = err.masked().to_string();
+    if path.is_empty() {
+        msg
+    } else {
+        format!("{path}: {msg}")
+    }
 }
 
 #[cfg(test)]
@@ -195,6 +238,62 @@ mod tests {
             "facts": []
         });
         validate_document(&body).unwrap();
+    }
+
+    #[test]
+    fn accepts_mapped_cube_with_id_and_quantity_members() {
+        let body = json!({
+            "kind": "cube",
+            "name": "superhero",
+            "target": "superhero",
+            "view": "join_superhero",
+            "description": "",
+            "dimensions": [{
+                "name": "hero_id",
+                "description": "",
+                "type": "id",
+                "column": "hero_id",
+                "encryption": false
+            }],
+            "facts": [{
+                "name": "height_cm",
+                "description": "",
+                "type": "quantity",
+                "column": "height_cm",
+                "encryption": false
+            }]
+        });
+        validate_document(&body).unwrap();
+    }
+
+    #[test]
+    fn names_invalid_dimension_type_without_dumping_the_document() {
+        let body = json!({
+            "kind": "cube",
+            "name": "superhero",
+            "target": "superhero",
+            "view": "join_superhero",
+            "description": "",
+            "dimensions": [{
+                "name": "hero_id",
+                "description": "",
+                "type": "nope",
+                "column": "hero_id",
+                "encryption": false
+            }],
+            "facts": []
+        });
+        let Err(AppError::Validation(msg)) = validate_document(&body) else {
+            panic!("expected validation error");
+        };
+        assert!(
+            msg.contains("/dimensions/0/type") || msg.contains("nope"),
+            "got {msg}"
+        );
+        assert!(
+            !msg.contains("\"kind\":\"cube\""),
+            "must not dump the whole document: {msg}"
+        );
     }
 
     #[test]
