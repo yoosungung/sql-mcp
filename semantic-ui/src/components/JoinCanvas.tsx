@@ -11,7 +11,9 @@ import {
   useNodesState,
   type Connection,
   type Edge,
+  type EdgeChange,
   type Node,
+  type NodeChange,
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -66,6 +68,7 @@ export function JoinCanvas({
   onSelectJoin,
   onSelectTable,
   selectedJoinIndex,
+  onRequestDeleteJoin,
   onTableDrop,
 }: {
   view: Doc;
@@ -73,6 +76,7 @@ export function JoinCanvas({
   onSelectJoin: (index: number) => void;
   onSelectTable: (name: string) => void;
   selectedJoinIndex?: number;
+  onRequestDeleteJoin?: (index: number) => void;
   onTableDrop?: (name: string) => void;
 }) {
   const names = useMemo(
@@ -88,6 +92,45 @@ export function JoinCanvas({
     setNodes(next.nodes);
     setEdges(next.edges);
   }, [names, view.joins, setNodes, setEdges]);
+
+  useEffect(() => {
+    if (typeof selectedJoinIndex !== "number") return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Delete" && event.key !== "Backspace") return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true'], [role='combobox'], [role='listbox'], [role='textbox']")) {
+        return;
+      }
+      event.preventDefault();
+      onRequestDeleteJoin?.(selectedJoinIndex);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectedJoinIndex, onRequestDeleteJoin]);
+
+  const handleNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      onNodesChange(changes.filter((change) => change.type !== "remove"));
+    },
+    [onNodesChange],
+  );
+  const handleEdgesChange = useCallback(
+    (changes: EdgeChange[]) => {
+      onEdgesChange(changes.filter((change) => change.type !== "remove"));
+    },
+    [onEdgesChange],
+  );
+  const onBeforeDelete = useCallback(
+    async ({ edges }: { nodes: Node[]; edges: Edge[] }) => {
+      const indexes = edges
+        .map((edge) => (edge.data as { index?: number } | undefined)?.index)
+        .filter((index): index is number => typeof index === "number");
+      const index = indexes[0] ?? selectedJoinIndex;
+      if (typeof index === "number") onRequestDeleteJoin?.(index);
+      return false;
+    },
+    [onRequestDeleteJoin, selectedJoinIndex],
+  );
 
   const onConnect = useCallback(
     (connection: Connection) => {
@@ -131,8 +174,9 @@ export function JoinCanvas({
           ...e,
           selected: e.data?.index === selectedJoinIndex,
         }))}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
+        onNodesChange={handleNodesChange}
+        onEdgesChange={handleEdgesChange}
+        onBeforeDelete={onBeforeDelete}
         onConnect={onConnect}
         onEdgeClick={(_, edge) => {
           const index = (edge.data as { index?: number } | undefined)?.index;

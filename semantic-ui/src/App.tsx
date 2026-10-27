@@ -49,6 +49,7 @@ export function App({ api }: { api?: AuthorApi }) {
   const [cubeName, setCubeName] = useState("");
   const [selection, setSelection] = useState<Selection>(null);
   const [selectedJoinIndex, setSelectedJoinIndex] = useState<number | undefined>();
+  const [askDeleteJoin, setAskDeleteJoin] = useState(false);
   const [error, setError] = useState<BannerError | null>(null);
   const [busy, setBusy] = useState(false);
   const [navOpen, setNavOpen] = useState(true);
@@ -395,6 +396,11 @@ export function App({ api }: { api?: AuthorApi }) {
         if (idx >= 0 && newLabels[idx]) setSelection({ kind: "table", name: newLabels[idx] });
       }
     }
+    if (selection?.kind === "join") {
+      if (selection.index >= (view.joins || []).length) {
+        setSelection({ kind: "view", name: view.name });
+      }
+    }
     if (selection?.kind === "column") {
       const oldNames = (prev?.columns || []).map((c) => c.name);
       const newNames = (view.columns || []).map((c) => c.name);
@@ -661,8 +667,15 @@ export function App({ api }: { api?: AuthorApi }) {
             onSelectJoin={(index) => {
               setSelectedJoinIndex(index);
               setSelection({ kind: "join", index });
+              setAskDeleteJoin(false);
             }}
             selectedJoinIndex={selectedJoinIndex}
+            onRequestDeleteJoin={(index) => {
+              setSelectedJoinIndex(index);
+              setSelection({ kind: "join", index });
+              setAskDeleteJoin(true);
+              setDetailSize((size) => (size === "collapsed" ? "standard" : size));
+            }}
             onNewCube={newCube}
             onOpenCube={openCube}
             onSaveCube={() => void saveOpenCube()}
@@ -764,6 +777,8 @@ export function App({ api }: { api?: AuthorApi }) {
                 }}
                 onSelect={setSelection}
                 onChangeView={changeView}
+                askDeleteJoin={askDeleteJoin}
+                onAskDeleteJoin={setAskDeleteJoin}
               />
             </div>
           )}

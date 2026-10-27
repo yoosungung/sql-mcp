@@ -5,6 +5,7 @@ import {
   joinOnOp,
   mappingFor,
   memberPayload,
+  removeJoin,
   reorder,
   addViewColumn,
   removeViewColumn,
@@ -159,6 +160,25 @@ describe("memberPayload", () => {
     );
     expect(payload.expression).toBe("a - b");
     expect(payload.column).toBeUndefined();
+  });
+});
+
+describe("removeJoin", () => {
+  it("drops the join at the given index from the view document", () => {
+    const view: Doc = {
+      kind: "view",
+      name: "v",
+      combine: "join",
+      joins: [
+        { left: "a", right: "b", type: "inner", on: [{ left_column: "id", right_column: "id" }] },
+        { left: "b", right: "c", type: "left", on: [{ left_column: "id", right_column: "id" }] },
+      ],
+    };
+    const next = removeJoin(view, 0);
+    expect(next.joins).toEqual([
+      { left: "b", right: "c", type: "left", on: [{ left_column: "id", right_column: "id" }] },
+    ]);
+    expect(view.joins).toHaveLength(2);
   });
 });
 

@@ -9,6 +9,7 @@ import {
   mappingFor,
   memberPayload,
   parseRole,
+  removeJoin,
   renameViewColumn,
   roleText,
   setJoinRelationship,
@@ -39,6 +40,8 @@ export function Detail({
   onSave,
   onSelect,
   onChangeView,
+  askDeleteJoin,
+  onAskDeleteJoin,
 }: {
   selection: Selection;
   tab?: Tab;
@@ -53,6 +56,8 @@ export function Detail({
   onSave: (doc: Doc, previousName?: string) => void;
   onSelect?: (pick: Selection) => void;
   onChangeView?: (doc: Doc) => void;
+  askDeleteJoin?: boolean;
+  onAskDeleteJoin?: (open: boolean) => void;
 }) {
   if (selection?.kind === "table" || (!selection && table && !view)) {
     const sourceKey = selection?.kind === "table" ? selection.name : undefined;
@@ -74,7 +79,18 @@ export function Detail({
   }
   if (selection?.kind === "join" && view) {
     const join = (view.joins || [])[selection.index];
-    return <JoinDetail join={join} index={selection.index} view={view} tables={tables} onChangeView={onChangeView} />;
+    return (
+      <JoinDetail
+        join={join}
+        index={selection.index}
+        view={view}
+        tables={tables}
+        onChangeView={onChangeView}
+        onSelect={onSelect}
+        askDeleteJoin={askDeleteJoin}
+        onAskDeleteJoin={onAskDeleteJoin}
+      />
+    );
   }
   if (selection?.kind === "column" && view) {
     return (
@@ -352,13 +368,23 @@ function JoinDetail({
   view,
   tables,
   onChangeView,
+  onSelect,
+  askDeleteJoin,
+  onAskDeleteJoin,
 }: {
   join?: Join;
   index: number;
   view: Doc;
   tables: Doc[];
   onChangeView?: (doc: Doc) => void;
+  onSelect?: (pick: Selection) => void;
+  askDeleteJoin?: boolean;
+  onAskDeleteJoin?: (open: boolean) => void;
 }) {
+  const [askDelete, setAskDelete] = useState(false);
+  useEffect(() => {
+    if (askDeleteJoin) setAskDelete(true);
+  }, [askDeleteJoin]);
   if (!join) return <Text size="2" color="gray">Join not found.</Text>;
   const current = join;
   const sources = (view.sources || []).map((s) => s.alias || s.table);
@@ -394,7 +420,54 @@ function JoinDetail({
 
   return (
     <div>
-      <Heading size="3" weight="medium" mb="3">join · {join.left} → {join.right}</Heading>
+      <Flex align="center" justify="between" mb="3">
+        <Heading size="3" weight="medium">join · {join.left} → {join.right}</Heading>
+        <Button
+          size="1"
+          variant="soft"
+          color="red"
+          aria-label="Delete join"
+          onClick={() => {
+            setAskDelete(true);
+            onAskDeleteJoin?.(true);
+          }}
+        >
+          Delete
+        </Button>
+      </Flex>
+      {askDelete && (
+        <Flex align="center" justify="between" gap="3" mb="3" role="alertdialog" aria-label="Delete join">
+          <Text size="2">Delete join {join.left} → {join.right}?</Text>
+          <Flex gap="2">
+            <Button
+              type="button"
+              size="1"
+              variant="soft"
+              color="gray"
+              onClick={() => {
+                setAskDelete(false);
+                onAskDeleteJoin?.(false);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="1"
+              color="red"
+              aria-label="Confirm delete join"
+              onClick={() => {
+                setAskDelete(false);
+                onAskDeleteJoin?.(false);
+                onChangeView?.(removeJoin(view, index));
+                onSelect?.({ kind: "view", name: view.name });
+              }}
+            >
+              Delete
+            </Button>
+          </Flex>
+        </Flex>
+      )}
       <div className="join-detail">
         <div className="join-detail-row pair" role="group" aria-label="Join start row">
           <JoinField label="Join start">

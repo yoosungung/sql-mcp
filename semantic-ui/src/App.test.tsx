@@ -11,11 +11,13 @@ vi.mock("./components/JoinCanvas", () => ({
     onSelectJoin,
     onSelectTable,
     onChange,
+    onRequestDeleteJoin,
   }: {
     view: Doc;
     onSelectJoin?: (index: number) => void;
     onSelectTable?: (name: string) => void;
     onChange?: (view: Doc) => void;
+    onRequestDeleteJoin?: (index: number) => void;
   }) => (
     <div aria-label="Join canvas">
       join:{view.name}:{(view.sources || []).map((s) => s.alias || s.table).join(",")}
@@ -28,7 +30,10 @@ vi.mock("./components/JoinCanvas", () => ({
         );
       })}
       {(view.joins || []).length > 0 && (
-        <button type="button" onClick={() => onSelectJoin?.(0)}>Select join</button>
+        <>
+          <button type="button" onClick={() => onSelectJoin?.(0)}>Select join</button>
+          <button type="button" onClick={() => onRequestDeleteJoin?.(0)}>Press delete key</button>
+        </>
       )}
       {(view.sources || []).length >= 2 && !(view.joins || []).length && (
         <button
@@ -824,6 +829,60 @@ describe("production shell", () => {
     await user.click(within(detail).getByRole("combobox", { name: "Join end column" }));
     await user.click(await screen.findByRole("option", { name: "account_id" }));
     expect(within(detail).getByRole("combobox", { name: "Join end column" }).textContent).toMatch(/account_id/i);
+  });
+
+  it("deletes the selected join from the view after confirm", async () => {
+    const user = userEvent.setup();
+    const columns = [{ name: "id", type: "int", nullable: false }];
+    render(
+      <App
+        api={api([
+          { kind: "table", name: "account", target: "bird", table: "account", columns, pk: ["id"] },
+          { kind: "table", name: "order", target: "bird", table: "order", columns, pk: ["id"] },
+        ])}
+      />,
+    );
+    await screen.findByRole("button", { name: "account" });
+    dropOnto(screen.getByRole("button", { name: "account" }), screen.getByRole("main", { name: "Canvas" }));
+    dropOnto(screen.getByRole("button", { name: "order" }), screen.getByRole("main", { name: "Canvas" }));
+    await user.click(screen.getByRole("button", { name: "Connect join" }));
+    await user.click(screen.getByRole("button", { name: "Select join" }));
+    const detail = screen.getByRole("region", { name: "Detail" });
+    await user.click(within(detail).getByRole("button", { name: "Delete join" }));
+    expect(screen.getByRole("button", { name: "Select join" })).toBeTruthy();
+    await user.click(within(detail).getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Select join" })).toBeTruthy();
+    await user.click(within(detail).getByRole("button", { name: "Delete join" }));
+    await user.click(within(detail).getByRole("button", { name: "Confirm delete join" }));
+    expect(screen.queryByRole("button", { name: "Select join" })).toBeNull();
+    expect(within(screen.getByRole("region", { name: "Detail" })).queryByRole("combobox", { name: "Join start" })).toBeNull();
+  });
+
+  it("deletes the selected join from the view when Delete key is confirmed", async () => {
+    const user = userEvent.setup();
+    const columns = [{ name: "id", type: "int", nullable: false }];
+    render(
+      <App
+        api={api([
+          { kind: "table", name: "account", target: "bird", table: "account", columns, pk: ["id"] },
+          { kind: "table", name: "order", target: "bird", table: "order", columns, pk: ["id"] },
+        ])}
+      />,
+    );
+    await screen.findByRole("button", { name: "account" });
+    dropOnto(screen.getByRole("button", { name: "account" }), screen.getByRole("main", { name: "Canvas" }));
+    dropOnto(screen.getByRole("button", { name: "order" }), screen.getByRole("main", { name: "Canvas" }));
+    await user.click(screen.getByRole("button", { name: "Connect join" }));
+    await user.click(screen.getByRole("button", { name: "Select join" }));
+    const detail = screen.getByRole("region", { name: "Detail" });
+    await user.click(screen.getByRole("button", { name: "Press delete key" }));
+    expect(within(detail).getByRole("alertdialog", { name: "Delete join" })).toBeTruthy();
+    await user.click(within(detail).getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Select join" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Press delete key" }));
+    await user.click(within(detail).getByRole("button", { name: "Confirm delete join" }));
+    expect(screen.queryByRole("button", { name: "Select join" })).toBeNull();
+    expect(within(screen.getByRole("region", { name: "Detail" })).queryByRole("combobox", { name: "Join start" })).toBeNull();
   });
 
   it("lets the user set an optional join relationship from unset", async () => {

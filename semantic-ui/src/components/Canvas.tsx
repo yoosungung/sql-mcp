@@ -35,6 +35,7 @@ export function Canvas({
   onSelectTable,
   onSelectJoin,
   selectedJoinIndex,
+  onRequestDeleteJoin,
   onNewCube,
   onOpenCube,
   onSaveCube,
@@ -67,6 +68,7 @@ export function Canvas({
   onSelectTable: (name: string) => void;
   onSelectJoin: (index: number) => void;
   selectedJoinIndex?: number;
+  onRequestDeleteJoin?: (index: number) => void;
   onNewCube: () => void;
   onOpenCube: (name: string) => void;
   onSaveCube: () => void;
@@ -164,6 +166,7 @@ export function Canvas({
             onSelectJoin={onSelectJoin}
             onSelectTable={onSelectTable}
             selectedJoinIndex={selectedJoinIndex}
+            onRequestDeleteJoin={onRequestDeleteJoin}
             onTableDrop={(name) => onDropTable(kind, name)}
           />
         ) : live ? (

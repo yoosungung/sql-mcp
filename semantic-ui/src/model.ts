@@ -314,6 +314,11 @@ export function toolPayload(rpc: {
   }
 }
 
+export function removeJoin(view: Doc, index: number): Doc {
+  const joins = (view.joins || []).filter((_, i) => i !== index);
+  return { ...view, joins };
+}
+
 export function setJoinRelationship(view: Doc, index: number, relationship?: Relationship): Doc {
   const joins = (view.joins || []).map((j, i) => {
     if (i !== index) return j;
