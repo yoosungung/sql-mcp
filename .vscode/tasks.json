@@ -6,7 +6,10 @@
       "type": "shell",
       "command": "if [ ! -d node_modules ]; then npm ci; fi && npm run build",
       "options": {
-        "cwd": "${workspaceFolder}/semantic-ui"
+        "cwd": "${workspaceFolder}/semantic-ui",
+        "env": {
+          "PATH": "${env:HOME}/.local/bin:${env:HOME}/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:${env:PATH}"
+        }
       },
       "group": "build",
       "presentation": {

@@ -121,6 +121,7 @@ cargo run -p sql-mcp
 
 # Cursor/VS Code 디버그: Run and Debug → Debug sql-mcp (BIRD)
 # preLaunchTask `build semantic-ui` 후 CodeLLDB (.vscode/launch.json)
+# GUI 태스크는 zshrc를 안 읽으므로 PATH에 ~/.local/bin·Homebrew를 넣는다.
 
 # 컨테이너·K8s: ../deploy/SETUP.md
 ```

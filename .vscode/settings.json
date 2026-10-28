@@ -7,10 +7,10 @@
   },
   "lldb.cargo": "/Users/ericyoo/.cargo/bin/cargo",
   "lldb.adapterEnv": {
-    "PATH": "/Users/ericyoo/.cargo/bin:${env:PATH}"
+    "PATH": "${env:HOME}/.local/bin:${env:HOME}/.cargo/bin:/opt/homebrew/bin:${env:PATH}"
   },
   "terminal.integrated.env.osx": {
-    "PATH": "/Users/ericyoo/.cargo/bin:${env:PATH}"
+    "PATH": "${env:HOME}/.local/bin:${env:HOME}/.cargo/bin:/opt/homebrew/bin:${env:PATH}"
   },
   "files.watcherExclude": {
     "**/target/**": true,
