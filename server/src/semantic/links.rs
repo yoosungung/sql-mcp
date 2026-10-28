@@ -166,9 +166,8 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
                     )));
                 }
                 let choice_view = views[cname];
-                let choice_target = doc_target(choice_view).ok_or_else(|| {
-                    AppError::Validation(format!("view {cname}: target missing"))
-                })?;
+                let choice_target = doc_target(choice_view)
+                    .ok_or_else(|| AppError::Validation(format!("view {cname}: target missing")))?;
                 if cube_target != choice_target {
                     return Err(AppError::Validation(format!(
                         "cube {name}: target {cube_target} != choice view {cname} target {choice_target}"

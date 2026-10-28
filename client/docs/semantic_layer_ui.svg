@@ -1,0 +1,351 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1680" height="1560" viewBox="0 0 1680 1560">
+  <title>sql-mcp semantic authoring layout</title>
+  <defs>
+    <marker id="arrB" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#0969da"/>
+    </marker>
+    <marker id="arrP" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#8250df"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: ui-sans-serif, system-ui, sans-serif; fill: #1f2328; }
+    .h { font-size: 18px; font-weight: 700; }
+    .sub { font-size: 12px; fill: #57606a; }
+    .ft { font-size: 13px; font-weight: 700; }
+    .lab { font-size: 12px; font-weight: 700; }
+    .ui { font-size: 12px; }
+    .sm { font-size: 11px; }
+    .xs { font-size: 10px; fill: #57606a; }
+    .w { fill: #ffffff; }
+    .mute { fill: #57606a; }
+    .blue { fill: #0969da; }
+    .pur { fill: #8250df; }
+    .grn { fill: #1a7f37; }
+    .amb { fill: #9a6700; }
+    .red { fill: #cf222e; }
+  </style>
+  <rect width="1680" height="1560" fill="#eef1f4"/>
+  <text x="24" y="32" class="h">sql-mcp authoring - one target, three columns plus a detail pane</text>
+  <text x="700" y="32" class="sub">Join diagram is browse-only. Select stack reorders. Edits write meta JSON.</text>
+
+  <!-- ===================== FRAME A ===================== -->
+  <rect x="16" y="48" width="816" height="800" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <rect x="16" y="48" width="816" height="32" rx="12" fill="#ddf4ff"/>
+  <rect x="16" y="68" width="816" height="12" fill="#ddf4ff"/>
+  <text x="28" y="70" class="ft" fill="#0969da">A. Physical - table names left, mapping on the right</text>
+
+  <rect x="28" y="92" width="792" height="36" rx="8" fill="#fff8c5" stroke="#d4a72c"/>
+  <text x="40" y="115" class="lab">Target</text>
+  <rect x="96" y="100" width="150" height="20" rx="5" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="108" y="114" class="ui">financial</text>
+  <text x="230" y="114" class="ui">v</text>
+  <text x="256" y="115" class="sm amb">One target. No cross-target joins.</text>
+
+  <!-- left: table names only -->
+  <rect x="28" y="140" width="188" height="390" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+  <rect x="38" y="150" width="80" height="22" rx="5" fill="#0969da"/>
+  <text x="52" y="165" class="sm w">Physical</text>
+  <rect x="122" y="150" width="80" height="22" rx="5" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="142" y="165" class="sm mute">Cubes</text>
+  <text x="38" y="192" class="xs">tables only - no columns</text>
+  <rect x="38" y="202" width="168" height="24" rx="4" fill="#ddf4ff" stroke="#0969da"/>
+  <text x="48" y="218" class="sm blue">account_table</text>
+  <text x="48" y="248" class="sm">disp</text>
+  <text x="48" y="272" class="sm">district</text>
+  <text x="48" y="296" class="sm">card</text>
+  <text x="48" y="320" class="sm">client</text>
+  <text x="38" y="360" class="xs">Select a table.</text>
+  <text x="38" y="376" class="xs">Its columns open in</text>
+  <text x="38" y="392" class="xs">the right mapping pane.</text>
+
+  <!-- center: diagram only -->
+  <rect x="224" y="140" width="292" height="390" rx="8" fill="#fff8c5" stroke="#d4a72c"/>
+  <text x="236" y="162" class="lab amb">Center - browse only</text>
+  <text x="420" y="162" class="xs amb">no save</text>
+  <text x="236" y="182" class="xs">view financial_all being built</text>
+  <rect x="240" y="210" width="108" height="32" rx="6" fill="#ffffff" stroke="#0969da"/>
+  <text x="250" y="230" class="sm">account_table</text>
+  <rect x="400" y="200" width="96" height="28" rx="6" fill="#ffffff" stroke="#0969da"/>
+  <text x="428" y="218" class="sm">disp</text>
+  <rect x="400" y="248" width="96" height="28" rx="6" fill="#ffffff" stroke="#0969da"/>
+  <text x="422" y="266" class="sm">district</text>
+  <rect x="400" y="296" width="96" height="28" rx="6" fill="#ffffff" stroke="#0969da"/>
+  <text x="430" y="314" class="sm">card</text>
+  <line x1="348" y1="226" x2="400" y2="214" stroke="#57606a" marker-end="url(#arrB)"/>
+  <line x1="348" y1="230" x2="400" y2="262" stroke="#57606a" marker-end="url(#arrB)"/>
+  <line x1="348" y1="234" x2="400" y2="310" stroke="#57606a" marker-end="url(#arrB)"/>
+  <text x="236" y="360" class="xs">inner account_id</text>
+  <text x="236" y="376" class="xs">inner district_id</text>
+  <text x="236" y="392" class="xs">inner disp_id</text>
+  <text x="236" y="430" class="xs">Diagram does not edit joins.</text>
+  <text x="236" y="446" class="xs">Change them in the mapping</text>
+  <text x="236" y="462" class="xs">pane or the bottom grid.</text>
+  <text x="236" y="500" class="xs amb">Does not write semantic-map.md.</text>
+
+  <!-- right: column mapping -->
+  <rect x="524" y="140" width="296" height="390" rx="8" fill="#ffffff" stroke="#0969da"/>
+  <text x="536" y="162" class="lab blue">Right - column mapping</text>
+  <text x="536" y="180" class="xs">for selected table account_table</text>
+  <rect x="536" y="190" width="272" height="18" fill="#f6f8fa"/>
+  <text x="544" y="203" class="xs">view column</text>
+  <text x="660" y="203" class="xs">physical column</text>
+  <line x1="536" y1="210" x2="808" y2="210" stroke="#d0d7de"/>
+  <text x="544" y="230" class="sm">account_id</text>
+  <text x="660" y="230" class="sm">account_id PK</text>
+  <text x="544" y="252" class="sm">district_id</text>
+  <text x="660" y="252" class="sm">district_id FK</text>
+  <text x="544" y="274" class="sm">frequency</text>
+  <text x="660" y="274" class="sm">frequency</text>
+  <text x="544" y="296" class="sm">date</text>
+  <text x="660" y="296" class="sm">date</text>
+  <rect x="536" y="312" width="272" height="26" rx="4" fill="#f6f8fa" stroke="#0969da" stroke-dasharray="4 3"/>
+  <text x="548" y="329" class="sm blue">+ map another column</text>
+  <text x="536" y="362" class="xs">Columns are edited here,</text>
+  <text x="536" y="378" class="xs">not in the left tree</text>
+  <text x="536" y="394" class="xs">and not in the bottom pane.</text>
+  <text x="536" y="430" class="xs grn">Writes the view document</text>
+  <text x="536" y="446" class="xs grn">meta/views/financial_all.json</text>
+  <text x="536" y="480" class="xs red">Not semantic-map.md.</text>
+
+  <!-- bottom: table info only -->
+  <rect x="28" y="542" width="792" height="290" rx="8" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="40" y="566" class="lab grn">Bottom - table info only</text>
+  <text x="250" y="566" class="xs">selected physical table: account_table</text>
+  <text x="40" y="592" class="sm">name</text>
+  <text x="180" y="592" class="sm">account_table</text>
+  <text x="40" y="614" class="sm">target</text>
+  <text x="180" y="614" class="sm">financial</text>
+  <text x="40" y="636" class="sm">description</text>
+  <text x="180" y="636" class="sm mute">(empty)</text>
+  <text x="40" y="658" class="sm">primary key</text>
+  <text x="180" y="658" class="sm">account_id</text>
+  <text x="420" y="592" class="sm">No column list in this pane.</text>
+  <text x="420" y="614" class="sm">Columns already sit in the</text>
+  <text x="420" y="636" class="sm">right mapping editor.</text>
+  <text x="40" y="700" class="sm grn">Writes meta/tables/account_table.json</text>
+  <text x="40" y="724" class="sm red">semantic-map.md</text>
+  <line x1="40" y1="720" x2="148" y2="720" stroke="#cf222e"/>
+  <text x="156" y="724" class="xs red">generated - not an editor</text>
+  <text x="40" y="756" class="xs">Query field picker is a separate screen and is not drawn here.</text>
+  <text x="40" y="780" class="xs">Bottom edits the selected table document. It does not repeat the mapping grid.</text>
+  <text x="40" y="808" class="xs mute">Switch to Cubes to combine views. This pane then follows that selection.</text>
+
+  <!-- ===================== FRAME B ===================== -->
+  <rect x="848" y="48" width="816" height="800" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <rect x="848" y="48" width="816" height="32" rx="12" fill="#fbefff"/>
+  <rect x="848" y="68" width="816" height="12" fill="#fbefff"/>
+  <text x="860" y="70" class="ft pur">B. Cubes - combine on the left, cube tree on the right</text>
+
+  <rect x="860" y="92" width="792" height="36" rx="8" fill="#fff8c5" stroke="#d4a72c"/>
+  <text x="872" y="115" class="lab">Target</text>
+  <rect x="928" y="100" width="150" height="20" rx="5" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="940" y="114" class="ui">financial</text>
+  <text x="1062" y="114" class="ui">v</text>
+  <text x="1088" y="115" class="sm amb">Same target. Outside views are hidden.</text>
+
+  <!-- left: view list + combine -->
+  <rect x="860" y="140" width="200" height="390" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+  <rect x="870" y="150" width="84" height="22" rx="5" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="884" y="165" class="sm mute">Physical</text>
+  <rect x="958" y="150" width="90" height="22" rx="5" fill="#8250df"/>
+  <text x="982" y="165" class="sm w">Cubes</text>
+  <text x="870" y="192" class="xs">views, top to bottom</text>
+  <rect x="870" y="204" width="14" height="14" rx="2" fill="#8250df"/>
+  <text x="873" y="215" class="xs w">x</text>
+  <text x="892" y="215" class="sm">financial_all</text>
+  <rect x="870" y="226" width="14" height="14" rx="2" fill="#8250df"/>
+  <text x="873" y="237" class="xs w">x</text>
+  <text x="892" y="237" class="sm">loan_view</text>
+  <rect x="870" y="248" width="14" height="14" rx="2" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="892" y="259" class="sm mute">client_view</text>
+  <rect x="870" y="278" width="178" height="28" rx="6" fill="#8250df"/>
+  <text x="882" y="296" class="xs w">Combine selected into new view</text>
+  <text x="870" y="328" class="xs">The combined-view tree</text>
+  <text x="870" y="344" class="xs">is not kept here.</text>
+  <text x="870" y="360" class="xs">It opens on the right.</text>
+  <text x="870" y="392" class="xs">Select a view in this list</text>
+  <text x="870" y="408" class="xs">to edit that view document</text>
+  <text x="870" y="424" class="xs">in the bottom pane.</text>
+
+  <!-- center: combine diagram only -->
+  <rect x="1068" y="140" width="280" height="390" rx="8" fill="#fff8c5" stroke="#d4a72c"/>
+  <text x="1080" y="162" class="lab amb">Center - browse only</text>
+  <text x="1248" y="162" class="xs amb">no save</text>
+  <rect x="1088" y="186" width="110" height="26" rx="5" fill="#ffffff" stroke="#8250df"/>
+  <text x="1104" y="203" class="sm">financial_all</text>
+  <rect x="1088" y="220" width="110" height="26" rx="5" fill="#ffffff" stroke="#8250df"/>
+  <text x="1114" y="237" class="sm">loan_view</text>
+  <line x1="1198" y1="216" x2="1236" y2="250" stroke="#8250df" marker-end="url(#arrP)"/>
+  <rect x="1236" y="236" width="96" height="36" rx="5" fill="#ffffff" stroke="#8250df"/>
+  <text x="1248" y="252" class="sm">financial_loans</text>
+  <text x="1252" y="266" class="xs">combined view</text>
+  <line x1="1284" y1="272" x2="1284" y2="308" stroke="#8250df" marker-end="url(#arrP)"/>
+  <rect x="1236" y="308" width="96" height="40" rx="5" fill="#fbefff" stroke="#8250df"/>
+  <text x="1268" y="326" class="sm pur">cube</text>
+  <text x="1254" y="342" class="sm">financial</text>
+  <text x="1080" y="372" class="xs">Checked views only.</text>
+  <text x="1080" y="388" class="xs">client_view stays off.</text>
+  <text x="1080" y="416" class="xs">Join picture is a lens.</text>
+  <text x="1080" y="432" class="xs">Nothing typed here is saved.</text>
+  <text x="1080" y="460" class="xs red">Not semantic-map.md.</text>
+  <text x="1080" y="490" class="xs">Cube members are picked</text>
+  <text x="1080" y="506" class="xs">in the right tree.</text>
+
+  <!-- right: combined view tree -->
+  <rect x="1356" y="140" width="296" height="390" rx="8" fill="#ffffff" stroke="#8250df"/>
+  <text x="1368" y="162" class="lab pur">Right - combined view tree</text>
+  <text x="1368" y="182" class="sm">view financial_loans</text>
+  <text x="1382" y="204" class="lab">cube financial</text>
+  <text x="1396" y="226" class="sm">Dimensions</text>
+  <rect x="1408" y="234" width="220" height="20" rx="4" fill="#fbefff" stroke="#8250df"/>
+  <text x="1416" y="248" class="sm pur">account_id</text>
+  <text x="1416" y="270" class="sm">status</text>
+  <text x="1396" y="292" class="sm">Facts</text>
+  <text x="1416" y="312" class="sm">amount</text>
+  <text x="1416" y="332" class="sm">duration</text>
+  <text x="1396" y="354" class="sm pur">Metrics</text>
+  <text x="1416" y="374" class="sm">avg_salary</text>
+  <text x="1396" y="396" class="sm pur">Segments</text>
+  <text x="1416" y="416" class="sm">loan_finished_ok</text>
+  <text x="1368" y="444" class="xs">Metrics and segments attach</text>
+  <text x="1368" y="460" class="xs">after dimensions and facts.</text>
+  <text x="1368" y="484" class="xs">Select dim, fact, metric,</text>
+  <text x="1368" y="500" class="xs">or segment to edit it below.</text>
+
+  <!-- bottom: selected member -->
+  <rect x="860" y="542" width="792" height="290" rx="8" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="872" y="566" class="lab grn">Bottom - detail of the selection</text>
+  <text x="1140" y="566" class="xs">right tree: dimension account_id</text>
+  <text x="872" y="592" class="sm">name</text>
+  <text x="1040" y="592" class="sm">account_id</text>
+  <text x="872" y="614" class="sm">type</text>
+  <text x="1040" y="614" class="sm">string</text>
+  <text x="872" y="636" class="sm">description</text>
+  <text x="1040" y="636" class="sm mute">(empty)</text>
+  <text x="872" y="658" class="sm">view column</text>
+  <text x="1040" y="658" class="sm">account_id</text>
+  <text x="1240" y="592" class="sm">Other selections:</text>
+  <text x="1240" y="614" class="xs">view on the left</text>
+  <text x="1240" y="630" class="xs">shows the view document</text>
+  <text x="1240" y="654" class="xs">fact, metric, or segment</text>
+  <text x="1240" y="670" class="xs">on the right shows that</text>
+  <text x="1240" y="686" class="xs">item's fields here</text>
+  <text x="872" y="700" class="sm grn">Writes cubes/financial.json (member)</text>
+  <text x="872" y="724" class="sm red">semantic-map.md</text>
+  <line x1="872" y1="720" x2="980" y2="720" stroke="#cf222e"/>
+  <text x="988" y="724" class="xs red">not editable</text>
+  <text x="872" y="756" class="xs">Role groups stay separate: dimensions, facts, then metrics, then segments.</text>
+  <text x="872" y="780" class="xs">Metric and segment rows stay disabled until the cube has dimensions and facts.</text>
+  <text x="872" y="808" class="xs mute">Query picker still hides metric and segment names. They are not columns.</text>
+
+  <!-- ===================== FRAME C select ===================== -->
+  <rect x="16" y="864" width="1648" height="460" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <rect x="16" y="864" width="1648" height="32" rx="12" fill="#fff1e5"/>
+  <rect x="16" y="884" width="1648" height="12" fill="#fff1e5"/>
+  <text x="28" y="886" class="ft" fill="#bc4c00">C. Select view - priority stack in the center, column merge on the right</text>
+
+  <rect x="28" y="908" width="1624" height="36" rx="8" fill="#fff8c5" stroke="#d4a72c"/>
+  <text x="40" y="931" class="lab">Target</text>
+  <rect x="96" y="916" width="150" height="20" rx="5" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="108" y="930" class="ui">financial</text>
+  <text x="230" y="930" class="ui">v</text>
+  <text x="256" y="931" class="sm amb">Opened when combine is select. Same target only.</text>
+
+  <rect x="28" y="956" width="280" height="230" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="40" y="978" class="lab">Input views</text>
+  <text x="40" y="998" class="xs">chosen for this select view</text>
+  <text x="40" y="1024" class="sm">financial_all</text>
+  <text x="40" y="1048" class="sm">loan_view</text>
+  <text x="40" y="1072" class="sm">client_view</text>
+  <text x="40" y="1108" class="xs">Left only picks members.</text>
+  <text x="40" y="1124" class="xs">Order is the center stack.</text>
+  <text x="40" y="1140" class="xs">Columns merge on the right.</text>
+
+  <rect x="320" y="956" width="500" height="230" rx="8" fill="#fff8c5" stroke="#d4a72c"/>
+  <text x="332" y="978" class="lab amb">Center - priority stack</text>
+  <text x="620" y="978" class="xs amb">drag to reorder</text>
+  <rect x="332" y="990" width="476" height="36" rx="6" fill="#ffffff" stroke="#bc4c00"/>
+  <text x="344" y="1012" class="sm">::</text>
+  <text x="372" y="1012" class="lab" fill="#bc4c00">1</text>
+  <text x="396" y="1012" class="sm">financial_all</text>
+  <text x="620" y="1012" class="xs">priority 1 - top</text>
+  <rect x="360" y="1030" width="200" height="22" rx="4" fill="#ffffff" stroke="#bc4c00" stroke-dasharray="3 2"/>
+  <text x="368" y="1045" class="xs" fill="#bc4c00">loan_view -&gt; move up</text>
+  <rect x="332" y="1056" width="476" height="36" rx="6" fill="#ffffff" stroke="#d4a72c"/>
+  <text x="344" y="1078" class="sm">::</text>
+  <text x="372" y="1078" class="lab">2</text>
+  <text x="396" y="1078" class="sm">loan_view</text>
+  <rect x="332" y="1100" width="476" height="36" rx="6" fill="#ffffff" stroke="#d4a72c"/>
+  <text x="344" y="1122" class="sm">::</text>
+  <text x="372" y="1122" class="lab">3</text>
+  <text x="396" y="1122" class="sm">client_view</text>
+  <text x="680" y="1122" class="xs">lowest</text>
+  <text x="332" y="1156" class="xs">Top of the stack is priority 1. Bottom is lowest.</text>
+  <text x="332" y="1172" class="xs">Dragging changes order only. It does not edit columns.</text>
+
+  <rect x="832" y="956" width="820" height="230" rx="8" fill="#ffffff" stroke="#0969da"/>
+  <text x="844" y="978" class="lab blue">Right - column merge</text>
+  <text x="1020" y="978" class="xs">same pattern as the join-view mapping</text>
+  <rect x="844" y="990" width="796" height="18" fill="#f6f8fa"/>
+  <text x="852" y="1003" class="xs">view column</text>
+  <text x="980" y="1003" class="xs">1 financial_all</text>
+  <text x="1140" y="1003" class="xs">2 loan_view</text>
+  <text x="1300" y="1003" class="xs">3 client_view</text>
+  <line x1="844" y1="1010" x2="1640" y2="1010" stroke="#d0d7de"/>
+  <text x="852" y="1030" class="sm">account_id</text>
+  <text x="980" y="1030" class="sm">account_id</text>
+  <text x="1140" y="1030" class="sm">account_id</text>
+  <text x="1300" y="1030" class="sm mute">-</text>
+  <text x="852" y="1052" class="sm">amount</text>
+  <text x="980" y="1052" class="sm">amount</text>
+  <text x="1140" y="1052" class="sm">amount</text>
+  <text x="1300" y="1052" class="sm">amount</text>
+  <text x="852" y="1074" class="sm">status</text>
+  <text x="980" y="1074" class="sm">status</text>
+  <text x="1140" y="1074" class="sm mute">-</text>
+  <text x="1300" y="1074" class="sm mute">-</text>
+  <rect x="844" y="1088" width="796" height="24" rx="4" fill="#f6f8fa" stroke="#0969da" stroke-dasharray="4 3"/>
+  <text x="856" y="1104" class="sm blue">+ map another column from the stacked views</text>
+  <text x="844" y="1132" class="xs grn">Writes meta/views/prefer_account.json</text>
+  <text x="1140" y="1132" class="xs red">Not semantic-map.md.</text>
+  <text x="844" y="1152" class="xs">Empty cells stay empty. Higher priority fills the output first.</text>
+
+  <rect x="28" y="1198" width="1624" height="114" rx="8" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="40" y="1220" class="lab grn">Bottom - select view document</text>
+  <text x="280" y="1220" class="xs">selected: prefer_account</text>
+  <text x="40" y="1244" class="sm">name</text>
+  <text x="160" y="1244" class="sm">prefer_account</text>
+  <text x="360" y="1244" class="sm">combine</text>
+  <text x="460" y="1244" class="sm">select</text>
+  <text x="560" y="1244" class="sm">target</text>
+  <text x="640" y="1244" class="sm">financial</text>
+  <text x="40" y="1268" class="sm grn">Writes meta JSON for this view. Stack order and column merge are the fields above.</text>
+  <text x="40" y="1290" class="sm red">semantic-map.md</text>
+  <line x1="40" y1="1286" x2="148" y2="1286" stroke="#cf222e"/>
+  <text x="156" y="1290" class="xs red">generated - not an editor</text>
+
+  <!-- legend -->
+  <rect x="16" y="1340" width="1648" height="196" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="32" y="1366" class="ft">Rules kept from the benchmarks</text>
+  <text x="32" y="1396" class="lab">1. Two screens</text>
+  <text x="32" y="1416" class="sm">This draft is authoring.</text>
+  <text x="32" y="1434" class="sm">The query field picker</text>
+  <text x="32" y="1452" class="sm">is a different screen.</text>
+  <text x="32" y="1476" class="xs">Dimensions and facts only.</text>
+  <text x="420" y="1396" class="lab">2. Diagram is a lens</text>
+  <text x="420" y="1416" class="sm">Join and combine pictures</text>
+  <text x="420" y="1434" class="sm">are view-only. The select</text>
+  <text x="420" y="1452" class="sm">stack drag only reorders.</text>
+  <text x="420" y="1476" class="xs">Column edits stay on the right.</text>
+  <text x="860" y="1396" class="lab">3. Group by role</text>
+  <text x="860" y="1416" class="sm">Dimensions, facts, metrics,</text>
+  <text x="860" y="1434" class="sm">and segments stay apart.</text>
+  <text x="860" y="1452" class="sm">Metrics and segments come last.</text>
+  <text x="860" y="1476" class="xs">Not one flat column list.</text>
+  <text x="1260" y="1396" class="lab">4. No generated markdown</text>
+  <text x="1260" y="1416" class="sm">semantic-map.md is a copy.</text>
+  <text x="1260" y="1434" class="sm">Mapping, merge, and detail</text>
+  <text x="1260" y="1452" class="sm">never write that file.</text>
+  <text x="1260" y="1476" class="xs">Looker canvas LookML is read-only.</text>
+</svg>

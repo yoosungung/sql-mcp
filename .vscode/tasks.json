@@ -1,0 +1,19 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build semantic-ui",
+      "type": "shell",
+      "command": "if [ ! -d node_modules ]; then npm ci; fi && npm run build",
+      "options": {
+        "cwd": "${workspaceFolder}/semantic-ui"
+      },
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

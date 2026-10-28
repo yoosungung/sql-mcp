@@ -5,12 +5,13 @@
 ## 사전 조건
 
 - Rust 1.94+ (`rust-toolchain.toml`)
+- Node 22+ (`semantic-ui` — `cargo build`/`docker build`/CI/CD가 `npm run build`를 선행)
 - 시맨틱 DB 경로 쓰기 가능
 - 타깃 Postgres DSN은 환경 변수로만 주입 (`url_env`)
 
 ## GitHub Release `current`
 
-[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)이 PR/`master`에서 테스트를 돌리고, 성공한 `master` 푸시에 한해 [`.github/workflows/cd.yml`](../.github/workflows/cd.yml)이 Linux·Windows·macOS **release** 바이너리를 빌드한 뒤 태그 [`current`](https://github.com/yoosungung/sql-mcp/releases/tag/current) Release를 교체한다(`workflow_dispatch`로 CD만 재실행 가능).
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)이 PR/`master`에서 `semantic-ui`를 빌드한 뒤 테스트를 돌리고, 성공한 `master` 푸시에 한해 [`.github/workflows/cd.yml`](../.github/workflows/cd.yml)이 다시 UI를 빌드하고 Linux·Windows·macOS **release** 바이너리를 만든 뒤 태그 [`current`](https://github.com/yoosungung/sql-mcp/releases/tag/current) Release를 교체한다(`workflow_dispatch`로 CD만 재실행 가능).
 
 | 파일 | 러너 |
 |------|------|
@@ -26,7 +27,9 @@
 
 ```text
 cargo build -p sql-mcp --release
+# 선행: semantic-ui `npm run build` → semantic-ui/dist
 # 산출물: target/release/sql-mcp
+# GET /ui 는 프로세스 cwd의 semantic-ui/dist (저장소 루트에서 실행)
 
 export SQL_MCP_SEMANTIC_PATH=/var/lib/sql-mcp/semantic.db
 export SQL_MCP_CONFIG=/etc/sql-mcp/config.toml
@@ -41,6 +44,7 @@ MCP: `POST /mcp` (JSON)
 
 ```text
 docker build -t sql-mcp:local -f deploy/Dockerfile .
+# 이미지: Node로 semantic-ui/dist 후 Rust 바이너리. WORKDIR /app, UI는 /app/semantic-ui/dist
 docker run --rm -p 8080:8080 \
   -e SQL_MCP_SEMANTIC_PATH=/data/semantic.db \
   -e SQL_MCP_CONFIG=/config/config.toml \

@@ -22,6 +22,7 @@ pub mod skills_ext;
 pub mod stdio;
 pub mod target;
 pub mod tools;
+pub mod ui_build;
 
 pub use config::Config;
 pub use semantic::SemanticStore;

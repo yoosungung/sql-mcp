@@ -14,3 +14,5 @@ target_db/**
 client/.venv/
 client/eval/
 .DS_Store
+dist/
+node_modules/

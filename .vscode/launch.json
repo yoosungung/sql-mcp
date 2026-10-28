@@ -26,6 +26,7 @@
         "SQL_MCP_EMBEDDING_MODEL": "embeddinggemma-2:270m",
         "SQL_MCP_EMBEDDING_DIM": "768"
       },
+      "preLaunchTask": "build semantic-ui",
       "sourceLanguages": ["rust"],
       "gracefulShutdown": "SIGTERM"
     },

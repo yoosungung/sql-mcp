@@ -62,6 +62,16 @@ jobs:
           shared-key: cd-${{ matrix.os }}
       - uses: ilammy/setup-nasm@v1
         if: runner.os == 'Windows'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: semantic-ui/package-lock.json
+      - name: Build semantic-ui
+        working-directory: semantic-ui
+        run: |
+          npm ci
+          npm run build
       - name: Release build
         run: cargo build -p sql-mcp --release --locked
       - name: Package (Unix)

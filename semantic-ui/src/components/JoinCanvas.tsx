@@ -95,6 +95,7 @@ export function JoinCanvas({
 
   useEffect(() => {
     if (typeof selectedJoinIndex !== "number") return;
+    const joinIndex = selectedJoinIndex;
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== "Delete" && event.key !== "Backspace") return;
       const target = event.target as HTMLElement | null;
@@ -102,7 +103,7 @@ export function JoinCanvas({
         return;
       }
       event.preventDefault();
-      onRequestDeleteJoin?.(selectedJoinIndex);
+      onRequestDeleteJoin?.(joinIndex);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);

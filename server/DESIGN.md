@@ -44,6 +44,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `skill_resources` | `skills/` embed · Resource URI/MIME · list/read |
 | `api` | 작성 HTTP `/api` (메타 CRUD · 물리 tables/columns/sample · `/api/databases`) |
 | `http` | axum `/health` · `/api` · `/mcp` · `/ui` (`semantic-ui/dist` 정적) |
+| `ui_build` | `semantic-ui/dist` 신선도 판정. `build.rs`가 `npm run build` 선행 |
 | `stdio` | 로컬 stdin/stdout MCP (`--stdio`) |
 | `cli` | 바이너리 argv: `-h`/`--help` · 알 수 없는 플래그 · 기동 실패 시 경로/힌트(stderr) |
 
@@ -96,13 +97,15 @@ Cube.js `*Query` 어댑터와 같은 역할: **생성기 쪽 방언**, 자유 SQ
 ## Commands
 
 ```text
+# cargo build/run이 semantic-ui `npm run build`를 선행한다(Node 22+). dist가 소스보다 새면 건너뛴다.
+# rust-analyzer만 SQL_MCP_SKIP_UI_BUILD=1. CI/CD는 Node 22로 UI를 먼저 빌드한다.
 cargo test -p sql-mcp
 cargo build -p sql-mcp --release
 
 export SQL_MCP_SEMANTIC_PATH=./data/semantic.db
 export SQL_MCP_CONFIG=./server/examples/config.example.toml
 cargo run -p sql-mcp
-# GET /health · /api · POST /mcp · GET /ui/  (semantic-ui/dist, `cd semantic-ui && npm run build`)
+# GET /health · /api · POST /mcp · GET /ui/  (semantic-ui/dist)
 cargo run -p sql-mcp -- --help
 
 # 로컬 stdio (Cursor mcp.json 예: examples/mcp.stdio.example.json)
@@ -116,7 +119,8 @@ cargo test -p sql-mcp --test http_smoke -- --ignored
 export SQL_MCP_CONFIG=./server/examples/config.bird.toml
 cargo run -p sql-mcp
 
-# Cursor/VS Code 디버그: Run and Debug → Debug sql-mcp (BIRD) (.vscode/launch.json, CodeLLDB)
+# Cursor/VS Code 디버그: Run and Debug → Debug sql-mcp (BIRD)
+# preLaunchTask `build semantic-ui` 후 CodeLLDB (.vscode/launch.json)
 
 # 컨테이너·K8s: ../deploy/SETUP.md
 ```

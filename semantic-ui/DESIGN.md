@@ -76,6 +76,9 @@ npm install
 npm test
 # 정본 E2E: BIRD superhero · sql-mcp HTTP 127.0.0.1:8090 + vite. 브라우저에서 DESIGN 12단계 한 사이클.
 # 샌드박스 cargo는 aws-lc EPERM → 권한(all)로 기동.
+
+# dist는 sql-mcp가 선행 빌드한다: cargo build/run, Debug sql-mcp (BIRD), docker build, CI/CD.
+# 수동:
 npm run build
 # 산출물: semantic-ui/dist  →  sql-mcp GET /ui/
 

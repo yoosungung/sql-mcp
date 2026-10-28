@@ -16,8 +16,8 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
 | `ROADMAP.md` | 수행 계획(마일스톤·순서·미결정 항목) | 루트 |
 | `<comp>/DESIGN.md` | 컴포넌트 *내부* 설계 + `## Commands` (빌드/실행/테스트) | `server/` (M1+), `semantic/`, `client/`, `semantic-ui/`. 조회 Admin API는 취소. 작성 HTTP `/api`는 D30 |
 | `deploy/SETUP.md` | 배포 런북 | `deploy/` |
-| `.github/workflows/ci.yml` | CI: PR/push `cargo test -p sql-mcp --locked` | `.github/workflows/` |
-| `.github/workflows/cd.yml` | CD: master CI 성공 후 linux/windows/macos release → GitHub Release `current` | `.github/workflows/` |
+| `.github/workflows/ci.yml` | CI: PR/push `semantic-ui` `npm run build` 후 `cargo test -p sql-mcp --locked` | `.github/workflows/` |
+| `.github/workflows/cd.yml` | CD: master CI 성공 후 UI 빌드 + linux/windows/macos release → GitHub Release `current` | `.github/workflows/` |
 | `deploy/k8s/base/` | Kustomize 베이스 | `deploy/k8s/base/` |
 | `target_db/README.md` | BIRD Mini-Dev SQLite 로컬 타깃 + Q-SQL(`bird_qa/`) · meta JSON · `semantic-map.md` 생성 | `target_db/` |
 | `target_db/<db>/semantic_plan.yaml` | 허브(팩트) 정본 — `generate_meta`가 이 목록만 view+cube로 만듦 (`{db}_all` 없음). git 추적 | `target_db/` |

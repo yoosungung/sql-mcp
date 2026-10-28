@@ -38,7 +38,11 @@ pub fn validate_document(body: &Value) -> Result<(), AppError> {
     Err(AppError::Validation(parts.join("; ")))
 }
 
-fn collect_validation_messages(err: &ValidationError<'_>, kind: Option<&str>, out: &mut Vec<String>) {
+fn collect_validation_messages(
+    err: &ValidationError<'_>,
+    kind: Option<&str>,
+    out: &mut Vec<String>,
+) {
     match err.kind() {
         ValidationErrorKind::OneOfNotValid { context } | ValidationErrorKind::AnyOf { context } => {
             let idx = match kind {

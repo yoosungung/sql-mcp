@@ -1,0 +1,10 @@
+.git
+.cursor
+target
+data
+client/.venv
+client/eval
+**/node_modules
+semantic-ui/dist
+**/*.db
+**/.DS_Store
