@@ -1,8 +1,9 @@
 -- 시맨틱 카탈로그: 타입별 meta_* 테이블이 저장 계층.
 -- MCP metadata_* 입출력 JSON 검증 정본은 semantic/schema/document.schema.json.
 -- 검색: column_index(+embedding) + column_index_fts(FTS5/bm25). keyword는 FTS5이며 vector/hybrid(RRF) 유지.
+-- view/cube PK는 대리키 `id`. JSON 입출력은 계속 `name`이며 서버가 쓰기에 id를 부여하고 읽기에 name으로 푼다.
 
--- 1. Table
+-- 1. Table (논리 name이 PK — 변경 없음)
 CREATE TABLE IF NOT EXISTS meta_tables (
   name TEXT PRIMARY KEY,
   description TEXT,
@@ -33,14 +34,15 @@ CREATE TABLE IF NOT EXISTS meta_table_permission_filters (
 
 -- 2. View
 CREATE TABLE IF NOT EXISTS meta_views (
-  name TEXT PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
   description TEXT,
   target TEXT NOT NULL,
   combine TEXT NOT NULL CHECK (combine IN ('join', 'union', 'minus'))
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS meta_view_sources (
-  view_name TEXT NOT NULL REFERENCES meta_views(name) ON DELETE CASCADE,
+  view_id INTEGER NOT NULL REFERENCES meta_views(id) ON DELETE CASCADE,
   kind TEXT NOT NULL CHECK (kind IN ('table')),
   source_name TEXT NOT NULL,
   catalog_name TEXT,
@@ -48,7 +50,7 @@ CREATE TABLE IF NOT EXISTS meta_view_sources (
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS meta_view_joins (
-  view_name TEXT NOT NULL REFERENCES meta_views(name) ON DELETE CASCADE,
+  view_id INTEGER NOT NULL REFERENCES meta_views(id) ON DELETE CASCADE,
   left_source TEXT NOT NULL,
   right_source TEXT NOT NULL,
   join_type TEXT NOT NULL CHECK (join_type IN ('inner', 'left', 'right', 'full')),
@@ -57,17 +59,18 @@ CREATE TABLE IF NOT EXISTS meta_view_joins (
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS meta_view_columns (
-  view_name TEXT NOT NULL REFERENCES meta_views(name) ON DELETE CASCADE,
+  view_id INTEGER NOT NULL REFERENCES meta_views(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   mappings_json TEXT NOT NULL,
-  PRIMARY KEY (view_name, name)
+  PRIMARY KEY (view_id, name)
 ) STRICT;
 
 -- 3. Cube
 CREATE TABLE IF NOT EXISTS meta_cubes (
-  name TEXT PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
   target TEXT NOT NULL,
-  view_name TEXT NOT NULL REFERENCES meta_views(name),
+  view_id INTEGER NOT NULL REFERENCES meta_views(id),
   description TEXT NOT NULL,
   role_json TEXT NOT NULL DEFAULT '"all"',
   grain_json TEXT,
@@ -75,15 +78,15 @@ CREATE TABLE IF NOT EXISTS meta_cubes (
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS meta_cube_choices (
-  cube_name TEXT NOT NULL REFERENCES meta_cubes(name) ON DELETE CASCADE,
+  cube_id INTEGER NOT NULL REFERENCES meta_cubes(id) ON DELETE CASCADE,
   pos INTEGER NOT NULL,
-  view_name TEXT NOT NULL REFERENCES meta_views(name),
+  view_id INTEGER NOT NULL REFERENCES meta_views(id),
   summary INTEGER NOT NULL DEFAULT 1,
-  PRIMARY KEY (cube_name, pos)
+  PRIMARY KEY (cube_id, pos)
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS meta_cube_dimensions (
-  cube_name TEXT NOT NULL REFERENCES meta_cubes(name) ON DELETE CASCADE,
+  cube_id INTEGER NOT NULL REFERENCES meta_cubes(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   description TEXT NOT NULL,
   type TEXT CHECK (type IN ('id', 'code', 'date', 'time', 'datetime', 'string')),
@@ -92,11 +95,11 @@ CREATE TABLE IF NOT EXISTS meta_cube_dimensions (
   encryption INTEGER NOT NULL,
   as_code_json TEXT,
   role_json TEXT NOT NULL DEFAULT '"all"',
-  PRIMARY KEY (cube_name, name)
+  PRIMARY KEY (cube_id, name)
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS meta_cube_facts (
-  cube_name TEXT NOT NULL REFERENCES meta_cubes(name) ON DELETE CASCADE,
+  cube_id INTEGER NOT NULL REFERENCES meta_cubes(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   description TEXT NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('amount', 'fx', 'quantity')),
@@ -105,13 +108,13 @@ CREATE TABLE IF NOT EXISTS meta_cube_facts (
   encryption INTEGER NOT NULL,
   role_json TEXT NOT NULL DEFAULT '"all"',
   additive INTEGER NOT NULL DEFAULT 1,
-  PRIMARY KEY (cube_name, name)
+  PRIMARY KEY (cube_id, name)
 ) STRICT;
 
 -- 4. Metric & Segment
 CREATE TABLE IF NOT EXISTS meta_metrics (
   name TEXT PRIMARY KEY,
-  cube_name TEXT NOT NULL REFERENCES meta_cubes(name),
+  cube_id INTEGER NOT NULL REFERENCES meta_cubes(id),
   description TEXT NOT NULL,
   expression TEXT NOT NULL,
   aggregation TEXT CHECK (aggregation IN ('group', 'rollup', 'cube', 'grouping_sets')),
@@ -122,7 +125,7 @@ CREATE TABLE IF NOT EXISTS meta_metrics (
 
 CREATE TABLE IF NOT EXISTS meta_segments (
   name TEXT PRIMARY KEY,
-  cube_name TEXT NOT NULL REFERENCES meta_cubes(name),
+  cube_id INTEGER NOT NULL REFERENCES meta_cubes(id),
   description TEXT NOT NULL,
   filter_expression TEXT NOT NULL,
   role_json TEXT NOT NULL DEFAULT '"all"'

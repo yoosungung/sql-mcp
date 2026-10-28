@@ -1,9 +1,205 @@
 //! Persist / load registration JSON as typed meta_* rows.
 
+use std::collections::{HashMap, HashSet, VecDeque};
+
 use libsql::{params, Connection};
 use serde_json::{json, Value};
 
 use crate::error::AppError;
+
+/// Join views: hub (max join degree) at `sources[0]`, then remaining sources by hop
+/// depth from the hub (depth-1, then depth-2). Siblings keep their original relative
+/// order. Shared-key `mappings` follow that same rank. Union/minus and identity views
+/// (`joins: []`) are unchanged.
+pub(crate) fn normalize_join_hub_first(view: &Value) -> Result<Value, AppError> {
+    if view.get("combine").and_then(|v| v.as_str()) != Some("join") {
+        return Ok(view.clone());
+    }
+    let Some(joins) = view.get("joins").and_then(|v| v.as_array()) else {
+        return Ok(view.clone());
+    };
+    if joins.is_empty() {
+        return Ok(view.clone());
+    }
+    let Some(sources) = view.get("sources").and_then(|v| v.as_array()) else {
+        return Ok(view.clone());
+    };
+    if sources.is_empty() {
+        return Ok(view.clone());
+    }
+
+    let mut degree: HashMap<String, usize> = HashMap::new();
+    let mut adj: HashMap<String, Vec<String>> = HashMap::new();
+    for j in joins {
+        let Some(l) = j.get("left").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(r) = j.get("right").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        *degree.entry(l.to_string()).or_default() += 1;
+        *degree.entry(r.to_string()).or_default() += 1;
+        adj.entry(l.to_string()).or_default().push(r.to_string());
+        adj.entry(r.to_string()).or_default().push(l.to_string());
+    }
+    let aliases: Vec<String> = sources
+        .iter()
+        .map(view_source_alias)
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    let max_deg = aliases
+        .iter()
+        .map(|a| degree.get(a).copied().unwrap_or(0))
+        .max()
+        .unwrap_or(0);
+    if max_deg == 0 {
+        return Ok(view.clone());
+    }
+    let hub_idx = aliases
+        .iter()
+        .position(|a| degree.get(a).copied().unwrap_or(0) == max_deg)
+        .unwrap_or(0);
+    let hub = aliases[hub_idx].clone();
+    let orig_idx: HashMap<&str, usize> = aliases
+        .iter()
+        .enumerate()
+        .map(|(i, a)| (a.as_str(), i))
+        .collect();
+    for nbs in adj.values_mut() {
+        nbs.sort_by_key(|n| orig_idx.get(n.as_str()).copied().unwrap_or(usize::MAX));
+        nbs.dedup();
+    }
+
+    let mut order: Vec<String> = Vec::with_capacity(aliases.len());
+    let mut seen = HashSet::from([hub.clone()]);
+    let mut q = VecDeque::from([hub.clone()]);
+    while let Some(cur) = q.pop_front() {
+        order.push(cur.clone());
+        if let Some(nbs) = adj.get(&cur) {
+            for nb in nbs {
+                if seen.insert(nb.clone()) {
+                    q.push_back(nb.clone());
+                }
+            }
+        }
+    }
+    for a in &aliases {
+        if seen.insert(a.clone()) {
+            order.push(a.clone());
+        }
+    }
+
+    let by_alias: HashMap<&str, &Value> = aliases
+        .iter()
+        .zip(sources.iter())
+        .map(|(a, s)| (a.as_str(), s))
+        .collect();
+    let reordered: Vec<Value> = order
+        .iter()
+        .filter_map(|a| by_alias.get(a.as_str()).copied().cloned())
+        .collect();
+    let rank: HashMap<&str, usize> = order
+        .iter()
+        .enumerate()
+        .map(|(i, a)| (a.as_str(), i))
+        .collect();
+
+    let mut out = view.clone();
+    out["sources"] = json!(reordered);
+    if let Some(cols) = out.get_mut("columns").and_then(|v| v.as_array_mut()) {
+        for col in cols {
+            if let Some(maps) = col.get_mut("mappings").and_then(|v| v.as_array_mut()) {
+                if maps.len() > 1 {
+                    maps.sort_by_key(|m| {
+                        m.get("source")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| rank.get(s).copied())
+                            .unwrap_or(usize::MAX)
+                    });
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn view_source_alias(src: &Value) -> Result<&str, AppError> {
+    if let Some(s) = src.as_str() {
+        return Ok(s);
+    }
+    src.get("alias")
+        .and_then(|v| v.as_str())
+        .or_else(|| src.get("table").and_then(|v| v.as_str()))
+        .or_else(|| src.get("name").and_then(|v| v.as_str()))
+        .ok_or_else(|| AppError::Validation("source alias/table missing".into()))
+}
+
+async fn last_insert_id(conn: &Connection) -> Result<i64, AppError> {
+    let mut rows = conn
+        .query("SELECT last_insert_rowid()", ())
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    let row = rows
+        .next()
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid empty")))?;
+    row.get(0).map_err(|e| AppError::Internal(e.into()))
+}
+
+async fn view_id_by_name(conn: &Connection, name: &str) -> Result<i64, AppError> {
+    let mut rows = conn
+        .query("SELECT id FROM meta_views WHERE name = ?1", params![name])
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    let row = rows
+        .next()
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?
+        .ok_or_else(|| AppError::NotFound(format!("view '{name}' not found")))?;
+    row.get(0).map_err(|e| AppError::Internal(e.into()))
+}
+
+async fn cube_id_by_name(conn: &Connection, name: &str) -> Result<i64, AppError> {
+    let mut rows = conn
+        .query("SELECT id FROM meta_cubes WHERE name = ?1", params![name])
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    let row = rows
+        .next()
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?
+        .ok_or_else(|| AppError::NotFound(format!("cube '{name}' not found")))?;
+    row.get(0).map_err(|e| AppError::Internal(e.into()))
+}
+
+async fn delete_view_children(conn: &Connection, view_id: i64) -> Result<(), AppError> {
+    for sql in [
+        "DELETE FROM meta_view_columns WHERE view_id = ?1",
+        "DELETE FROM meta_view_joins WHERE view_id = ?1",
+        "DELETE FROM meta_view_sources WHERE view_id = ?1",
+    ] {
+        conn.execute(sql, params![view_id])
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?;
+    }
+    Ok(())
+}
+
+async fn delete_cube_children(conn: &Connection, cube_id: i64) -> Result<(), AppError> {
+    for sql in [
+        "DELETE FROM meta_cube_choices WHERE cube_id = ?1",
+        "DELETE FROM meta_cube_dimensions WHERE cube_id = ?1",
+        "DELETE FROM meta_cube_facts WHERE cube_id = ?1",
+    ] {
+        conn.execute(sql, params![cube_id])
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?;
+    }
+    Ok(())
+}
 
 pub async fn delete_kind(conn: &Connection, kind: &str, name: &str) -> Result<u64, AppError> {
     let sql = match kind {
@@ -30,6 +226,27 @@ pub async fn insert_document(conn: &Connection, body: &Value) -> Result<(), AppE
         "cube" => insert_cube(conn, body).await,
         "metric" => insert_metric(conn, body).await,
         "segment" => insert_segment(conn, body).await,
+        _ => Err(AppError::Validation(format!("unknown kind {kind}"))),
+    }
+}
+
+/// Keep the parent row (stable id) and replace unique `name` plus children.
+/// Tables still delete+insert because `name` is the PK.
+pub async fn replace_document(
+    conn: &Connection,
+    kind: &str,
+    existing_name: &str,
+    body: &Value,
+) -> Result<(), AppError> {
+    match kind {
+        "table" => {
+            delete_kind(conn, kind, existing_name).await?;
+            insert_document(conn, body).await
+        }
+        "view" => replace_view(conn, existing_name, body).await,
+        "cube" => replace_cube(conn, existing_name, body).await,
+        "metric" => replace_metric(conn, existing_name, body).await,
+        "segment" => replace_segment(conn, existing_name, body).await,
         _ => Err(AppError::Validation(format!("unknown kind {kind}"))),
     }
 }
@@ -274,6 +491,8 @@ async fn load_table(conn: &Connection, name: &str) -> Result<Value, AppError> {
 }
 
 async fn insert_view(conn: &Connection, body: &Value) -> Result<(), AppError> {
+    let normalized = normalize_join_hub_first(body)?;
+    let body = &normalized;
     let name = str_field(body, "name")?;
     let target = str_field(body, "target")?;
     let description = opt_str(body, "description");
@@ -284,7 +503,15 @@ async fn insert_view(conn: &Connection, body: &Value) -> Result<(), AppError> {
     )
     .await
     .map_err(|e| AppError::Internal(e.into()))?;
+    let view_id = last_insert_id(conn).await?;
+    insert_view_children(conn, view_id, body).await
+}
 
+async fn insert_view_children(
+    conn: &Connection,
+    view_id: i64,
+    body: &Value,
+) -> Result<(), AppError> {
     if let Some(sources) = body.get("sources").and_then(|v| v.as_array()) {
         for s in sources {
             let (skind, catalog, alias) = if let Some(n) = s.as_str() {
@@ -303,8 +530,8 @@ async fn insert_view(conn: &Connection, body: &Value) -> Result<(), AppError> {
                 )
             };
             conn.execute(
-                "INSERT INTO meta_view_sources (view_name, kind, source_name, catalog_name, summary) VALUES (?1,?2,?3,?4,0)",
-                params![name, skind, alias, catalog],
+                "INSERT INTO meta_view_sources (view_id, kind, source_name, catalog_name, summary) VALUES (?1,?2,?3,?4,0)",
+                params![view_id, skind, alias, catalog],
             )
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
@@ -325,9 +552,9 @@ async fn insert_view(conn: &Connection, body: &Value) -> Result<(), AppError> {
                 }
             }
             conn.execute(
-                "INSERT INTO meta_view_joins (view_name, left_source, right_source, join_type, on_conditions_json, relationship)
+                "INSERT INTO meta_view_joins (view_id, left_source, right_source, join_type, on_conditions_json, relationship)
                  VALUES (?1,?2,?3,?4,?5,?6)",
-                params![name, left, right, jtype, on, relationship],
+                params![view_id, left, right, jtype, on, relationship],
             )
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
@@ -338,14 +565,36 @@ async fn insert_view(conn: &Connection, body: &Value) -> Result<(), AppError> {
             let cname = str_field(c, "name")?;
             let mappings = c.get("mappings").cloned().unwrap_or(json!([])).to_string();
             conn.execute(
-                "INSERT INTO meta_view_columns (view_name, name, mappings_json) VALUES (?1,?2,?3)",
-                params![name, cname, mappings],
+                "INSERT INTO meta_view_columns (view_id, name, mappings_json) VALUES (?1,?2,?3)",
+                params![view_id, cname, mappings],
             )
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
         }
     }
     Ok(())
+}
+
+pub async fn replace_view(
+    conn: &Connection,
+    existing_name: &str,
+    body: &Value,
+) -> Result<(), AppError> {
+    let normalized = normalize_join_hub_first(body)?;
+    let body = &normalized;
+    let view_id = view_id_by_name(conn, existing_name).await?;
+    let name = str_field(body, "name")?;
+    let target = str_field(body, "target")?;
+    let description = opt_str(body, "description");
+    let combine = str_field(body, "combine")?;
+    conn.execute(
+        "UPDATE meta_views SET name = ?1, description = ?2, target = ?3, combine = ?4 WHERE id = ?5",
+        params![name, description, target, combine, view_id],
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+    delete_view_children(conn, view_id).await?;
+    insert_view_children(conn, view_id, body).await
 }
 
 async fn load_view(conn: &Connection, name: &str) -> Result<Value, AppError> {
@@ -368,7 +617,7 @@ async fn load_view(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut sources = Vec::new();
     let mut srows = conn
         .query(
-            "SELECT kind, source_name, catalog_name FROM meta_view_sources WHERE view_name = ?1",
+            "SELECT kind, source_name, catalog_name FROM meta_view_sources WHERE view_id = (SELECT id FROM meta_views WHERE name = ?1)",
             params![name],
         )
         .await
@@ -395,7 +644,7 @@ async fn load_view(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut joins = Vec::new();
     let mut jrows = conn
         .query(
-            "SELECT left_source, right_source, join_type, on_conditions_json, relationship FROM meta_view_joins WHERE view_name = ?1",
+            "SELECT left_source, right_source, join_type, on_conditions_json, relationship FROM meta_view_joins WHERE view_id = (SELECT id FROM meta_views WHERE name = ?1)",
             params![name],
         )
         .await
@@ -425,7 +674,7 @@ async fn load_view(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut columns = Vec::new();
     let mut crows = conn
         .query(
-            "SELECT name, mappings_json FROM meta_view_columns WHERE view_name = ?1 ORDER BY name",
+            "SELECT name, mappings_json FROM meta_view_columns WHERE view_id = (SELECT id FROM meta_views WHERE name = ?1) ORDER BY name",
             params![name],
         )
         .await
@@ -457,7 +706,7 @@ async fn load_view(conn: &Connection, name: &str) -> Result<Value, AppError> {
     if !joins.is_empty() {
         out["joins"] = json!(joins);
     }
-    Ok(out)
+    normalize_join_hub_first(&out)
 }
 
 async fn insert_cube(conn: &Connection, body: &Value) -> Result<(), AppError> {
@@ -470,23 +719,33 @@ async fn insert_cube(conn: &Connection, body: &Value) -> Result<(), AppError> {
         .filter(|v| v.as_array().is_some_and(|a| !a.is_empty()))
         .map(|v| v.to_string());
     let prefer = opt_str(body, "prefer");
+    let view_id = view_id_by_name(conn, view).await?;
     conn.execute(
-        "INSERT INTO meta_cubes (name, target, view_name, description, role_json, grain_json, prefer) VALUES (?1,?2,?3,?4,?5,?6,?7)",
-        params![name, target, view, description, role_json(body), grain_json, prefer],
+        "INSERT INTO meta_cubes (name, target, view_id, description, role_json, grain_json, prefer) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        params![name, target, view_id, description, role_json(body), grain_json, prefer],
     )
     .await
     .map_err(|e| AppError::Internal(e.into()))?;
+    let cube_id = last_insert_id(conn).await?;
+    insert_cube_children(conn, cube_id, body).await
+}
 
+async fn insert_cube_children(
+    conn: &Connection,
+    cube_id: i64,
+    body: &Value,
+) -> Result<(), AppError> {
     if let Some(choices) = body.get("choice").and_then(|v| v.as_array()) {
         for (pos, item) in choices.iter().enumerate() {
             let cview = str_field(item, "view")?;
+            let cview_id = view_id_by_name(conn, cview).await?;
             let summary = item
                 .get("summary")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
             conn.execute(
-                "INSERT INTO meta_cube_choices (cube_name, pos, view_name, summary) VALUES (?1,?2,?3,?4)",
-                params![name, pos as i64, cview, summary as i32],
+                "INSERT INTO meta_cube_choices (cube_id, pos, view_id, summary) VALUES (?1,?2,?3,?4)",
+                params![cube_id, pos as i64, cview_id, summary as i32],
             )
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
@@ -495,21 +754,47 @@ async fn insert_cube(conn: &Connection, body: &Value) -> Result<(), AppError> {
 
     if let Some(dims) = body.get("dimensions").and_then(|v| v.as_array()) {
         for d in dims {
-            insert_cube_member(conn, "meta_cube_dimensions", name, d, true).await?;
+            insert_cube_member(conn, "meta_cube_dimensions", cube_id, d, true).await?;
         }
     }
     if let Some(facts) = body.get("facts").and_then(|v| v.as_array()) {
         for f in facts {
-            insert_cube_member(conn, "meta_cube_facts", name, f, false).await?;
+            insert_cube_member(conn, "meta_cube_facts", cube_id, f, false).await?;
         }
     }
     Ok(())
 }
 
+pub async fn replace_cube(
+    conn: &Connection,
+    existing_name: &str,
+    body: &Value,
+) -> Result<(), AppError> {
+    let cube_id = cube_id_by_name(conn, existing_name).await?;
+    let name = str_field(body, "name")?;
+    let target = str_field(body, "target")?;
+    let view = str_field(body, "view")?;
+    let view_id = view_id_by_name(conn, view).await?;
+    let description = str_field(body, "description")?;
+    let grain_json = body
+        .get("grain")
+        .filter(|v| v.as_array().is_some_and(|a| !a.is_empty()))
+        .map(|v| v.to_string());
+    let prefer = opt_str(body, "prefer");
+    conn.execute(
+        "UPDATE meta_cubes SET name = ?1, target = ?2, view_id = ?3, description = ?4, role_json = ?5, grain_json = ?6, prefer = ?7 WHERE id = ?8",
+        params![name, target, view_id, description, role_json(body), grain_json, prefer, cube_id],
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+    delete_cube_children(conn, cube_id).await?;
+    insert_cube_children(conn, cube_id, body).await
+}
+
 async fn insert_cube_member(
     conn: &Connection,
     table: &str,
-    cube: &str,
+    cube_id: i64,
     item: &Value,
     is_dim: bool,
 ) -> Result<(), AppError> {
@@ -529,10 +814,10 @@ async fn insert_cube_member(
             .filter(|v| !v.is_null())
             .map(|v| serde_json::to_string(v).unwrap_or_default());
         conn.execute(
-            "INSERT INTO meta_cube_dimensions (cube_name, name, description, type, column_ref, expression, encryption, as_code_json, role_json)
+            "INSERT INTO meta_cube_dimensions (cube_id, name, description, type, column_ref, expression, encryption, as_code_json, role_json)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
             params![
-                cube,
+                cube_id,
                 name,
                 description,
                 dtype,
@@ -552,10 +837,10 @@ async fn insert_cube_member(
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
         conn.execute(
-            "INSERT INTO meta_cube_facts (cube_name, name, description, type, column_ref, expression, encryption, role_json, additive)
+            "INSERT INTO meta_cube_facts (cube_id, name, description, type, column_ref, expression, encryption, role_json, additive)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
             params![
-                cube,
+                cube_id,
                 name,
                 description,
                 ftype,
@@ -576,7 +861,8 @@ async fn insert_cube_member(
 async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut rows = conn
         .query(
-            "SELECT target, view_name, description, role_json, grain_json, prefer FROM meta_cubes WHERE name = ?1",
+            "SELECT c.target, v.name, c.description, c.role_json, c.grain_json, c.prefer
+             FROM meta_cubes c JOIN meta_views v ON v.id = c.view_id WHERE c.name = ?1",
             params![name],
         )
         .await
@@ -597,7 +883,7 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut drows = conn
         .query(
             "SELECT name, description, type, column_ref, expression, encryption, as_code_json, role_json
-             FROM meta_cube_dimensions WHERE cube_name = ?1 ORDER BY name",
+             FROM meta_cube_dimensions WHERE cube_id = (SELECT id FROM meta_cubes WHERE name = ?1) ORDER BY name",
             params![name],
         )
         .await
@@ -614,7 +900,7 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut frows = conn
         .query(
             "SELECT name, description, type, column_ref, expression, encryption, role_json, additive
-             FROM meta_cube_facts WHERE cube_name = ?1 ORDER BY name",
+             FROM meta_cube_facts WHERE cube_id = (SELECT id FROM meta_cubes WHERE name = ?1) ORDER BY name",
             params![name],
         )
         .await
@@ -653,7 +939,8 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut choice = Vec::new();
     let mut chrows = conn
         .query(
-            "SELECT view_name, summary FROM meta_cube_choices WHERE cube_name = ?1 ORDER BY pos",
+            "SELECT v.name, ch.summary FROM meta_cube_choices ch JOIN meta_views v ON v.id = ch.view_id
+             WHERE ch.cube_id = (SELECT id FROM meta_cubes WHERE name = ?1) ORDER BY ch.pos",
             params![name],
         )
         .await
@@ -740,17 +1027,18 @@ fn load_member_fact(r: &libsql::Row) -> Result<Value, AppError> {
 async fn insert_metric(conn: &Connection, body: &Value) -> Result<(), AppError> {
     let name = str_field(body, "name")?;
     let cube = str_field(body, "cube")?;
+    let cube_id = cube_id_by_name(conn, cube).await?;
     let description = str_field(body, "description")?;
     let expression = str_field(body, "expression")?;
     let aggregation = opt_str(body, "aggregation");
     let group_by_json = body.get("group_by").map(|v| v.to_string());
     let filter_expression = filter_expr(body.get("filter"));
     conn.execute(
-        "INSERT INTO meta_metrics (name, cube_name, description, expression, aggregation, group_by_json, filter_expression, role_json)
+        "INSERT INTO meta_metrics (name, cube_id, description, expression, aggregation, group_by_json, filter_expression, role_json)
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
         params![
             name,
-            cube,
+            cube_id,
             description,
             expression,
             aggregation,
@@ -764,11 +1052,47 @@ async fn insert_metric(conn: &Connection, body: &Value) -> Result<(), AppError> 
     Ok(())
 }
 
+async fn replace_metric(
+    conn: &Connection,
+    existing_name: &str,
+    body: &Value,
+) -> Result<(), AppError> {
+    let name = str_field(body, "name")?;
+    let cube = str_field(body, "cube")?;
+    let cube_id = cube_id_by_name(conn, cube).await?;
+    let description = str_field(body, "description")?;
+    let expression = str_field(body, "expression")?;
+    let aggregation = opt_str(body, "aggregation");
+    let group_by_json = body.get("group_by").map(|v| v.to_string());
+    let filter_expression = filter_expr(body.get("filter"));
+    let n = conn
+        .execute(
+            "UPDATE meta_metrics SET name = ?1, cube_id = ?2, description = ?3, expression = ?4, aggregation = ?5, group_by_json = ?6, filter_expression = ?7, role_json = ?8 WHERE name = ?9",
+            params![
+                name,
+                cube_id,
+                description,
+                expression,
+                aggregation,
+                group_by_json,
+                filter_expression,
+                role_json(body),
+                existing_name
+            ],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    if n == 0 {
+        return Err(AppError::NotFound(format!("metric/{existing_name}")));
+    }
+    Ok(())
+}
+
 async fn load_metric(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut rows = conn
         .query(
-            "SELECT cube_name, description, expression, aggregation, group_by_json, filter_expression, role_json
-             FROM meta_metrics WHERE name = ?1",
+            "SELECT c.name, m.description, m.expression, m.aggregation, m.group_by_json, m.filter_expression, m.role_json
+             FROM meta_metrics m JOIN meta_cubes c ON c.id = m.cube_id WHERE m.name = ?1",
             params![name],
         )
         .await
@@ -806,23 +1130,49 @@ async fn load_metric(conn: &Connection, name: &str) -> Result<Value, AppError> {
 async fn insert_segment(conn: &Connection, body: &Value) -> Result<(), AppError> {
     let name = str_field(body, "name")?;
     let cube = str_field(body, "cube")?;
+    let cube_id = cube_id_by_name(conn, cube).await?;
     let description = str_field(body, "description")?;
     let filter_expression = filter_expr(body.get("filter"))
         .ok_or_else(|| AppError::Validation("segment.filter.expression required".into()))?;
     conn.execute(
-        "INSERT INTO meta_segments (name, cube_name, description, filter_expression, role_json)
+        "INSERT INTO meta_segments (name, cube_id, description, filter_expression, role_json)
          VALUES (?1,?2,?3,?4,?5)",
-        params![name, cube, description, filter_expression, role_json(body)],
+        params![name, cube_id, description, filter_expression, role_json(body)],
     )
     .await
     .map_err(|e| AppError::Internal(e.into()))?;
     Ok(())
 }
 
+async fn replace_segment(
+    conn: &Connection,
+    existing_name: &str,
+    body: &Value,
+) -> Result<(), AppError> {
+    let name = str_field(body, "name")?;
+    let cube = str_field(body, "cube")?;
+    let cube_id = cube_id_by_name(conn, cube).await?;
+    let description = str_field(body, "description")?;
+    let filter_expression = filter_expr(body.get("filter"))
+        .ok_or_else(|| AppError::Validation("segment.filter.expression required".into()))?;
+    let n = conn
+        .execute(
+            "UPDATE meta_segments SET name = ?1, cube_id = ?2, description = ?3, filter_expression = ?4, role_json = ?5 WHERE name = ?6",
+            params![name, cube_id, description, filter_expression, role_json(body), existing_name],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    if n == 0 {
+        return Err(AppError::NotFound(format!("segment/{existing_name}")));
+    }
+    Ok(())
+}
+
 async fn load_segment(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut rows = conn
         .query(
-            "SELECT cube_name, description, filter_expression, role_json FROM meta_segments WHERE name = ?1",
+            "SELECT c.name, s.description, s.filter_expression, s.role_json
+             FROM meta_segments s JOIN meta_cubes c ON c.id = s.cube_id WHERE s.name = ?1",
             params![name],
         )
         .await

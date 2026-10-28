@@ -71,6 +71,9 @@ pub struct SampleColumnArgs {
     pub table: String,
     /// Dimension or fact name from `describe_table` / `search_columns` (not a metric or segment).
     pub name: String,
+    /// Optional substring to keep matching sample values (`%` `_` escaped). Code dictionaries match the value side, not the key.
+    #[serde(default)]
+    pub like: Option<String>,
     /// Max sample values (server default if omitted).
     pub limit: Option<u32>,
     /// Your access role for row/column permissions.
@@ -158,7 +161,7 @@ impl SqlMcp {
     }
 
     #[tool(
-        description = "Describe one table: dimensions and facts (SQL columns), plus optional examples (metric/segment expression snippets to copy into ad-hoc SELECT—not column names). Call after list_tables or search_columns when you need column details."
+        description = "Describe one table: columns (kind=dimension|fact SQL columns) plus optional examples (metric/segment expression snippets to copy into ad-hoc SELECT—not column names). Call after list_tables or search_columns when you need column details."
     )]
     async fn describe_table(
         &self,
@@ -190,8 +193,13 @@ impl SqlMcp {
             Err(e) => return tool_err(e),
         };
         let cube_name = args.table.as_str();
-        let dimensions = project_dim_fact_members(cube.get("dimensions"), role, true);
-        let facts = project_dim_fact_members(cube.get("facts"), role, false);
+        let mut columns = project_dim_fact_members(cube.get("dimensions"), role, true, "dimension");
+        columns.extend(project_dim_fact_members(
+            cube.get("facts"),
+            role,
+            false,
+            "fact",
+        ));
         let mut examples: Vec<Value> = Vec::new();
         for m in metrics
             .into_iter()
@@ -211,8 +219,7 @@ impl SqlMcp {
             "database": cube.get("target").and_then(|v| v.as_str()).unwrap_or(""),
             "name": cube.get("name").and_then(|v| v.as_str()).unwrap_or(cube_name),
             "description": cube.get("description").and_then(|v| v.as_str()).unwrap_or(""),
-            "dimensions": dimensions,
-            "facts": facts,
+            "columns": columns,
             "examples": examples,
         }))
     }
@@ -250,7 +257,7 @@ impl SqlMcp {
     }
 
     #[tool(
-        description = "Sample values for one dimension or fact to check codes or typical data before writing filters. Requires `database`, `table`, and `name` from list/search/describe. Code dimensions may return key/value pairs; not for metrics or segments."
+        description = "Sample values for one dimension or fact to check codes or typical data before writing filters. Requires `database`, `table`, and `name` from list/search/describe. Optional `like` keeps values containing that substring (code dictionaries match the value, not the key). Code dimensions may return key/value pairs; not for metrics or segments."
     )]
     async fn sample_column(
         &self,
@@ -286,7 +293,12 @@ impl SqlMcp {
             Ok(d) => d,
             Err(e) => return tool_err(e),
         };
-        let sql = match crate::sample::sample_sql(&target, limit, dialect) {
+        let like = args
+            .like
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let sql = match crate::sample::sample_sql(&target, limit, dialect, like) {
             Ok(s) => s,
             Err(e) => return tool_err(e),
         };
@@ -535,6 +547,7 @@ fn project_dim_fact_members(
     members: Option<&Value>,
     role: Option<&str>,
     include_as_code: bool,
+    kind: &str,
 ) -> Vec<Value> {
     let Some(arr) = members.and_then(|v| v.as_array()) else {
         return vec![];
@@ -543,6 +556,7 @@ fn project_dim_fact_members(
         .filter(|m| role_visible(m.get("role"), role))
         .map(|m| {
             let mut out = json!({
+                "kind": kind,
                 "name": m.get("name").cloned().unwrap_or(Value::Null),
                 "description": m.get("description").cloned().unwrap_or(json!("")),
                 "type": m.get("type").cloned().unwrap_or(Value::Null),
@@ -842,6 +856,7 @@ mod tests {
                 database: "dw".into(),
                 table: "sales".into(),
                 name: "customer_id".into(),
+                like: None,
                 limit: Some(5),
                 caller_role: Some("branch".into()),
                 params: None,
@@ -903,25 +918,32 @@ mod tests {
             .find(|e| e["kind"] == "segment" && e["name"] == "paid")
             .expect("paid segment example");
         assert_eq!(paid["filter"], "status_code = 'PAID'");
-        let dim0 = &branch["dimensions"][0];
-        assert!(dim0.get("role").is_none());
-        assert!(dim0.get("column").is_none());
-        let fact_names: Vec<&str> = branch["facts"]
-            .as_array()
-            .unwrap()
+        assert!(branch.get("dimensions").is_none());
+        assert!(branch.get("facts").is_none());
+        let cols = branch["columns"].as_array().unwrap();
+        assert!(cols.iter().any(|c| c["kind"] == "dimension"));
+        assert!(
+            cols.iter()
+                .all(|c| c["kind"] == "dimension" || c["kind"] == "fact"),
+            "column kind must be dimension|fact: {cols:?}"
+        );
+        let col0 = &cols[0];
+        assert!(col0.get("role").is_none());
+        assert!(col0.get("column").is_none());
+        let fact_names: Vec<&str> = cols
             .iter()
+            .filter(|c| c["kind"] == "fact")
             .filter_map(|f| f.get("name").and_then(|v| v.as_str()))
             .collect();
         assert!(
             !fact_names.contains(&"sale_amount"),
             "finance-only fact hidden for branch: {fact_names:?}"
         );
-        let region = branch["dimensions"]
-            .as_array()
-            .unwrap()
+        let region = cols
             .iter()
             .find(|d| d["name"] == "region_code")
             .expect("region_code");
+        assert_eq!(region["kind"], "dimension");
         assert!(region.get("as_code").is_some());
 
         let finance = tool_json(
@@ -933,10 +955,11 @@ mod tests {
             .await
             .unwrap(),
         );
-        let finance_facts: Vec<&str> = finance["facts"]
+        let finance_facts: Vec<&str> = finance["columns"]
             .as_array()
             .unwrap()
             .iter()
+            .filter(|c| c["kind"] == "fact")
             .filter_map(|f| f.get("name").and_then(|v| v.as_str()))
             .collect();
         assert!(

@@ -497,6 +497,19 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
                 ),
                 "cube": "superhero",
             },
+            {
+                "name": "self_interest_pct",
+                "description": (
+                    "Percentage of superheroes acting out of self-interest "
+                    "(Bad alignment). Corresponds to questions about "
+                    "self-moral-code decision ratios."
+                ),
+                "expression": (
+                    "(SUM(IIF(alignment = 'Bad', 1, 0)) * 100) / ("
+                    "COUNT(hero_id))"
+                ),
+                "cube": "superhero",
+            },
         ],
     },
     "toxicology": {

@@ -100,6 +100,320 @@ fn prunes_unused_customer_join() {
     assert!(sql.contains("AS \"orders\"") || sql.contains("\"orders\""));
 }
 
+fn hero_fanout_docs() -> Vec<Value> {
+    vec![
+        json!({
+            "kind": "table", "name": "superhero", "target": "dw", "db": "dw", "schema": "main", "table": "superhero",
+            "columns": [
+                {"name": "id", "type": "INT", "nullable": false},
+                {"name": "publisher_id", "type": "INT", "nullable": true},
+                {"name": "eye_colour_id", "type": "INT", "nullable": true}
+            ],
+            "pk": ["id"], "fk": [], "permission_filters": [], "scope_filter": null, "default_filter": null
+        }),
+        json!({
+            "kind": "table", "name": "publisher", "target": "dw", "db": "dw", "schema": "main", "table": "publisher",
+            "columns": [
+                {"name": "id", "type": "INT", "nullable": false},
+                {"name": "publisher_name", "type": "TEXT", "nullable": true}
+            ],
+            "pk": ["id"], "fk": [], "permission_filters": [], "scope_filter": null, "default_filter": null
+        }),
+        json!({
+            "kind": "table", "name": "hero_power", "target": "dw", "db": "dw", "schema": "main", "table": "hero_power",
+            "columns": [
+                {"name": "hero_id", "type": "INT", "nullable": false},
+                {"name": "power_name", "type": "TEXT", "nullable": true}
+            ],
+            "pk": ["hero_id"], "fk": [], "permission_filters": [], "scope_filter": null, "default_filter": null
+        }),
+        json!({
+            "kind": "table", "name": "colour", "target": "dw", "db": "dw", "schema": "main", "table": "colour",
+            "columns": [
+                {"name": "id", "type": "INT", "nullable": false},
+                {"name": "colour", "type": "TEXT", "nullable": true}
+            ],
+            "pk": ["id"], "fk": [], "permission_filters": [], "scope_filter": null, "default_filter": null
+        }),
+        json!({
+            "kind": "view", "name": "join_hero", "target": "dw", "combine": "join",
+            "sources": [
+                {"kind": "table", "table": "superhero"},
+                {"kind": "table", "table": "publisher"},
+                {"kind": "table", "table": "hero_power"},
+                {"alias": "eye_colour", "kind": "table", "table": "colour"}
+            ],
+            "joins": [
+                {"left": "superhero", "right": "publisher", "type": "inner", "relationship": "one_to_one",
+                 "on": [{"left_column": "publisher_id", "right_column": "id"}]},
+                {"left": "superhero", "right": "hero_power", "type": "inner", "relationship": "one_to_many",
+                 "on": [{"left_column": "id", "right_column": "hero_id"}]},
+                {"left": "superhero", "right": "eye_colour", "type": "inner", "relationship": "one_to_one",
+                 "on": [{"left_column": "eye_colour_id", "right_column": "id"}]}
+            ],
+            "columns": [
+                {"name": "publisher_name", "mappings": [{"source": "publisher", "column": "publisher_name"}]},
+                {"name": "eye_color", "mappings": [{"source": "eye_colour", "column": "colour"}]},
+                {"name": "hero_id", "mappings": [
+                    {"source": "hero_power", "column": "hero_id"},
+                    {"source": "superhero", "column": "id"}
+                ]},
+                {"name": "power_name", "mappings": [{"source": "hero_power", "column": "power_name"}]}
+            ]
+        }),
+        json!({
+            "kind": "cube", "name": "hero", "target": "dw", "view": "join_hero", "description": "hero",
+            "dimensions": [
+                {"name": "hero_id", "description": "", "type": "id", "column": "hero_id", "encryption": false},
+                {"name": "publisher_name", "description": "", "type": "string", "column": "publisher_name", "encryption": false},
+                {"name": "eye_color", "description": "", "type": "string", "column": "eye_color", "encryption": false},
+                {"name": "power_name", "description": "", "type": "string", "column": "power_name", "encryption": false}
+            ],
+            "facts": []
+        }),
+    ]
+}
+
+#[test]
+fn steiner_then_multi_map_does_not_pull_fanout_child_for_shared_key() {
+    let docs = hero_fanout_docs();
+    let view = docs
+        .iter()
+        .find(|d| d.get("name").and_then(|v| v.as_str()) == Some("join_hero"))
+        .unwrap();
+    let cols = HashSet::from([
+        "hero_id".to_string(),
+        "publisher_name".to_string(),
+        "eye_color".to_string(),
+    ]);
+    let included = super::view_prune::included_tables_for_join_view(view, Some(&cols)).unwrap();
+    assert!(
+        !included.contains("hero_power"),
+        "shared hero_id must bind to hub after Steiner, not mappings[0] child: {included:?}"
+    );
+    assert!(
+        included.contains("superhero")
+            && included.contains("publisher")
+            && included.contains("eye_colour"),
+        "expected hub + dim tables: {included:?}"
+    );
+
+    let spec = CubeQuerySpec {
+        projections: vec![
+            CubeProjection {
+                member: "hero_id".into(),
+                alias: "hero_id".into(),
+            },
+            CubeProjection {
+                member: "publisher_name".into(),
+                alias: "publisher_name".into(),
+            },
+            CubeProjection {
+                member: "eye_color".into(),
+                alias: "eye_color".into(),
+            },
+        ],
+        dimensions: vec![
+            "hero_id".into(),
+            "publisher_name".into(),
+            "eye_color".into(),
+        ],
+        ungrouped: true,
+        distinct: false,
+        ..Default::default()
+    };
+    let sql = compile_cube_query(&docs, "hero", &spec, None, None).unwrap();
+    assert!(
+        !sql.contains("hero_power"),
+        "compiled SQL must not INNER JOIN hero_power: {sql}"
+    );
+    assert!(
+        sql.contains("\"superhero\".\"id\"") || sql.contains("\"superhero\".id"),
+        "hero_id must resolve to superhero.id: {sql}"
+    );
+}
+
+fn hero_fanout_docs_child_first() -> Vec<Value> {
+    let mut docs = hero_fanout_docs();
+    docs.splice(
+        4..4,
+        [
+            json!({
+                "kind": "table", "name": "hero_attribute", "target": "dw", "db": "dw", "schema": "main", "table": "hero_attribute",
+                "columns": [
+                    {"name": "hero_id", "type": "INT", "nullable": false},
+                    {"name": "attribute_id", "type": "INT", "nullable": false}
+                ],
+                "pk": ["hero_id", "attribute_id"], "fk": [], "permission_filters": [], "scope_filter": null, "default_filter": null
+            }),
+            json!({
+                "kind": "table", "name": "attribute", "target": "dw", "db": "dw", "schema": "main", "table": "attribute",
+                "columns": [
+                    {"name": "id", "type": "INT", "nullable": false},
+                    {"name": "attribute_name", "type": "TEXT", "nullable": true}
+                ],
+                "pk": ["id"], "fk": [], "permission_filters": [], "scope_filter": null, "default_filter": null
+            }),
+            json!({
+                "kind": "table", "name": "superpower", "target": "dw", "db": "dw", "schema": "main", "table": "superpower",
+                "columns": [
+                    {"name": "id", "type": "INT", "nullable": false},
+                    {"name": "power_name", "type": "TEXT", "nullable": true}
+                ],
+                "pk": ["id"], "fk": [], "permission_filters": [], "scope_filter": null, "default_filter": null
+            }),
+        ],
+    );
+    for d in &mut docs {
+        if d.get("name").and_then(|v| v.as_str()) != Some("join_hero") {
+            continue;
+        }
+        // Leaves first so hub-only rotate would keep depth-2 before depth-1.
+        d["sources"] = json!([
+            {"kind": "table", "table": "superpower"},
+            {"kind": "table", "table": "hero_power"},
+            {"kind": "table", "table": "attribute"},
+            {"kind": "table", "table": "hero_attribute"},
+            {"kind": "table", "table": "publisher"},
+            {"alias": "eye_colour", "kind": "table", "table": "colour"},
+            {"kind": "table", "table": "superhero"}
+        ]);
+        d["joins"] = json!([
+            {"left": "superhero", "right": "publisher", "type": "inner", "relationship": "one_to_one",
+             "on": [{"left_column": "publisher_id", "right_column": "id"}]},
+            {"left": "superhero", "right": "hero_power", "type": "inner", "relationship": "one_to_many",
+             "on": [{"left_column": "id", "right_column": "hero_id"}]},
+            {"left": "superhero", "right": "eye_colour", "type": "inner", "relationship": "one_to_one",
+             "on": [{"left_column": "eye_colour_id", "right_column": "id"}]},
+            {"left": "superhero", "right": "hero_attribute", "type": "inner", "relationship": "one_to_many",
+             "on": [{"left_column": "id", "right_column": "hero_id"}]},
+            {"left": "hero_power", "right": "superpower", "type": "inner", "relationship": "many_to_one",
+             "on": [{"left_column": "power_id", "right_column": "id"}]},
+            {"left": "hero_attribute", "right": "attribute", "type": "inner", "relationship": "many_to_one",
+             "on": [{"left_column": "attribute_id", "right_column": "id"}]}
+        ]);
+        d["columns"] = json!([
+            {"name": "publisher_name", "mappings": [{"source": "publisher", "column": "publisher_name"}]},
+            {"name": "eye_color", "mappings": [{"source": "eye_colour", "column": "colour"}]},
+            {"name": "hero_id", "mappings": [
+                {"source": "hero_power", "column": "hero_id"},
+                {"source": "superhero", "column": "id"}
+            ]},
+            {"name": "power_name", "mappings": [{"source": "hero_power", "column": "power_name"}]},
+            {"name": "power_id", "mappings": [
+                {"source": "superpower", "column": "id"},
+                {"source": "hero_power", "column": "power_id"}
+            ]}
+        ]);
+    }
+    docs
+}
+
+fn view_source_names(view: &Value) -> Vec<String> {
+    view["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            s.get("alias")
+                .and_then(|v| v.as_str())
+                .or_else(|| s.get("table").and_then(|v| v.as_str()))
+                .unwrap()
+                .to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn normalize_join_hub_first_puts_hub_at_sources_zero() {
+    let docs = hero_fanout_docs_child_first();
+    let view = docs
+        .iter()
+        .find(|d| d.get("name").and_then(|v| v.as_str()) == Some("join_hero"))
+        .unwrap();
+    let got = crate::semantic::typed::normalize_join_hub_first(view).unwrap();
+    assert_eq!(
+        view_source_names(&got),
+        vec![
+            "superhero",
+            "hero_power",
+            "hero_attribute",
+            "publisher",
+            "eye_colour",
+            "superpower",
+            "attribute",
+        ],
+        "hub then depth-1 (original relative order) then depth-2: {}",
+        got["sources"]
+    );
+    let hero_id = got["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "hero_id")
+        .unwrap();
+    assert_eq!(
+        hero_id["mappings"][0]["source"].as_str(),
+        Some("superhero"),
+        "shared hero_id mappings[0] must be hub: {}",
+        hero_id["mappings"]
+    );
+    let power_id = got["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "power_id")
+        .unwrap();
+    assert_eq!(
+        [
+            power_id["mappings"][0]["source"].as_str(),
+            power_id["mappings"][1]["source"].as_str()
+        ],
+        [Some("hero_power"), Some("superpower")],
+        "shared power_id must follow hub-then-depth: {}",
+        power_id["mappings"]
+    );
+}
+
+#[test]
+fn count_hero_id_group_by_publisher_binds_hub_not_fanout_child() {
+    let mut docs = hero_fanout_docs_child_first();
+    for d in &mut docs {
+        if d.get("name").and_then(|v| v.as_str()) == Some("join_hero") {
+            *d = crate::semantic::typed::normalize_join_hub_first(d).unwrap();
+        }
+    }
+    let sql = crate::pipeline::compile_semantic_sql(
+        &docs,
+        "SELECT publisher_name, COUNT(hero_id) FROM hero GROUP BY publisher_name",
+        None,
+    )
+    .unwrap();
+    assert!(
+        !sql.contains("hero_power"),
+        "COUNT(hero_id) GROUP BY publisher_name must not INNER JOIN hero_power: {sql}"
+    );
+    assert!(
+        sql.contains("COUNT(\"superhero\".\"id\")") || sql.contains("COUNT(\"superhero\".id)"),
+        "COUNT(hero_id) must bind superhero.id: {sql}"
+    );
+}
+
+#[test]
+fn exclusive_child_column_still_includes_fanout_table() {
+    let docs = hero_fanout_docs();
+    let view = docs
+        .iter()
+        .find(|d| d.get("name").and_then(|v| v.as_str()) == Some("join_hero"))
+        .unwrap();
+    let cols = HashSet::from(["hero_id".to_string(), "power_name".to_string()]);
+    let included = super::view_prune::included_tables_for_join_view(view, Some(&cols)).unwrap();
+    assert!(
+        included.contains("hero_power"),
+        "power_name is only on hero_power: {included:?}"
+    );
+}
+
 #[test]
 fn prunes_root_source_when_all_inner_joins_and_resolves_multi_mapped_col() {
     let mut docs = example_docs();

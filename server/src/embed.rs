@@ -1,10 +1,15 @@
 use std::env;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::Deserialize;
+use tokio::net::{lookup_host, TcpStream};
+use tokio::time::timeout;
 
-use crate::error::AppError;
+use crate::error::{sanitize_secret_message, AppError};
+
+const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// D14: embedding provider. Production = OpenAI-compatible HTTP only.
 #[async_trait]
@@ -13,9 +18,15 @@ pub trait Embedder: Send + Sync {
     fn dimensions(&self) -> usize;
 }
 
-/// `SQL_MCP_EMBEDDING_URL` + `SQL_MCP_EMBEDDING_API_KEY` → OpenAI-compatible.
-/// Otherwise `None` (search falls back to BM25; HashEmbedder is test-only).
-pub fn from_env() -> Option<Arc<dyn Embedder>> {
+/// `SQL_MCP_EMBEDDING_URL` + `SQL_MCP_EMBEDDING_API_KEY` → OpenAI-compatible,
+/// only if the URL host accepts TCP at startup (D14). Otherwise `None`
+/// (search falls back to BM25; HashEmbedder is test-only).
+pub async fn from_env_ready() -> Option<Arc<dyn Embedder>> {
+    let (url, key, model, dim) = embedding_env()?;
+    ready(OpenAiEmbedder::new(url, key, model, dim)).await
+}
+
+fn embedding_env() -> Option<(String, String, String, usize)> {
     match (
         env::var("SQL_MCP_EMBEDDING_URL").ok(),
         env::var("SQL_MCP_EMBEDDING_API_KEY").ok(),
@@ -27,10 +38,55 @@ pub fn from_env() -> Option<Arc<dyn Embedder>> {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(64);
-            Some(Arc::new(OpenAiEmbedder::new(url, key, model, dim)))
+            Some((url, key, model, dim))
         }
         _ => None,
     }
+}
+
+async fn ready(embedder: OpenAiEmbedder) -> Option<Arc<dyn Embedder>> {
+    match probe_url(&embedder.url).await {
+        Ok(()) => Some(Arc::new(embedder)),
+        Err(e) => {
+            let detail = match &e {
+                AppError::Connection(inner) => inner.to_string(),
+                _ => e.to_string(),
+            };
+            tracing::warn!(
+                error = %sanitize_secret_message(&detail),
+                "embedding API unreachable at startup; search_columns uses BM25 only (D14)"
+            );
+            None
+        }
+    }
+}
+
+/// TCP connect to the embedding URL host (no HTTP, so a missing model does not fail startup).
+pub(crate) async fn probe_url(url: &str) -> Result<(), AppError> {
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|e| AppError::Connection(anyhow::anyhow!("invalid embedding URL: {e}")))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| AppError::Connection(anyhow::anyhow!("embedding URL has no host")))?
+        .to_string();
+    let port = parsed
+        .port_or_known_default()
+        .ok_or_else(|| AppError::Connection(anyhow::anyhow!("embedding URL has no port")))?;
+    timeout(PROBE_TIMEOUT, async move {
+        let addr = lookup_host((host.as_str(), port))
+            .await
+            .map_err(|e| AppError::Connection(e.into()))?
+            .next()
+            .ok_or_else(|| {
+                AppError::Connection(anyhow::anyhow!("embedding host did not resolve"))
+            })?;
+        TcpStream::connect(addr)
+            .await
+            .map_err(|e| AppError::Connection(e.into()))?;
+        Ok(())
+    })
+    .await
+    .map_err(|_| AppError::Connection(anyhow::anyhow!("embedding probe timed out")))?
 }
 
 pub struct OpenAiEmbedder {
@@ -187,5 +243,49 @@ mod tests {
             .unwrap();
         let c = e.embed(&[String::from("zzzz unrelated")]).await.unwrap();
         assert!(cosine(&a[0], &b[0]) > cosine(&a[0], &c[0]));
+    }
+
+    #[tokio::test]
+    async fn probe_ok_when_tcp_accepts() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = format!("http://{addr}/v1/embeddings");
+        probe_url(&url).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn probe_err_when_connection_refused() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let url = format!("http://{addr}/v1/embeddings");
+        assert!(probe_url(&url).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn ready_is_some_when_probe_ok() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let embedder = OpenAiEmbedder::new(
+            format!("http://{addr}/v1/embeddings"),
+            "k".into(),
+            "m".into(),
+            8,
+        );
+        assert!(ready(embedder).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn ready_is_none_when_probe_fails() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let embedder = OpenAiEmbedder::new(
+            format!("http://{addr}/v1/embeddings"),
+            "k".into(),
+            "m".into(),
+            8,
+        );
+        assert!(ready(embedder).await.is_none());
     }
 }

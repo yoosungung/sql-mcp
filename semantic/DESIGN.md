@@ -14,7 +14,9 @@
 
 **저장 계층은 타입별 `meta_*` 테이블**이다(`meta_tables`, `meta_views`, `meta_cubes`, `meta_metrics`, `meta_segments` 및 자식 테이블). `document(kind,name,body)` blob은 쓰지 않는다. `meta_tables` / `meta_views` / `meta_cubes`에 MCP 연결 id **`target`** 컬럼이 있다. 연결 검증 시 view·cube와 leaf table의 `target`이 일치해야 한다.
 
-`/api/meta` **입출력은 JSON**이다. create/update 시 schema·연결 검증 후 단일 Write 트랜잭션으로 타입별 행에 분해하고, get/list 시 JSON으로 재조립한다.
+`meta_views`와 `meta_cubes`는 `id INTEGER PRIMARY KEY AUTOINCREMENT`와 UNIQUE `name`이다. `meta_cubes.view_id`·`meta_metrics.cube_id`·`meta_segments.cube_id`와 view/cube 자식 행은 이 id를 가리킨다. `meta_table_columns` / `meta_table_permission_filters` / `column_index.doc_name`은 논리 `name`을 쓴다. 교환 JSON·`document.schema.json`에는 `id`가 없다. 서버가 쓰기에 id를 부여하고 읽기에 name으로 푼다. 기존 name-FK DB는 `SemanticStore::open`의 `migrate_surrogate_view_cube_ids`가 id를 채우고 참조를 옮긴다.
+
+`/api/meta` **입출력은 JSON**이다. create/update 시 schema·연결 검증 후 단일 Write 트랜잭션으로 타입별 행에 분해하고, get/list 시 JSON으로 재조립한다. view/cube PUT은 부모 행을 유지한 채 UNIQUE `name`과 자식만 갈아끼운다.
 
 ## 검색 인덱스 (D12)
 
@@ -30,4 +32,4 @@ JSON 교환 정본은 `schema/document.schema.json`이다. `column_index` / `col
 | `metric` | metric 문서 | `{name} {description}`, `field_role=metric` |
 | `segment` | segment 문서 | `{name} {description}`, `field_role=segment` |
 
-FTS에 넣기 전 텍스트에 **한글 등 non-ASCII 구간의 문자 bigram**을 덧붙인다(D14 BM25 강화). `column_index`는 소속 cube의 **`target`** 컬럼을 함께 저장하여 `search_columns(target)` 필터링을 지원한다. CRUD 시 텍스트가 바뀐 행만 증분 임베딩한 뒤 단일 Write 트랜잭션에서 인덱스를 갱신한다. `embedding`은 D14 API가 있을 때만 채운 f32 blob(없으면 NULL).
+FTS에 넣기 전 텍스트에 **한글 등 non-ASCII 구간의 문자 bigram**을 덧붙인다(D14 BM25 강화). `column_index`는 소속 cube의 **`target`** 컬럼을 함께 저장하여 `search_columns(target)` 필터링을 지원한다. CRUD 시 텍스트가 바뀐 행만 증분 임베딩한 뒤 단일 Write 트랜잭션에서 인덱스를 갱신한다. `embedding`은 D14 API가 기동 시 연결에 성공했을 때만 채운 f32 blob(없으면 NULL).

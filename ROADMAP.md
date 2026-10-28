@@ -21,7 +21,7 @@ Rust MCP(`rmcp`) 서버: **임베디드 시맨틱 DB** + **복수 타깃 DB** �
 - D9: dimension `as_code`는 집계 후 `{dim}__value`.
 - D12: JSON 교환 `document.schema.json`, 저장은 `meta_*`, 검색은 FTS5 + embedding.
 - D13: Postgres·MySQL·SQLite·Oracle. 테스트 타깃은 BIRD Mini-Dev SQLite.
-- D14: 임베딩은 외부 API만. 없으면 BM25. 로컬 ONNX 비채택.
+- D14: 임베딩은 외부 API만. 없거나 기동 시 연결 실패면 BM25. 로컬 ONNX 비채택.
 - D15: `metadata_update`는 전체 replace.
 - D16: metric·segment 식은 새 DSL 없이 SQL 조각 + AST 제한.
 - D17: `encryption`은 응답 마스킹.

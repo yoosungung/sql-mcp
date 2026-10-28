@@ -1235,6 +1235,7 @@ describe("production shell", () => {
   it("saves a renamed metric as a new document name", async () => {
     const created: Doc[] = [];
     const removed: string[] = [];
+    const updated: { kind: string; name: string; doc: Doc }[] = [];
     const user = userEvent.setup();
     render(
       <App
@@ -1258,6 +1259,9 @@ describe("production shell", () => {
             create: async (doc: Doc) => {
               created.push(doc);
             },
+            update: async (kind: string, name: string, doc: Doc) => {
+              updated.push({ kind, name, doc });
+            },
             remove: async (kind: string, name: string) => {
               removed.push(`${kind}/${name}`);
             },
@@ -1272,8 +1276,9 @@ describe("production shell", () => {
     await user.clear(name);
     await user.type(name, "row_count");
     await user.click(within(screen.getByRole("region", { name: "Detail" })).getByRole("button", { name: "Save" }));
-    expect(created.some((d) => d.kind === "metric" && d.name === "row_count")).toBe(true);
-    expect(removed).toEqual(["metric/rows"]);
+    expect(created).toEqual([]);
+    expect(removed).toEqual([]);
+    expect(updated.some((u) => u.kind === "metric" && u.name === "rows" && u.doc.name === "row_count")).toBe(true);
   });
 
   it("shows API code and message and can dismiss the banner", async () => {
@@ -1301,9 +1306,10 @@ describe("production shell", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("deletes the previous view after a rename save", async () => {
+  it("renames a view with PUT on the previous name", async () => {
     const created: string[] = [];
     const removed: string[] = [];
+    const updated: { kind: string; name: string; doc: Doc }[] = [];
     const user = userEvent.setup();
     const docs: Doc[] = [
       { kind: "table", name: "account", target: "bird", table: "account", columns: [{ name: "id", type: "int", nullable: false }], pk: ["id"] },
@@ -1326,6 +1332,9 @@ describe("production shell", () => {
             create: async (doc: Doc) => {
               created.push(`${doc.kind}/${doc.name}`);
             },
+            update: async (kind: string, name: string, doc: Doc) => {
+              updated.push({ kind, name, doc });
+            },
             remove: async (kind: string, name: string) => {
               removed.push(`${kind}/${name}`);
             },
@@ -1343,8 +1352,11 @@ describe("production shell", () => {
     await user.type(rename, "heroes");
     await user.click(within(renameDialog).getByRole("button", { name: "Rename" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
-    expect(created).toEqual(["view/heroes"]);
-    expect(removed).toEqual(["view/accounts"]);
+    expect(created).toEqual([]);
+    expect(removed).toEqual([]);
+    expect(updated).toEqual([
+      expect.objectContaining({ kind: "view", name: "accounts", doc: expect.objectContaining({ name: "heroes" }) }),
+    ]);
   });
 
   it("deletes an open view without deleting its cube and drops it from the stack", async () => {

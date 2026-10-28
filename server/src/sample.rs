@@ -278,12 +278,16 @@ fn str_field<'a>(doc: &'a Value, key: &str) -> Result<&'a str, AppError> {
         .ok_or_else(|| AppError::Validation(format!("{key} required")))
 }
 
+const SAMPLE_LIKE_MAX_CHARS: usize = 256;
+
 /// Build SELECT for sampling; used when value_column / where need custom SQL.
 /// Identifiers use `dialect` quoting (D21). Row limit is applied by `TargetDb::execute_select`.
+/// `like` is an escaped substring (not a raw LIKE pattern). `as_code` matches `value_column`.
 pub fn sample_sql(
     target: &SampleTarget,
     _limit: usize,
     dialect: DialectProfile,
+    like: Option<&str>,
 ) -> Result<String, AppError> {
     let schema = dialect.quote_ident(&target.schema)?;
     let table = dialect.quote_ident(&target.table)?;
@@ -299,8 +303,57 @@ pub fn sample_sql(
         sql.push_str(w);
         sql.push(')');
     }
+    if let Some(needle) = like.map(str::trim).filter(|s| !s.is_empty()) {
+        sql.push_str(" AND ");
+        sql.push_str(&like_predicate(dialect, target, needle)?);
+    }
     // where_extra / expressions may contain canonical date helpers (D21·D25).
     dialect.emit_physical_sql(&sql)
+}
+
+fn like_predicate(
+    dialect: DialectProfile,
+    target: &SampleTarget,
+    needle: &str,
+) -> Result<String, AppError> {
+    if needle.chars().count() > SAMPLE_LIKE_MAX_CHARS {
+        return Err(AppError::Validation(format!(
+            "sample_column.like must be at most {SAMPLE_LIKE_MAX_CHARS} characters"
+        )));
+    }
+    let like_col = if target.from_as_code {
+        let value = target
+            .value_column
+            .as_deref()
+            .ok_or_else(|| AppError::Validation("as_code sample requires value_column".into()))?;
+        dialect.quote_ident(value)?
+    } else {
+        dialect.quote_ident(&target.column)?
+    };
+    let casted = match dialect {
+        DialectProfile::Mysql => format!("CAST({like_col} AS CHAR)"),
+        DialectProfile::Oracle => format!("CAST({like_col} AS VARCHAR2(4000))"),
+        DialectProfile::Postgres | DialectProfile::Sqlite => {
+            format!("CAST({like_col} AS TEXT)")
+        }
+    };
+    Ok(format!(
+        "{casted} LIKE {} ESCAPE '!'",
+        like_contains_literal(needle)
+    ))
+}
+
+/// Substring pattern with `%` `_` `!` escaped; SQL string quotes doubled.
+fn like_contains_literal(needle: &str) -> String {
+    let mut pat = String::from("%");
+    for c in needle.chars() {
+        if matches!(c, '%' | '_' | '!') {
+            pat.push('!');
+        }
+        pat.push(c);
+    }
+    pat.push('%');
+    format!("'{}'", pat.replace('\'', "''"))
 }
 
 #[cfg(test)]
@@ -355,13 +408,97 @@ mod tests {
             resolved: json!({}),
             from_as_code: false,
         };
-        let pg = sample_sql(&t, 10, DialectProfile::Postgres).unwrap();
+        let pg = sample_sql(&t, 10, DialectProfile::Postgres, None).unwrap();
         assert!(pg.contains("\"sale_amount\""));
         assert!(pg.contains("\"sales\".\"orders\""));
-        let my = sample_sql(&t, 10, DialectProfile::Mysql).unwrap();
+        assert!(!pg.contains(" LIKE "));
+        let my = sample_sql(&t, 10, DialectProfile::Mysql, None).unwrap();
         assert!(my.contains("`sale_amount`"));
         assert!(my.contains("`sales`.`orders`"));
         assert!(!my.contains('"'));
+    }
+
+    fn scalar_target() -> SampleTarget {
+        SampleTarget {
+            schema: "sales".into(),
+            table: "orders".into(),
+            column: "sale_amount".into(),
+            value_column: None,
+            where_extra: None,
+            resolved: json!({}),
+            from_as_code: false,
+        }
+    }
+
+    fn as_code_target() -> SampleTarget {
+        SampleTarget {
+            schema: "ref".into(),
+            table: "status_codes".into(),
+            column: "code".into(),
+            value_column: Some("label".into()),
+            where_extra: Some("lang = 'en'".into()),
+            resolved: json!({}),
+            from_as_code: true,
+        }
+    }
+
+    #[test]
+    fn sample_sql_like_filters_scalar_and_escapes() {
+        let sql = sample_sql(
+            &scalar_target(),
+            10,
+            DialectProfile::Postgres,
+            Some("a%b_c!'d"),
+        )
+        .unwrap();
+        assert!(
+            sql.contains(r#"CAST("sale_amount" AS TEXT) LIKE '%a!%b!_c!!''d%' ESCAPE '!'"#),
+            "{sql}"
+        );
+        let my = sample_sql(&scalar_target(), 10, DialectProfile::Mysql, Some("80")).unwrap();
+        assert!(
+            my.contains("CAST(`sale_amount` AS CHAR) LIKE '%80%' ESCAPE '!'"),
+            "{my}"
+        );
+    }
+
+    #[test]
+    fn sample_sql_like_matches_as_code_value_column() {
+        let sql = sample_sql(
+            &as_code_target(),
+            10,
+            DialectProfile::Postgres,
+            Some("Paid"),
+        )
+        .unwrap();
+        assert!(
+            sql.contains(r#"CAST("label" AS TEXT) LIKE '%Paid%' ESCAPE '!'"#),
+            "{sql}"
+        );
+        assert!(
+            !sql.contains(r#"CAST("code" AS TEXT)"#),
+            "like must not match as_code key: {sql}"
+        );
+        assert!(sql.contains("lang = 'en'"), "{sql}");
+    }
+
+    #[test]
+    fn sample_sql_like_blank_is_off() {
+        let sql = sample_sql(&scalar_target(), 10, DialectProfile::Postgres, Some("  ")).unwrap();
+        assert!(!sql.contains(" LIKE "), "{sql}");
+    }
+
+    #[test]
+    fn sample_sql_like_rejects_too_long() {
+        let needle = "x".repeat(257);
+        let err = sample_sql(
+            &scalar_target(),
+            10,
+            DialectProfile::Postgres,
+            Some(&needle),
+        )
+        .unwrap_err();
+        assert!(matches!(err, AppError::Validation(_)));
     }
 
     #[test]

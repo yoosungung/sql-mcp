@@ -535,6 +535,22 @@ def test_clauses_for_members_skips_person_names_and_filled_text():
     assert not apply_evidence_clauses(cube, evidence)
 
 
+def test_superhero_self_interest_pct_is_metric_on_superhero_cube():
+    facts = DOMAIN_SPECS["superhero"].get("expression_facts") or []
+    assert all(f.get("name") != "self_interest_pct" for f in facts)
+    mets = {m["name"]: m for m in DOMAIN_SPECS["superhero"]["metrics"]}
+    m = mets["self_interest_pct"]
+    assert m["cube"] == "superhero"
+    expr = m["expression"]
+    assert "SUM(" in expr and "IIF(alignment = 'Bad'" in expr
+    assert "COUNT(hero_id)" in expr
+    desc = m["description"]
+    assert "Q743" not in desc
+    assert "SUM(" not in desc and "COUNT(" not in desc
+    for needle in ("self-interest", "Bad alignment", "Percentage", "moral"):
+        assert needle in desc, needle
+
+
 def test_evidence_signal_present_for_key_cohorts():
     """주요 cohort 키워드가 해당 DB evidence에 실제로 등장하는지 스모크."""
     checks = {

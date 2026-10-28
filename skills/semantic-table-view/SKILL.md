@@ -51,7 +51,7 @@ Progress:
 
 ### 4. Draft `view`
 
-[contract.md](contract.md)의 view 절. 예시는 [examples/views/orders_customer.json](examples/views/orders_customer.json).
+[contract.md](contract.md)의 view 절. 예시는 [examples/views/orders_customer.json](examples/views/orders_customer.json). `joins`가 있으면 `sources[0]`은 허브 테이블, 그 다음 말단. 공유 조인 키 `mappings[0]`도 허브.
 
 ### 5. Hand off
 

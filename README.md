@@ -143,7 +143,7 @@ table → view → cube → metric | segment
 | 툴 | 용도 |
 |----|------|
 | `search_columns` | 시맨틱 컬럼/멤버 검색 |
-| `sample_column` | table 멤버 샘플(`database`/`table`/`name`, +코드사전) |
+| `sample_column` | table 멤버 샘플(`database`/`table`/`name`, `like?` 부분일치, +코드사전) |
 | `execute_sql` | **시맨틱 SQL만** → 물리 SELECT 컴파일·실행 |
 | `list_databases` / `list_tables` / `describe_table` | database 목록 · table 요약(`database`/`name`/`description`) · cube 상세 |
 

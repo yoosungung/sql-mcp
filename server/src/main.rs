@@ -54,10 +54,12 @@ async fn run() -> Result<(), ExitCode> {
     let mut store = SemanticStore::open(&semantic_path)
         .await
         .map_err(|e| startup_fail(&e))?;
-    if let Some(embedder) = embed::from_env() {
+    if let Some(embedder) = embed::from_env_ready().await {
         store = store.with_embedder(embedder);
     } else {
-        tracing::info!("no embedding API configured; search_columns uses BM25 only (D14)");
+        tracing::info!(
+            "no embedding API configured or unreachable; search_columns uses BM25 only (D14)"
+        );
     }
     let targets = TargetRegistry::from_config(&cfg).await.unwrap_or_else(|e| {
         tracing::warn!(

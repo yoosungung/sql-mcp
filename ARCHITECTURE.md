@@ -33,7 +33,7 @@ view를 join, union, minus로 만들 때 이름과 데이터와 코드가 같은
 
 view는 테이블만 묶는다(`join` / `union` / `minus`). 요약·상세 **choice**는 cube다. cube `view`가 정본(상세)이고, 선택 `choice[]`는 같은 컬럼 이름을 가진 다른 view다(`summary: true`). `prefer: "summary"`이면 Grouped 집계 질의(또는 `SELECT DISTINCT`)에서 요구 컬럼을 덮는 choice를 정본보다 우선한다(반가산성 metric은 요약 view 컬럼 집합이 요구 컬럼과 **정확히 일치**할 때만). **비-`DISTINCT` Ungrouped 상세 행 조회(D23)**는 `summary: true` choice를 건너뛰고 정본 `view`를 쓴다. 어느 후보도 컬럼을 덮지 못하면 거절한다.
 
-`POST /api/meta`와 `PUT /api/meta/{kind}/{name}`은 문서 하나의 JSON Schema 검증을 통과한 뒤에, 그 문서를 반영한 등록 집합 전체의 연결을 검증한다. `DELETE`는 그 문서를 뺀 집합의 연결을 검증한다. 검증이 실패하면 시맨틱 DB를 바꾸지 않는다. GET은 저장된 문서를 반환한다.
+`POST /api/meta`와 `PUT /api/meta/{kind}/{name}`은 문서 하나의 JSON Schema 검증을 통과한 뒤에, 그 문서를 반영한 등록 집합 전체의 연결을 검증한다. `DELETE`는 그 문서를 뺀 집합의 연결을 검증한다. 검증이 실패하면 시맨틱 DB를 바꾸지 않는다. GET은 저장된 문서를 반환한다. 교환 JSON에는 `id`가 없다. view·cube 저장은 대리키, table 참조는 논리 `name`이다.
 
 연결은 `fk.references`, view `sources`와 `mappings`, cube `view`와 `choice[].view`, dimension·fact의 `column`, metric·segment `cube`, metric `group_by`, 그리고 table/view/cube의 **`target` 일치**다. `expression`으로 만든 dimension·fact는 **저장 시** view 컬럼 연결 검사를 하지 않는다(식 식별자 검사는 D18 컴파일 단계). `aggregation`이 `group`이면 `group_by`의 각 이름이 연결된 view 컬럼에 있어야 한다. 저장 계층은 타입별 libSQL `meta_*` 테이블이다(`semantic/libsql/catalog.sql`). `/api/meta` **입출력은 JSON**(`document.schema.json`)이며 저장 시 타입별 행으로 분해·조회 시 JSON으로 재조립한다. 검색 투영은 `column_index`(+`target`+`embedding`)와 FTS5(`column_index_fts`, 순위 `bm25`)다 — keyword는 FTS5이며 vector/hybrid(RRF)를 유지한다.
 
@@ -71,9 +71,9 @@ view는 테이블만 묶는다(`join` / `union` / `minus`). 요약·상세 **cho
 |------|------|------------|------|------|
 | `list_databases` | database 목록(DW 표면) | — | `name`·`description`·`engine`(시크릿 제외) | 설정에서 읽기. `name` = `TargetConfig.id` = 등록 문서 `target` |
 | `list_tables` | **cube**=table 목록(DW 표면) | `database?` | `{ database, name, description }`만 | 시맨틱 `kind=cube` (`database`면 `cube.target` 필터). 상세는 `describe_table` |
-| `describe_table` | **cube**=table 상세(DW 표면) | `table`, `database?`, `caller_role?` | `{ database, name, description, dimensions, facts, examples }` | 컬럼=`dimensions`/`facts`만. fact에 `additive: false`가 있으면 그대로 노출(기본 true는 생략). `examples`는 등록 metric/segment의 expression·filter **참고 스니펫**(SQL 식별자 아님, D26). `database`면 cube.target 일치. `caller_role`로 dim/fact·example 필터 · 응답에 `role`/`kind`/`view`/물리 `column`/`cube` 키 없음 |
+| `describe_table` | **cube**=table 상세(DW 표면) | `table`, `database?`, `caller_role?` | `{ database, name, description, columns, examples }` | 컬럼=`columns[]` 하나(dim+fact 합침). 각 컬럼 `kind`=`dimension`\|`fact` (`search_columns`·`examples.kind`와 동일). fact에 `additive: false`가 있으면 그대로 노출(기본 true는 생략). `examples`는 등록 metric/segment의 expression·filter **참고 스니펫**(SQL 식별자 아님, D26). `database`면 cube.target 일치. `caller_role`로 column·example 필터. 테이블 객체에 document `kind`/`target`/`view`/`role`/물리 `column`/`cube` 없음 |
 | `search_columns` | 멤버 검색(DW 표면) | `query`, `database?`, `mode?`, `limit?`, `caller_role?` | `{ database, table, kind, name, description, score }` | `kind`=`table`\|`dimension`\|`fact` only(D26). role로 안 보이는 항목 제외. §3.5 |
-| `sample_column` | dim/fact 샘플(DW 표면) | `database`, `table`, `name`, `caller_role?`, `params?`, `limit?` | `{ database, table, name, as_code, masked, values }` | §3.4 — **cube.target == database** · 물리 `resolved`/`sql` 숨김 · role 필터 적용 |
+| `sample_column` | dim/fact 샘플(DW 표면) | `database`, `table`, `name`, `like?`, `caller_role?`, `params?`, `limit?` | `{ database, table, name, as_code, masked, values }` | §3.4 — **cube.target == database** · 물리 `resolved`/`sql` 숨김 · role 필터 적용 |
 | `execute_sql` | 시맨틱 SQL 컴파일·실행 | `database`, `sql`, `caller_role?`, `params?`, `dry_run?` | 실행: `{ columns, rows, row_count, execution_time_ms }`(+상한 시 `truncated`); `dry_run=true`면 `{ sql, dry_run: true }`만 | **시맨틱 읽기 SELECT**(D26 ANSI) · dim/fact·ad-hoc 식만 · **cube.target == database** · 실행 응답에 물리 `sql` 없음 |
 
 ### 3.3 HTTP 작성 API (`/api`, D30)
@@ -91,7 +91,7 @@ HTTP 모드만. stdio에는 없다. JSON. DSN/password 금지. `SQL_MCP_MODE` �
 | GET | `/api/meta` | 문서 목록 (`?kind=`) | `{ "items": [ ... ] }` |
 | GET | `/api/meta/{kind}/{name}` | 단건 | 문서 JSON / not_found |
 | POST | `/api/meta` | 생성 (문서 JSON 본체) | 생성된 문서 |
-| PUT | `/api/meta/{kind}/{name}` | 전체 replace | 갱신된 문서 |
+| PUT | `/api/meta/{kind}/{name}` | 전체 replace. view/cube/metric/segment는 path `name`과 body `name`이 다르면 이름만 바꾼다(저장 id 유지) | 갱신된 문서 |
 | DELETE | `/api/meta/{kind}/{name}` | 삭제 | `{ "deleted": true }` |
 
 에러 JSON은 `{ "code", "message" }`. HTTP: `validation` 400, `not_found` 404, `forbidden` 403.
@@ -101,13 +101,13 @@ HTTP 모드만. stdio에는 없다. JSON. DSN/password 금지. `SQL_MCP_MODE` �
 - DW 인자: `database` + `table`(cube) + `name`(dimension/fact). 서버가 view mappings로 물리 테이블을 고른다(첫 mapping).
 - dimension `as_code`는 **코드사전 객체** `{ table, key_column, value_column, where? }`(D9). boolean 금지. 에이전트 기입·`/api/meta` 저장만. fact·table column에는 두지 않는다.
 - `execute_sql` Step 7: 집계 완료 후 SELECT에 있는 dim에 대해 사전을 `dim = key` LEFT JOIN하고 `{dim}__value`를 프로젝션한다.
-- `sample_column`: dim에 `as_code`가 있으면 `{key,value}` 샘플, 없으면 스칼라 `values`. 응답은 DW 표면만(물리 `resolved`/`sql` 없음). `scope_filter` · `default_filter` · `permission_filters` 및 `role` 접근 권한을 강제한다.
+- `sample_column`: dim에 `as_code`가 있으면 `{key,value}` 샘플, 없으면 스칼라 `values`. 선택 `like`는 값 **부분일치**(에이전트 raw LIKE 패턴 아님; `%` `_` `\` 이스케이프). `as_code`면 **value** 컬럼에만 건다. 빈/`like` 생략은 기존과 같다. 응답은 DW 표면만(물리 `resolved`/`sql` 없음). `scope_filter` · `default_filter` · `permission_filters` 및 `role` 접근 권한을 강제한다.
 
 ### 3.5 `search_columns`
 
 - 목표 모드: `keyword`(BM25) · `vector` · `hybrid`(RRF). 기본 `hybrid` 권장. `database` 인자가 주어지면 해당 타깃만. 응답은 DW 표면(`table`·`kind`·`name`·`description`·`score`); cube 문서 hit은 `kind=table`. **인덱스 대상은 cube/dimension/fact만**(metric/segment 제외 — D26). `caller_role`로 멤버 필터.
 - JSON 교환·검증 정본은 `semantic/schema/document.schema.json`. 저장은 타입별 `meta_*`. 검색 인덱스(`column_index` / FTS5)는 등록 JSON의 **투영**이며 규칙은 [semantic/DESIGN.md](semantic/DESIGN.md)(D12). 파이프라인 상세는 [server/spec.md](server/spec.md).
-- **D14:** 임베딩은 외부 OpenAI-호환 HTTP API(`SQL_MCP_EMBEDDING_URL` + `API_KEY`)로만 생성하고 libSQL에 저장한다. CRUD 시 텍스트가 변경된 항목만 증분 임베딩한다. API가 없으면 embedder를 두지 않으며, `vector`/`hybrid` 요청은 **keyword(BM25)로 폴백**한다. 오프라인 검색 품질은 BM25 강화(한글 토큰 유지, 문자 bigram)로 올린다. 로컬 ONNX·운영용 HashEmbedder는 쓰지 않는다. 투영 범위는 [semantic/DESIGN.md](semantic/DESIGN.md) D12.
+- **D14:** 임베딩은 외부 OpenAI-호환 HTTP API(`SQL_MCP_EMBEDDING_URL` + `API_KEY`)로만 생성하고 libSQL에 저장한다. CRUD 시 텍스트가 변경된 항목만 증분 임베딩한다. API가 없거나 **기동 시 URL 호스트에 연결되지 않으면** embedder를 두지 않으며, `vector`/`hybrid` 요청은 **keyword(BM25)로 폴백**한다. 오프라인 검색 품질은 BM25 강화(한글 토큰 유지, 문자 bigram)로 올린다. 로컬 ONNX·운영용 HashEmbedder는 쓰지 않는다. 투영 범위는 [semantic/DESIGN.md](semantic/DESIGN.md) D12.
 
 ### 3.6 Resources
 

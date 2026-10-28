@@ -30,8 +30,13 @@ def test_system_prompt_requires_sql_not_olap_dsl() -> None:
     s = SYSTEM.lower()
     assert "sql select" in s or "select text" in s
     assert "mdx" in s and "dax" in s
-    assert "cube" in s and "dimension" in s
+    assert "table" in s and "column" in s
     assert "examples" in s
+    assert "dimension" not in s
+    assert "member" not in s
+    # "CUBE"는 GROUP BY 키워드 경고만. 스키마 용어로 cube를 쓰지 않는다.
+    assert "cube name" not in s
+    assert "cubes" not in s
 
 
 def test_system_prompt_covers_d23_d24_and_join() -> None:
@@ -61,7 +66,7 @@ def test_system_prompt_requires_execute_and_answer_from_rows() -> None:
 
 
 def test_system_prompt_requires_explicit_from() -> None:
-    """모든 SELECT는 FROM에 큐브 이름을 명시해야 한다."""
+    """모든 SELECT는 FROM에 테이블 이름을 명시해야 한다."""
     s = SYSTEM.lower()
     assert "from" in s
     assert "must" in s or "explicit" in s or "every select" in s
@@ -78,10 +83,12 @@ def test_system_prompt_requires_sample_column_for_where_literals() -> None:
     s = SYSTEM.lower()
     assert "sample_column" in s
     assert "where" in s
+    assert "substring" in s
+    assert "value side" in s
     assert "empty" in s or "row_count" in s or "0 row" in s
 
 
-def test_user_prompt_includes_evidence_and_db() -> None:
+def test_user_prompt_is_question_only() -> None:
     q = BirdQuestion(
         question_id=1,
         db_id="student_club",
@@ -91,9 +98,16 @@ def test_user_prompt_includes_evidence_and_db() -> None:
         difficulty="simple",
     )
     text = user_prompt(q)
-    assert "student_club" in text
-    assert "Angela Sanders" in text
-    assert "Evidence" in text
+    assert text == "What's Angela's major?"
+    assert "student_club" not in text
+    assert "Angela Sanders" not in text
+    assert "Evidence" not in text
+    assert "Difficulty" not in text
+
+
+def test_system_prompt_discovers_database_without_evidence() -> None:
+    assert "list_databases" in SYSTEM
+    assert "Evidence" not in SYSTEM
 
 
 _ERR = {"code": "validation", "message": "subqueries are not allowed in semantic expressions"}

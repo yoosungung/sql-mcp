@@ -150,24 +150,7 @@ export function App({ api }: { api?: AuthorApi }) {
     try {
       const renamed = Boolean(previousName && previousName !== doc.name);
       if (renamed && previousName) {
-        await client.create(doc);
-        if (doc.kind === "view") {
-          for (const cubeDoc of cubes) {
-            const stack = choiceStack(cubeDoc);
-            if (!stack.includes(previousName)) continue;
-            await client.update(
-              "cube",
-              cubeDoc.name,
-              withChoiceStack(
-                cubeDoc,
-                stack.map((n) => (n === previousName ? doc.name : n)),
-              ),
-            );
-          }
-        }
-        if (docs.some((d) => d.kind === doc.kind && d.name === previousName)) {
-          await client.remove(doc.kind, previousName);
-        }
+        await client.update(doc.kind, previousName, doc);
       } else {
         const exists =
           doc.kind === "view"
@@ -200,34 +183,23 @@ export function App({ api }: { api?: AuthorApi }) {
     try {
       const previous = cube && cube.name !== liveCube.name ? cube.name : undefined;
       if (previous) {
-        await client.create(liveCube);
-        for (const m of metricDrafts) {
-          const body = { ...m, cube: liveCube.name };
-          const ex = docs.some((d) => d.kind === "metric" && d.name === m.name);
-          if (ex) await client.update("metric", m.name, body);
-          else await client.create(body);
-        }
-        for (const s of segmentDrafts) {
-          const body = { ...s, cube: liveCube.name };
-          const ex = docs.some((d) => d.kind === "segment" && d.name === s.name);
-          if (ex) await client.update("segment", s.name, body);
-          else await client.create(body);
-        }
-        await client.remove("cube", previous);
+        await client.update("cube", previous, liveCube);
       } else {
         const exists = cubes.some((c) => c.name === liveCube.name);
         if (exists) await client.update("cube", liveCube.name, liveCube);
         else await client.create(liveCube);
-        for (const m of metricDrafts) {
-          const ex = docs.some((d) => d.kind === "metric" && d.name === m.name);
-          if (ex) await client.update("metric", m.name, m);
-          else await client.create(m);
-        }
-        for (const s of segmentDrafts) {
-          const ex = docs.some((d) => d.kind === "segment" && d.name === s.name);
-          if (ex) await client.update("segment", s.name, s);
-          else await client.create(s);
-        }
+      }
+      for (const m of metricDrafts) {
+        const body = { ...m, cube: liveCube.name };
+        const ex = docs.some((d) => d.kind === "metric" && d.name === m.name);
+        if (ex) await client.update("metric", m.name, body);
+        else await client.create(body);
+      }
+      for (const s of segmentDrafts) {
+        const body = { ...s, cube: liveCube.name };
+        const ex = docs.some((d) => d.kind === "segment" && d.name === s.name);
+        if (ex) await client.update("segment", s.name, body);
+        else await client.create(body);
       }
       setCubeName(liveCube.name);
       await reload();

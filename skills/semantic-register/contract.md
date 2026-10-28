@@ -17,7 +17,7 @@
 | HTTP | 동작 |
 |------|------|
 | `POST /api/meta` | 문서 하나 schema 검증 → 반영 후 **전체 등록 집합** 연결 검증 → 성공 시만 저장 |
-| `PUT /api/meta/{kind}/{name}` | full body replace, 동일 검증 |
+| `PUT /api/meta/{kind}/{name}` | full body replace, 동일 검증. view/cube/metric/segment는 path `name`과 body `name`이 다르면 rename(저장 id 유지). JSON에 `id` 없음 |
 | `DELETE /api/meta/{kind}/{name}` | 뺀 뒤 남은 집합 연결 검증 |
 | `GET /api/meta` · `GET /api/meta/{kind}/{name}` | 저장된 JSON 반환 |
 

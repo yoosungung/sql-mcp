@@ -23,7 +23,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `dialect` | **D21** `DialectProfile`: `quote_ident` · `rewrite_date_trunc` · `adapt_compiled_sql` · `wrap_row_limit` · `emit_physical_sql` |
 | `compile/` | table/metric/cube → 물리 SQL. 공개 API는 `crate::compile::*` 유지 |
 | `compile/mod` | 공개 타입·엔트리(`compile_cube_query` 등)·RBAC/바인드 헬퍼 |
-| `compile/view_prune` | Step 3–4: 요약뷰 라우팅·join Steiner prune·union prune·인라인 보안 뷰 |
+| `compile/view_prune` | Step 3–4: 요약뷰 라우팅·join Steiner prune(단일 매핑 터미널 → Steiner → 다중 매핑)·union prune·인라인 보안 뷰 |
 | `compile/rewrite` | Step 5–7: 멤버→물리 맵·서브쿼리 전개·HAVING/ORDER BY·filter inject·as_code JOIN |
 | `ast_rewrite` | sqlparser VisitorMut로 식 식별자 → 물리 식 치환 |
 | `ast_select` | SELECT/WHERE/GROUP BY AST 조립·파서 정규화 |
@@ -33,10 +33,10 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 | `pipeline/existence` | **D27** 리터럴-only 프로젝션 → existence dim rewrite (`SELECT *` 불허) |
 | `pipeline/join` | 다중 큐브 JOIN · ON 검증/리라이트. **D29** 뷰 안 `one_to_many` 팬아웃·캐즘은 `compile` `assert_no_fanout_or_chasm` (`SQL_MCP_GRAIN_GUARD`, 기본 끔). 합계 재작성 없음 |
 | `pipeline/clauses` | SELECT 프로젝션 분류·adhoc 집계·WHERE 세그먼트·GROUP BY/HAVING/ORDER BY/LIMIT. **D28** 비가산 fact `SUM`/`AVG`/`COUNT(col)` 가드는 `compile/rewrite` |
-| `semantic/typed` | JSON ↔ 타입별 `meta_*` 분해/재조립 |
+| `semantic/typed` | JSON ↔ 타입별 `meta_*` 분해/재조립. view/cube는 저장 `id`, 교환은 `name`. join 뷰는 저장·로드 시 허브(조인 차수 최대)를 `sources[0]`에 두고 나머지는 허브에서 hop 깊이 순(depth-1 → depth-2, 형제는 원래 상대 순서). 공유 키 `mappings`도 동일 순위(카탈로그 캐시 포함) |
 | `semantic` | 스키마·연결 검증 · libSQL CRUD · 검색 인덱스 재구축 |
 | `search` | BM25(FTS5) · 벡터 · hybrid(RRF) |
-| `embed` | D14: OpenAI-호환 HTTP만. 없으면 None → BM25만. `HashEmbedder`는 테스트 전용 |
+| `embed` | D14: OpenAI-호환 HTTP만. 없거나 기동 시 URL 연결 실패면 None → BM25만. `HashEmbedder`는 테스트 전용 |
 | `sample` | cube+member → 물리/as_code 사전 샘플 해석 |
 | `code_detect` | (레거시) 텍스트 코드 휴리스틱 — 현재 sample_column 미사용 |
 | `target` | 타깃 레지스트리 · Postgres·MySQL(`sqlx`) / SQLite(`libsql`) / Oracle(`oracledb`) |
@@ -52,7 +52,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 
 1. `document.schema.json`으로 문서 하나 검증. 실패 메시지는 JSON Pointer(예: `/dimensions/0/type`)와 키워드 이유이며, 문서 전체 덤프가 아니다.
 2. 반영 후 등록 집합 연결 검증(실패 시 저장소 불변)
-3. `PUT /api/meta/{kind}/{name}`은 **전체 replace**(D15)
+3. `PUT /api/meta/{kind}/{name}`은 **전체 replace**(D15). JSON은 name만 주고 받는다. view/cube는 부모 `id`를 유지하고 UNIQUE `name`을 갱신한다(path `name` ≠ body `name`이면 rename). table은 `name` PK라 path와 body 이름이 같아야 한다.
 4. CRUD 시 변경된 텍스트만 증분 임베딩한 뒤 **단일 Write 트랜잭션**으로 `meta_*`와 `column_index`/`column_index_fts`를 함께 갱신하고, 인메모리 카탈로그 캐시를 갱신
 
 ## DialectProfile (D21)
@@ -73,9 +73,9 @@ Cube.js `*Query` 어댑터와 같은 역할: **생성기 쪽 방언**, 자유 SQ
 
 - DW 조회 툴 `description`·서버 `instructions`는 **에이전트 선택 가이드**(언제 쓰고/쓰지 않는지·다음 스텝). 구현 용어(cube/물리 SQL)는 툴 설명에 넣지 않는다.
 - `list_databases`: 설정 타깃 목록. 출력 `name`(=`TargetConfig.id`·문서 `target`)·`description`·`engine`(시크릿 제외).
-- `list_tables` / `describe_table`: 시맨틱 **cube** 조회(툴 이름 유지). `list_tables(database?)`는 DW용 요약 `{ database, name, description }`만(`database`=`cube.target`). `describe_table(table, database?, caller_role?)`는 DW 상세: `database`/`name`/`description` + role-필터된 `dimensions`/`facts`/`metrics`/`segments`(멤버는 `name`·`description`·`type`·`encryption`·선택 `as_code`; metric은 `expression`·`aggregation`·`group_by`·`filter` 식 문자열; segment는 `filter` 식 문자열). `role`·`kind`·`view`·물리 `column`·metric/segment `cube`는 숨김. 물리 `information_schema` 경로 없음.
+- `list_tables` / `describe_table`: 시맨틱 **cube** 조회(툴 이름 유지). `list_tables(database?)`는 DW용 요약 `{ database, name, description }`만(`database`=`cube.target`). `describe_table(table, database?, caller_role?)`는 DW 상세: `database`/`name`/`description` + role-필터된 `columns`/`examples`. `columns[]`는 dim+fact 합침이며 각 항목 `kind`=`dimension`\|`fact` + `name`·`description`·`type`·`encryption`·선택 `as_code`/`additive`. `examples`는 metric(`expression`·`aggregation`·`group_by`·`filter`)·segment(`filter`) 스니펫. 테이블 객체에서 document `kind`·`view`·`role`·물리 `column`·metric/segment `cube`는 숨김. 물리 `information_schema` 경로 없음.
 - `search_columns`: `keyword` | `vector` | `hybrid`(기본). DW 응답 `{ database, table, kind, name, description, score }` (`kind`=`table`\|`dimension`\|`fact`\|`metric`\|`segment`). `database`·`caller_role` 필터. 임베더 없으면 vector/hybrid→keyword.
-- `sample_column` / `execute_sql`: 해석된 **cube.target**이 툴 인자 `database`와 같아야 한다(SQL에 cube가 여러 개면 **전부** 동일 target이고 인자와도 일치). `execute_sql`은 동일 target cube **JOIN/UNION**·복수 metric·동적 `GROUP BY`(`ROLLUP`/`CUBE`/`GROUPING SETS`)·`SELECT DISTINCT`·일반 `WHERE`·`HAVING`·`ORDER BY`·`LIMIT`/`OFFSET`·`:name` 바인드 치환을 허용한다. **D23:** 그레인 기반 2-모드 — **(1) Grouped(집계):** 명명 metric·ad-hoc 집계·metric 파생 연산 **혼용 허용**, 차원 스칼라 식(`date_trunc` 등) 및 차원-only `GROUP BY`/`HAVING` 허용, `HAVING`/`ORDER BY` 집계식 허용, 동일 `target` cube JOIN 허용(metric 없는 측은 참조 차원 `GROUP BY` 서브쿼리로 팬아웃 방지) / **(2) Ungrouped(행 상세):** metric·`GROUP BY`·`HAVING` 없는 dim/fact(+비집계 스칼라 식) 조회, 비-`DISTINCT` 조회 시 요약 뷰 우회(원천 뷰만) 및 비-`DISTINCT` cube JOIN 거절. 실행 응답은 `{ columns, rows, row_count, execution_time_ms }`(+`max_rows` 도달 시 `truncated: true`); 물리 `sql`은 `dry_run=true`일 때만 `{ sql, dry_run: true }`. `sample_column(database, table, name)`은 mappings 또는 dimension `as_code` 해석 후 인라인 보안 필터로 샘플하고 DW 응답 `{ database, table, name, as_code, masked, values }`만 반환(물리 `resolved`/`sql` 숨김). 큐브 스코프 `encryption` 마스킹(D17) 및 전 계층 `role` 검증.
+- `sample_column` / `execute_sql`: 해석된 **cube.target**이 툴 인자 `database`와 같아야 한다(SQL에 cube가 여러 개면 **전부** 동일 target이고 인자와도 일치). `execute_sql`은 동일 target cube **JOIN/UNION**·복수 metric·동적 `GROUP BY`(`ROLLUP`/`CUBE`/`GROUPING SETS`)·`SELECT DISTINCT`·일반 `WHERE`·`HAVING`·`ORDER BY`·`LIMIT`/`OFFSET`·`:name` 바인드 치환을 허용한다. **D23:** 그레인 기반 2-모드 — **(1) Grouped(집계):** 명명 metric·ad-hoc 집계·metric 파생 연산 **혼용 허용**, 차원 스칼라 식(`date_trunc` 등) 및 차원-only `GROUP BY`/`HAVING` 허용, `HAVING`/`ORDER BY` 집계식 허용, 동일 `target` cube JOIN 허용(metric 없는 측은 참조 차원 `GROUP BY` 서브쿼리로 팬아웃 방지) / **(2) Ungrouped(행 상세):** metric·`GROUP BY`·`HAVING` 없는 dim/fact(+비집계 스칼라 식) 조회, 비-`DISTINCT` 조회 시 요약 뷰 우회(원천 뷰만) 및 비-`DISTINCT` cube JOIN 거절. 실행 응답은 `{ columns, rows, row_count, execution_time_ms }`(+`max_rows` 도달 시 `truncated: true`); 물리 `sql`은 `dry_run=true`일 때만 `{ sql, dry_run: true }`. `sample_column(database, table, name, like?)`은 mappings 또는 dimension `as_code` 해석 후 인라인 보안 필터로 샘플하고 DW 응답 `{ database, table, name, as_code, masked, values }`만 반환(물리 `resolved`/`sql` 숨김). `like`는 이스케이프된 부분일치(`as_code`면 value 컬럼). 큐브 스코프 `encryption` 마스킹(D17) 및 전 계층 `role` 검증.
 - Skills extension: capabilities에 `io.modelcontextprotocol/skills` (빈 설정). `skills/list` · `skills/get` → `skills_ext` (Resource URI·내용과 동일, SHA-256 digest). `resources/directory/read` 없음.
 
 ## 설정
@@ -89,7 +89,7 @@ Cube.js `*Query` 어댑터와 같은 역할: **생성기 쪽 방언**, 자유 SQ
 | `SQL_MCP_MAX_ROWS` / `SQL_MCP_SAMPLE_LIMIT` / `SQL_MCP_TIMEOUT_MS` | 상한 및 쿼리 타임아웃 |
 | `SQL_MCP_GRAIN_GUARD` | 쉼표로 구분한 cube `target`. 그 타깃만 D29 팬아웃·캐즘 거절. 미설정이면 꺼짐 |
 | `SQL_MCP_DEFAULT_ROLE` | `caller_role` 미지정 시 기본 적용할 역할 |
-| `SQL_MCP_EMBEDDING_URL` / `SQL_MCP_EMBEDDING_API_KEY` | 둘 다 있으면 임베딩·vector/hybrid. 없으면 keyword(BM25)만(D14) |
+| `SQL_MCP_EMBEDDING_URL` / `SQL_MCP_EMBEDDING_API_KEY` | 둘 다 있으면 기동 시 URL 호스트에 TCP 연결을 시도한다. 성공하면 임베딩·vector/hybrid. 미설정이거나 연결 실패면 keyword(BM25)만(D14) |
 | `SQL_MCP_EMBEDDING_MODEL` | 기본 `text-embedding-3-small` |
 
 타깃 DSN은 설정 `url_env`가 가리키는 환경 변수로만 주입한다.

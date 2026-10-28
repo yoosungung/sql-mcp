@@ -62,19 +62,21 @@ CREATE TABLE meta_tables (
     role_json TEXT NOT NULL DEFAULT '"all"'
 ) STRICT;
 
--- 2. View 계층 (join / union / minus)
+-- 2. View 계층 (join / union / minus). PK는 대리키. JSON 교환은 name.
 CREATE TABLE meta_views (
-    name TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
     description TEXT,
     target TEXT NOT NULL,
     combine TEXT NOT NULL CHECK (combine IN ('join', 'union', 'minus'))
 ) STRICT;
 
--- 3. Cube 계층
+-- 3. Cube 계층. view_id → meta_views(id). 자식·metric·segment도 cube_id.
 CREATE TABLE meta_cubes (
-    name TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
     target TEXT NOT NULL,
-    view_name TEXT NOT NULL REFERENCES meta_views(name),
+    view_id INTEGER NOT NULL REFERENCES meta_views(id),
     prefer TEXT CHECK (prefer IS NULL OR prefer = 'summary'),
     description TEXT NOT NULL,
     role_json TEXT NOT NULL DEFAULT '"all"'
@@ -99,7 +101,7 @@ CREATE VIRTUAL TABLE column_index_fts USING fts5(
 );
 ```
 
-`search_columns` 모드: `keyword`(FTS5/`bm25`, 음수 랭크를 양수 점수로 정규화) · `vector` · `hybrid`(RRF). `target` 인자가 주어지면 `column_index.target`으로 필터링한다. 임베더 없으면 vector/hybrid → keyword 폴백(D14).
+`search_columns` 모드: `keyword`(FTS5/`bm25`, 음수 랭크를 양수 점수로 정규화) · `vector` · `hybrid`(RRF). `target` 인자가 주어지면 `column_index.target`으로 필터링한다. 임베더 없거나 기동 시 연결 실패면 vector/hybrid → keyword 폴백(D14).
 
 ## 3. 시맨틱 SQL 컴파일 파이프라인 명세 (6단계 + Step 7–8)
 
@@ -135,7 +137,7 @@ CREATE VIRTUAL TABLE column_index_fts USING fts5(
 
 ### Step 4: 테이블 가지치기 (Join 그래프 최소 경로 & Union Pruning)
 
-- Join: 필요 컬럼의 \(T_{req}\)(단일 매핑 컬럼 우선 수집 후 다중 매핑 컬럼은 미포함 시에만 추가) + `meta_view_joins` 그래프로 최단 경로 연결 최소 집합(Steiner 근사)을 구한다. 모든 조인이 `inner`이고 \(T_{req}\)가 비어 있지 않으면 불필요한 루트(`sources[0]`)를 강제 포함하지 않으며, 외조인(`left`/`right`/`full`)이 있으면 방향성이 뒤집히지 않도록 루트 기준 순서와 방향을 보존한다. 순환 조인 그래프에서는 스패닝 트리 간선만 방출한다.
+- Join: 필요 컬럼의 \(T_{req}\)를 **단일 매핑 컬럼만**으로 모은 뒤 Steiner로 잇고, 그다음에 다중 매핑 컬럼을 해석한다. 이미 연결된 테이블에 매핑이 있으면 그걸 쓰고, 없을 때만 `mappings[0]`을 추가한 뒤 Steiner를 한 번 더 돌린다. 공유 조인 키(`hero_id` 등)가 허브·자식에 같이 있어도, 허브가 차원 조인으로 이미 들어왔으면 자식 팩트(`hero_power`)를 끌어오지 않는다. 저장·로드 시 join 뷰는 허브(조인 차수 최대)를 `sources[0]`에 두고 나머지를 허브에서 hop 깊이 순(depth-1 → depth-2, 형제는 원래 상대 순서)으로 두며 공유 키 `mappings`도 그 순위를 따른다. 그래서 `COUNT(hero_id) GROUP BY publisher_name`처럼 허브가 Steiner에 아직 없을 때도 `mappings[0]`이 자식 팩트를 끌어오지 않는다. 기존 행은 DB 마이그레이션 없이 로드 때 정규화한다. 모든 조인이 `inner`이고 \(T_{req}\)가 비어 있지 않으면 불필요한 루트(`sources[0]`)를 강제 포함하지 않으며, 외조인(`left`/`right`/`full`)이 있으면 방향성이 뒤집히지 않도록 루트 기준 순서와 방향을 보존한다. 순환 조인 그래프에서는 스패닝 트리 간선만 방출한다.
 - Union: WHERE(metric/segment/사용자 WHERE 및 `:bind` 값 반영)와 각 table `scope_filter`가 disjoint이면 해당 UNION 브랜치 제외.
 - 출력: 최적화된 물리 테이블 집합·결합 관계
 

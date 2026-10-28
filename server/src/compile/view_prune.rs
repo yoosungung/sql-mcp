@@ -288,8 +288,8 @@ pub(crate) fn included_tables_for_join_view(
         .iter()
         .filter_map(|s| source_alias(s).ok().map(str::to_string))
         .collect();
-    let mut t_req = if let Some(cols) = used_view_cols {
-        tables_for_view_cols(view, cols)
+    let mut terminals = if let Some(cols) = used_view_cols {
+        unique_mapped_tables_for_view_cols(view, cols)
     } else {
         all_names.clone()
     };
@@ -301,12 +301,16 @@ pub(crate) fn included_tables_for_join_view(
     });
     // Anchor the primary/fact table (sources[0]) only when outer joins require root directionality
     // or when no specific columns resolved to a source table.
-    if has_outer_join || t_req.is_empty() {
+    if has_outer_join || terminals.is_empty() {
         if let Some(base) = sources.first().and_then(|s| source_alias(s).ok()) {
-            t_req.insert(base.to_string());
+            terminals.insert(base.to_string());
         }
     }
-    steiner_nodes(&joins, &t_req, &all_names)
+    if let Some(cols) = used_view_cols {
+        let connected = steiner_nodes(&joins, &terminals, &all_names)?;
+        terminals.extend(uncovered_multi_mapped_sources(view, cols, &connected));
+    }
+    steiner_nodes(&joins, &terminals, &all_names)
 }
 
 /// D29. Rejects included `one_to_many` joins. Missing `relationship` is not a guess.
@@ -515,15 +519,12 @@ pub(crate) fn format_join_fragment(
     ))
 }
 
-/// Tables needed for the given view column names.
-/// Pass 1 collects single-source columns; Pass 2 resolves multi-mapped columns to an already
-/// required source when possible, avoiding pulling in an unrelated table for a shared join key.
-pub(crate) fn tables_for_view_cols(view: &Value, cols: &HashSet<String>) -> HashSet<String> {
+/// Single-mapping view columns → source tables. Multi-mapped keys are resolved after Steiner.
+fn unique_mapped_tables_for_view_cols(view: &Value, cols: &HashSet<String>) -> HashSet<String> {
     let mut out = HashSet::new();
     let Some(vcols) = view.get("columns").and_then(|v| v.as_array()) else {
         return out;
     };
-    let mut multi: Vec<&Vec<Value>> = Vec::new();
     for c in vcols {
         let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("");
         if !cols.contains(name) {
@@ -534,28 +535,50 @@ pub(crate) fn tables_for_view_cols(view: &Value, cols: &HashSet<String>) -> Hash
                 if let Some(src) = maps[0].get("source").and_then(|v| v.as_str()) {
                     out.insert(src.to_string());
                 }
-            } else if maps.len() > 1 {
-                multi.push(maps);
-            }
-        }
-    }
-    for maps in multi {
-        let already_covered = maps.iter().any(|m| {
-            m.get("source")
-                .and_then(|v| v.as_str())
-                .is_some_and(|s| out.contains(s))
-        });
-        if !already_covered {
-            if let Some(src) = maps
-                .first()
-                .and_then(|m| m.get("source"))
-                .and_then(|v| v.as_str())
-            {
-                out.insert(src.to_string());
             }
         }
     }
     out
+}
+
+/// Multi-mapped columns whose sources are not already in `already`. First mapping wins only then.
+fn uncovered_multi_mapped_sources(
+    view: &Value,
+    cols: &HashSet<String>,
+    already: &HashSet<String>,
+) -> HashSet<String> {
+    let mut extra = HashSet::new();
+    let Some(vcols) = view.get("columns").and_then(|v| v.as_array()) else {
+        return extra;
+    };
+    for c in vcols {
+        let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        if !cols.contains(name) {
+            continue;
+        }
+        let Some(maps) = c.get("mappings").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        if maps.len() <= 1 {
+            continue;
+        }
+        let already_covered = maps.iter().any(|m| {
+            m.get("source")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| already.contains(s))
+        });
+        if already_covered {
+            continue;
+        }
+        if let Some(src) = maps
+            .first()
+            .and_then(|m| m.get("source"))
+            .and_then(|v| v.as_str())
+        {
+            extra.insert(src.to_string());
+        }
+    }
+    extra
 }
 
 /// Steiner-tree approximation: connect all terminals with shortest paths on the join graph.

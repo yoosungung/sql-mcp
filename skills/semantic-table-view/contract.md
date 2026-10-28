@@ -63,6 +63,9 @@
 4. **조인 키 동치류(Equivalence Class) 다중 매핑:**
    - `on` 조건으로 묶인 조인 키 동치류에서 물리 컬럼명이 같으면(`customer_id`, `order_id`) 하나의 view 컬럼으로 묶고, 모든 참여 테이블의 `{ source, column }`을 `mappings`에 넣는다(PK 테이블 우선).
    - 조인 양끝의 물리 컬럼명이 다르면(`orders.order_id = shipments.ref_order`, `customer.postal_code = region.zip`), 오른쪽 PK 컬럼을 흡수해 없애지 말고 **양쪽 이름을 모두 view 컬럼으로 노출**하되(단, 비-루트 테이블의 범용 `"id"` 컬럼은 제외), 각 view 컬럼의 `mappings`에 자신의 테이블을 첫 번째(`mappings[0]`)로 두고 동치류의 상대 테이블 매핑을 뒤에 추가한다. 그래야 컴파일러가 어느 쪽 테이블만 단독 질의하더라도 불필요한 조인 없이 포함된 테이블의 컬럼으로 안전하게 바인딩한다.
+5. **허브 우선 `sources` 순서:**
+   - `joins`가 있으면 `sources[0]`은 조인 그래프의 **허브**(차수가 가장 높은 중심 테이블, 예: `superhero`). 그 다음 말단·룩업 테이블.
+   - 공유 조인 키(`hero_id` 등)의 `mappings[0]`도 허브로 둔다. 컴파일러는 다중 매핑을 해석할 때 `mappings[0]`을 쓰므로, 자식 팩트(`hero_power`)가 앞에 있으면 `COUNT(hero_id)`가 그 테이블을 끌어와 팬아웃한다. identity view(`joins: []`)는 source 1개가 곧 허브다.
 
 ## Quick checks
 
@@ -71,5 +74,6 @@
 - [ ] view `sources[].table`이 카탈로그 table/view `name`과 일치하고, `alias`(생략 시=`table`)는 view 내 유일
 - [ ] join `on` 컬럼이 각 source에 존재하며, 사이클을 닫는 직접 FK 조인 간선이 누락되지 않음
 - [ ] 조인 키 컬럼의 `mappings`에 동치류 테이블들이 함께 매핑되어 단독 테이블 질의 시 조인 프루닝이 가능함
+- [ ] `joins`가 있으면 `sources[0]`·공유 키 `mappings[0]`이 허브 테이블(말단이 아님)
 - [ ] union/minus: 모든 mapping이 전 source를 덮음
 - [ ] 필터 식별자는 물리 컬럼

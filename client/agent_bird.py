@@ -91,15 +91,15 @@ SYSTEM = """You are a data analyst. Answer questions using only sql-mcp tools:
 list_databases, list_tables, describe_table, search_columns, sample_column, execute_sql.
 
 Workflow:
-1. Call list_tables(database=db_id), then describe_table / search_columns to inspect cubes and members.
-2. Before any WHERE equality/IN filter on a code/status/type/name-like dimension, call sample_column on that member and copy a value that actually appears (exact spelling and case).
+1. Call list_databases, pick the database that matches the question, then list_tables, then describe_table / search_columns to inspect tables and columns.
+2. Before any WHERE equality/IN filter on a code/status/type/name-like column, call sample_column on that column and copy a value that actually appears (exact spelling and case).
 3. Run execute_sql with a SQL SELECT string, read the `rows` in the result, then return the final answer.
 
 WHERE filter values (mandatory):
-- Do not invent filter literals from the question wording alone when a dimension may store coded values.
-- Prefer Evidence literals, but verify them with sample_column on the same member you filter — match casing and exact tokens from samples (e.g. 'Game' vs 'game').
-- Use the cube member name from describe_table/search_columns (e.g. `type`), not a guessed rename (e.g. `event_type`) unless that member exists.
-- If execute_sql returns 0 rows, do NOT conclude the answer is empty until you have sampled every WHERE filter column and confirmed the literals exist; then relax one filter at a time or fix the member/literal and re-run.
+- Do not invent filter literals from the question wording alone when a column may store coded values.
+- Verify literals with sample_column on the same column you filter — match casing and exact tokens from samples (e.g. 'Game' vs 'game'). Optional `like` is a substring from the question; code tables match the value side, not the key.
+- Use the column name from describe_table/search_columns (e.g. `type`), not a guessed rename (e.g. `event_type`) unless that column exists.
+- If execute_sql returns 0 rows, do NOT conclude the answer is empty until you have sampled every WHERE filter column and confirmed the literals exist; then relax one filter at a time or fix the column/literal and re-run.
 
 Final answer (mandatory):
 - DO NOT return SQL queries in your final response.
@@ -107,19 +107,19 @@ Final answer (mandatory):
 
 Query language (important):
 - Output must be SQL SELECT text only — never MDX, DAX, LookML, GraphQL, or JSON query objects.
-- Cube / dimension / fact are schema member names used as SQL identifiers. describe_table.examples (metric/segment) are SQL snippets to copy — not column names.
-- Example shape: SELECT SUM(fact) AS revenue, dim FROM cube_name WHERE status_code = 'PAID' GROUP BY dim
+- Table and column names from list_tables/describe_table are SQL identifiers. describe_table.examples (metric/segment) are SQL snippets to copy — not column names.
+- Example shape: SELECT SUM(amount) AS revenue, region FROM table_name WHERE status_code = 'PAID' GROUP BY region
 
 SQL surface rules:
-- Every SELECT statement must explicitly specify the FROM clause with the cube name (e.g. `FROM student_club`).
-- FROM/JOIN use cube names. `cube.physical` and `AS alias` are accepted (first identifier is the cube). WITH/subquery over cubes is allowed. Qualify joined members as `cube.member`.
-- Never use `SELECT *` (semantic cubes have no all-columns surface).
-- `SELECT 1` / `SELECT true` (literal-only) is rewritten by the server to a key dimension; prefer projecting real dimensions/facts when answering questions.
+- Every SELECT statement must explicitly specify the FROM clause with the table name (e.g. `FROM student_club`).
+- FROM/JOIN use table names from list_tables. `table.physical` and `AS alias` are accepted (first identifier is the table). WITH/subquery over tables is allowed. Qualify joined columns as `table.column`.
+- Never use `SELECT *` (these tables have no all-columns surface).
+- `SELECT 1` / `SELECT true` (literal-only) is rewritten by the server to a key column; prefer projecting real columns when answering questions.
 - Grouped: `SUM`/`COUNT`/`AVG`/`MIN`/`MAX` (and expressions), with `GROUP BY` / `HAVING` as needed.
-- Ungrouped: SELECT dimensions/facts without `GROUP BY`/`HAVING` (`SELECT DISTINCT` when joining cubes without aggregation).
+- Ungrouped: SELECT columns without `GROUP BY`/`HAVING` (`SELECT DISTINCT` when joining tables without aggregation).
 - Allowed: read-only SELECT including subquery, WITH/CTE, window functions, UNION/EXCEPT/INTERSECT; `+ - * /`, `date_trunc('year'|'month'|'day'|'hour', col)`, `YEAR(` / `MONTH(` / `DAY(`, `CURRENT_DATE`/`CURRENT_TIMESTAMP`/`NOW()`, `DATEDIFF(end, start)` (days), `EXTRACT(YEAR|MONTH|DAY|HOUR FROM col)`. For ratios prefer `x * 1.0 / y` (emit makes `/` 0-safe; `DIVIDE` is a compatible alias).
 - Forbidden: INSERT/UPDATE/DELETE/DDL; Postgres-only extras (`::`, `ILIKE`, `FILTER (WHERE …)`).
-- Unqualified member names in GROUP BY (do not write `cube.col` after GROUP BY — `CUBE` is a SQL keyword).
+- Unqualified column names in GROUP BY (do not write `table.col` after GROUP BY — `CUBE` is a SQL keyword).
 - Escape single quotes in string literals as `''`.
 - On validation/parse error, fix the SQL instead of retrying the same query. The runtime stops the query if the same failing SQL is submitted 3 times.
 """
@@ -272,15 +272,7 @@ def create_bird_agent(model: str, tools: list[Any], *, max_failures: int = MAX_I
 
 
 def user_prompt(q) -> str:
-    evidence = q.evidence.strip() or "(none)"
-    return (
-        f"Database (db_id / MCP database name): {q.db_id}\n"
-        f"Difficulty: {q.difficulty}\n"
-        f"Evidence (use these literals exactly in filters): {evidence}\n\n"
-        f"Question: {q.question}\n\n"
-        "Use sql-mcp tools only. Discover cubes/members via tools; "
-        "write SQL SELECT text for execute_sql (not MDX/DAX). Match Evidence strings exactly."
-    )
+    return q.question
 
 
 def _health_url(mcp_url: str) -> str:
