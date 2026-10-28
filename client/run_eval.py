@@ -221,8 +221,8 @@ def main() -> None:
     p.add_argument(
         "--concurrency",
         type=int,
-        default=8,
-        help="parallel agent workers (default: 8)",
+        default=4,
+        help="parallel agent workers (default: 4)",
     )
     p.add_argument("--row-limit", type=int, default=500, help="max gold rows per question")
     p.add_argument("--log-max", type=int, default=4000, help="max chars per tool result")
