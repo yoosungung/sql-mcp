@@ -67,7 +67,7 @@ pub struct SearchColumnsArgs {
 pub struct SampleColumnArgs {
     /// Database name from `list_databases`.
     pub database: String,
-    /// Table name from `list_tables` / `search_columns` / `describe_table`.
+    /// Required table name from `list_tables` / `describe_table`. Never omit.
     pub table: String,
     /// Dimension or fact name from `describe_table` / `search_columns` (not a metric or segment).
     pub name: String,
@@ -257,7 +257,7 @@ impl SqlMcp {
     }
 
     #[tool(
-        description = "Sample values for one dimension or fact to check codes or typical data before writing filters. Requires `database`, `table`, and `name` from list/search/describe. Optional `like` keeps values containing that substring (code dictionaries match the value, not the key). Code dimensions may return key/value pairs; not for metrics or segments."
+        description = "Sample values for one column before writing WHERE filters. Always pass `database` (list_databases), `table` (list_tables / describe_table name), and `name` (the column). Example: {\"database\":\"dw\",\"table\":\"orders\",\"name\":\"status_code\",\"like\":\"paid\"}. Never omit `table`. Optional `like` keeps values containing that substring (code dictionaries match the value, not the key). Not for metrics or segments."
     )]
     async fn sample_column(
         &self,

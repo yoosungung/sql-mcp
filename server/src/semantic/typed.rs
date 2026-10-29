@@ -569,7 +569,14 @@ async fn insert_view_children(
                 params![view_id, cname, mappings],
             )
             .await
-            .map_err(|e| AppError::Internal(e.into()))?;
+            .map_err(|e| {
+                let msg = e.to_string();
+                if msg.contains("UNIQUE constraint failed") && msg.contains("meta_view_columns") {
+                    AppError::Validation(format!("duplicate column {cname}"))
+                } else {
+                    AppError::Internal(e.into())
+                }
+            })?;
         }
     }
     Ok(())

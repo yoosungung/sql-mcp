@@ -97,7 +97,16 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
             }
         }
         if let Some(cols) = view.get("columns").and_then(|v| v.as_array()) {
+            let mut col_names: HashSet<String> = HashSet::new();
             for col in cols {
+                let cname = col.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+                    AppError::Validation(format!("view {name}: column missing name"))
+                })?;
+                if !col_names.insert(cname.to_string()) {
+                    return Err(AppError::Validation(format!(
+                        "view {name}: duplicate column {cname}"
+                    )));
+                }
                 if let Some(mappings) = col.get("mappings").and_then(|v| v.as_array()) {
                     for m in mappings {
                         let src = m.get("source").and_then(|v| v.as_str()).ok_or_else(|| {
@@ -483,5 +492,25 @@ mod tests {
             validate_links(&docs),
             Err(AppError::Validation(_))
         ));
+    }
+
+    #[test]
+    fn rejects_duplicate_view_column_name() {
+        let mut docs = load_examples();
+        for d in &mut docs {
+            if d.get("kind").and_then(|v| v.as_str()) == Some("view")
+                && d.get("name").and_then(|v| v.as_str()) == Some("orders_customer")
+            {
+                let col = d["columns"][0].clone();
+                d["columns"].as_array_mut().unwrap().push(col);
+            }
+        }
+        let err = validate_links(&docs).unwrap_err();
+        match err {
+            AppError::Validation(msg) => {
+                assert!(msg.contains("duplicate column"), "{msg}");
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
     }
 }

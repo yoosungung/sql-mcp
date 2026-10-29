@@ -86,6 +86,11 @@ def test_system_prompt_requires_sample_column_for_where_literals() -> None:
     assert "substring" in s
     assert "value side" in s
     assert "empty" in s or "row_count" in s or "0 row" in s
+    assert "never omit" in s or "do not omit" in s
+    assert '"table"' in SYSTEM or "`table`" in SYSTEM
+    assert "same args" in s or "same arguments" in s
+    assert "count" in s
+    assert "superhero" not in s
 
 
 def test_user_prompt_is_question_only() -> None:

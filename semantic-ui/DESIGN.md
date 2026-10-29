@@ -21,7 +21,7 @@
   - 테이블은 **캔버스**에 드롭한다.
   - `join`: `@xyflow/react` + `@dagrejs/dagre` JoinCanvas. 노드 위치는 저장하지 않음. 열기·드롭·조인 변경 시 dagre가 조인 그래프(source=노드, join=간선, `rankdir: LR`)로 다시 배치한다. 초기 `fitView`는 `maxZoom: 1`이라 테이블 글자가 UI 폰트를 넘기지 않고, Controls 수동 줌은 그대로다. 드롭은 source만 추가하고 조인을 만들지 않는다. 같은 table을 여러 번 드롭할 수 있다. 별칭은 **view `sources[].alias`**(table 문서 아님). 생략 시=`table`, 뷰 내 유일(중복 드롭은 `table_2` …). 캔버스 노드 선택 시 Detail **Alias**에서 그 뷰 source만 고친다. 핸들 연결 → `view.joins`(`left`/`right`=source 별칭). JoinCanvas는 헤더 아래 남는 칸을 채운다(고정 높이 없음). 드롭 하이라이트 테두리 없음. `relationship`은 선택(D29 카디널리티: many_to_one / one_to_one / one_to_many). 수동 조인의 relationship은 unset이고, 없으면 grain guard가 그 조인을 보지 않는다.
   - `union` / `minus`: 세로 스택 + 드래그 재정렬. 행 핸들은 choice 스택과 같다. 열린 뷰에 테이블을 더 드롭하면 `sources`에 붙인다(같은 table은 한 번만). 스택은 스크롤되며 개수 상한은 없다.
-- 오른쪽 **Columns**: 뷰 컬럼 목록(파생 PK · type · name). **description 없음**(`viewColumn`은 `name`+`mappings`만). 뷰 이름은 헤더에만 두고 여기엔 안 보여 준다. 헤더 **Map columns** · **Add column** · **Delete column**(좁으면 다음 줄). Add는 첫 source의 첫 물리 컬럼을 매핑한 `col`을 만들고, Delete는 선택된 뷰 컬럼을 뺀다. Map columns → ViewMappingEditor(거의 전체 화면).
+- 오른쪽 **Columns**: 뷰 컬럼 목록(파생 PK · type · name). 행 `key`는 인덱스(같은 `name`이 두 줄로 보임). **description 없음**(`viewColumn`은 `name`+`mappings`만). 뷰 이름은 헤더에만 두고 여기엔 안 보여 준다. 헤더 **Map columns** · **Add column** · **Delete column**(좁으면 다음 줄). Add는 첫 source의 첫 물리 컬럼을 매핑한 `col`을 만들고, Delete는 선택된 뷰 컬럼을 뺀다. Map columns → ViewMappingEditor(거의 전체 화면).
 - 물리 컬럼명이 `$defs/name` 밖이면 뷰 컬럼은 sanitize한 논리명, `mappings.column`은 물리명(D22).
 - 아래 Detail: Catalog/Canvas 테이블 · join 링크 · 컬럼 선택에 따라 네 패널. 헤더 한 줄에 접기 · 기본 · 확장(버튼 size 1, 글리프 18px). 테이블 상세는 세 칸 비율 **1 : 2 : 2**(헤더+PK : 컬럼 : 필터). 칸은 가로는 숨기고(`overflow-x: hidden`) 컬럼 목록만 세로 스크롤. 헤더 칸 라벨은 Name · Alias(join 뷰 source일 때만) · **Database** · PK. 컬럼 칸은 name · type · nullable · FK 표. FK 셀은 문서 `fk`(물리 DB에서 온 값)를 `table.column`으로 읽기 전용 표시하고, 없으면 `—`. `name`=`table`(물리명), `db`=`target`. 스키마·Physical 중복 표시 없음. join 선택 시 Detail은 세 줄: 시작 테이블+시작 컬럼, 연산자(`op`, 생략=`=`)+Join type(`inner`/`left`/`right`/`full` 콤보)+relationship, 끝 테이블+끝 컬럼. 헤더 **Delete**와 캔버스 Delete/Backspace는 같은 확인 뒤 `view.joins`에서 그 조인을 뺀다(로컬 간선만 숨기지 않음; 캔버스 Save가 HTTP). 조인 `left`/`right`는 source 별칭이다. 뷰 컬럼 선택 시 두 칸: **Name**(편집) / Type·PK(매핑에서 파생, 읽기 전용) · **Mappings**(source별 물리 컬럼, 테이블명은 한 줄). 스키마 `viewColumn`은 `name`+`mappings`만.
 
@@ -39,7 +39,7 @@ View 편집은 메모리 JSON; **Save**가 `POST`/`PUT /api/meta`.
 
 ### 매핑 팝업
 
-- **ViewMappingEditor**: 왼쪽 뷰 컬럼(+미매핑 테이블 컬럼 하단), 행 앞 체크박스=매핑 정본, 새 뷰는 동명 자동 매칭. 위 테이블 헤더는 source 별칭. join은 dagre 왼쪽→오른쪽, union/minus는 캔버스에서 드래그한 `sources` 순서.
+- **ViewMappingEditor**: 왼쪽 뷰 컬럼(+미매핑 테이블 컬럼 하단), 행 앞 체크박스=매핑 정본, 새 뷰는 동명 자동 매칭. 위 테이블 헤더는 source 별칭. join은 dagre 왼쪽→오른쪽, union/minus는 캔버스에서 드래그한 `sources` 순서. 행 `key`는 인덱스만(이름 입력 시 포커스 유지). 다이얼로그를 열 때만 rows를 심고, 매핑 행·미매핑 힌트를 각각 이름순으로 보여 준다(입력 중 재정렬 없음). Apply는 활성 행을 그대로 `columns`에 둔다(같은 이름을 한 컬럼으로 합치지 않음). 활성 행 이름 중복은 필드에 표시하고, 저장 전 이름을 바꾼다. 매핑이 2개 이상이면 체크박스 뒤·이름 앞에 Split 아이콘: 소스 열 기준 마지막 매핑을 새 활성 행으로 떼고(이름은 물리 컬럼 `viewColumnName`), 표시 순서는 원래 행 바로 다음(재정렬 없음).
 - **CubeMappingEditor**: 위 choice view 이름, 왼쪽 dim/fact, 드래그로 매핑 변경, 미매핑은「미매핑」구간+체크박스. 미매핑 Kind 기본값: PK·비수치는 dimension, 수치 물리 type은 fact. member `type`도 파생(id/code/date/datetime/string/quantity; PK는 `id`).
 
 데이터는 HTTP `/api`만. JSON-RPC `/mcp`는 쓰지 않는다.

@@ -156,12 +156,57 @@ export function mappingRowsFromView(view: Doc, tables: Doc[]): MappingRow[] {
   return [...active, ...hints];
 }
 
+/** Display order at dialog open: mapped rows by name, then unmapped hints by name. */
+export function mappingDisplayOrder(rows: MappingRow[]): number[] {
+  const cmp = (a: { i: number; name: string }, b: { i: number; name: string }) => {
+    const byName = a.name.localeCompare(b.name);
+    return byName !== 0 ? byName : a.i - b.i;
+  };
+  const mapped: { i: number; name: string }[] = [];
+  const hints: { i: number; name: string }[] = [];
+  rows.forEach((r, i) => {
+    const item = { i, name: r.name };
+    if (r.unmappedHint) hints.push(item);
+    else mapped.push(item);
+  });
+  mapped.sort(cmp);
+  hints.sort(cmp);
+  return [...mapped, ...hints].map((x) => x.i);
+}
+
+/** Active mapped names that appear more than once (save would be rejected). */
+export function duplicateActiveNames(rows: MappingRow[]): Set<string> {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    if (!r.active || !r.name) continue;
+    counts.set(r.name, (counts.get(r.name) || 0) + 1);
+  }
+  const dups = new Set<string>();
+  for (const [name, n] of counts) {
+    if (n > 1) dups.add(name);
+  }
+  return dups;
+}
+
+/** Move one source mapping onto a new active row. No-op when the row has fewer than two mappings. */
+export function splitMappingRow(rows: MappingRow[], index: number, source: string): MappingRow[] {
+  const row = rows[index];
+  if (!row || row.mappings.length < 2) return rows;
+  const mapping = row.mappings.find((m) => m.source === source);
+  if (!mapping) return rows;
+  const used = new Set(rows.map((r) => r.name).filter(Boolean));
+  const name = viewColumnName(mapping.column, used);
+  return rows
+    .map((r, i) => (i === index ? { ...r, mappings: r.mappings.filter((m) => m.source !== source) } : r))
+    .concat([{ active: true, name, mappings: [{ ...mapping }] }]);
+}
+
 export function applyMappingRows(view: Doc, rows: MappingRow[]): Doc {
   return {
     ...view,
     columns: rows
       .filter((r) => r.active && r.name && r.mappings.length)
-      .map((r) => ({ name: r.name, mappings: r.mappings })),
+      .map((r) => ({ name: r.name, mappings: r.mappings.map((m) => ({ ...m })) })),
   };
 }
 

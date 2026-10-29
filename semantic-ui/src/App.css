@@ -299,6 +299,9 @@ body { margin: 0; }
   gap: 8px 10px;
   align-items: center;
 }
+.split-glyph {
+  display: block;
+}
 .map-select, .drop-cell {
   width: 100%;
   min-height: 28px;

@@ -902,6 +902,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_view_rejects_duplicate_column_as_validation() {
+        let store = mem().await;
+        for path in [
+            include_str!("../../../semantic/examples/tables/customer.json"),
+            include_str!("../../../semantic/examples/tables/region_codes.json"),
+            include_str!("../../../semantic/examples/tables/status_codes.json"),
+            include_str!("../../../semantic/examples/tables/orders.json"),
+            include_str!("../../../semantic/examples/tables/orders_month.json"),
+            include_str!("../../../semantic/examples/views/orders_customer.json"),
+        ] {
+            store
+                .create(serde_json::from_str(path).unwrap())
+                .await
+                .unwrap();
+        }
+        let mut view = store.get("view", "orders_customer").await.unwrap();
+        let col = view["columns"][0].clone();
+        view["columns"].as_array_mut().unwrap().push(col);
+        let err = store
+            .update("view", "orders_customer", view)
+            .await
+            .unwrap_err();
+        match err {
+            AppError::Validation(msg) => {
+                assert!(msg.contains("duplicate column"), "{msg}");
+            }
+            other => panic!("expected Validation, got {other}"),
+        }
+    }
+
+    #[tokio::test]
     async fn examples_roundtrip() {
         let store = mem().await;
         for path in [

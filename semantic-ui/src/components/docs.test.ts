@@ -4,9 +4,12 @@ import {
   autoMatchColumns,
   autoMatchColumnsForSources,
   draftView,
+  duplicateActiveNames,
+  mappingDisplayOrder,
   mappingRowsFromView,
   mappingSourceColumns,
   physicalTableDoc,
+  splitMappingRow,
   suggestMemberKind,
   suggestMemberType,
 } from "./docs";
@@ -92,6 +95,81 @@ describe("autoMatch / mapping rows", () => {
     expect(applied.columns?.some((c) => c.name === "name")).toBe(true);
   });
 
+  it("splits one source mapping into a new active column", () => {
+    const rows = splitMappingRow([
+      {
+        active: true,
+        name: "zip_code",
+        mappings: [
+          { source: "zip_code", column: "zip_code" },
+          { source: "member", column: "zip" },
+        ],
+      },
+    ], 0, "member");
+    expect(rows).toEqual([
+      {
+        active: true,
+        name: "zip_code",
+        mappings: [{ source: "zip_code", column: "zip_code" }],
+      },
+      {
+        active: true,
+        name: "zip",
+        mappings: [{ source: "member", column: "zip" }],
+      },
+    ]);
+  });
+
+  it("does not split the last mapping on a row", () => {
+    const rows = [
+      { active: true, name: "id", mappings: [{ source: "account", column: "id" }] },
+    ];
+    expect(splitMappingRow(rows, 0, "account")).toEqual(rows);
+  });
+
+  it("suffixes the split column name when the physical name is already used", () => {
+    const rows = splitMappingRow([
+      {
+        active: true,
+        name: "id",
+        mappings: [
+          { source: "account", column: "id" },
+          { source: "bill_to", column: "id" },
+        ],
+      },
+    ], 0, "bill_to");
+    expect(rows[1]?.name).toBe("id_2");
+    expect(rows[1]?.mappings).toEqual([{ source: "bill_to", column: "id" }]);
+  });
+
+  it("does not merge active rows that share a view column name", () => {
+    const view: Doc = {
+      kind: "view",
+      name: "v",
+      sources: [
+        { kind: "table", table: "budget" },
+        { kind: "table", table: "event" },
+      ],
+      columns: [],
+    };
+    const applied = applyMappingRows(view, [
+      {
+        active: true,
+        name: "event_status",
+        mappings: [{ source: "budget", column: "event_status" }],
+      },
+      {
+        active: true,
+        name: "event_status",
+        mappings: [{ source: "event", column: "status" }],
+      },
+    ]);
+    expect(applied.columns).toEqual([
+      { name: "event_status", mappings: [{ source: "budget", column: "event_status" }] },
+      { name: "event_status", mappings: [{ source: "event", column: "status" }] },
+    ]);
+  });
+
   it("keeps union mapping columns in sources drag order", () => {
     const view: Doc = {
       kind: "view",
@@ -147,6 +225,40 @@ describe("autoMatch / mapping rows", () => {
       { source: "account", column: "name" },
       { source: "bill_to", column: "name" },
     ]);
+  });
+
+  it("orders mapped rows by name then unmapped hints by name", () => {
+    const rows = mappingRowsFromView({
+      kind: "view",
+      name: "v",
+      sources: [{ kind: "table", table: "account" }],
+      columns: [
+        { name: "zebra", mappings: [{ source: "account", column: "id" }] },
+        { name: "apple", mappings: [{ source: "account", column: "name" }] },
+      ],
+    }, [account]);
+    expect(rows.map((r) => r.name)).toEqual(["zebra", "apple"]);
+    expect(mappingDisplayOrder(rows).map((i) => rows[i].name)).toEqual(["apple", "zebra"]);
+  });
+
+  it("keeps unmapped hints after mapped rows even when the hint name sorts first", () => {
+    const rows = mappingRowsFromView({
+      kind: "view",
+      name: "v",
+      sources: [{ kind: "table", table: "account" }],
+      columns: [{ name: "name", mappings: [{ source: "account", column: "name" }] }],
+    }, [account]);
+    expect(mappingDisplayOrder(rows).map((i) => rows[i].name)).toEqual(["name", "id"]);
+  });
+
+  it("flags duplicate active names only", () => {
+    const dups = duplicateActiveNames([
+      { active: true, name: "id", mappings: [] },
+      { active: true, name: "id", mappings: [] },
+      { active: false, name: "id", mappings: [], unmappedHint: true },
+      { active: true, name: "name", mappings: [] },
+    ]);
+    expect([...dups]).toEqual(["id"]);
   });
 });
 

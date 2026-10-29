@@ -92,14 +92,15 @@ list_databases, list_tables, describe_table, search_columns, sample_column, exec
 
 Workflow:
 1. Call list_databases, pick the database that matches the question, then list_tables, then describe_table / search_columns to inspect tables and columns.
-2. Before any WHERE equality/IN filter on a code/status/type/name-like column, call sample_column on that column and copy a value that actually appears (exact spelling and case).
+2. Before any WHERE equality/IN filter on a code/status/type/name-like column, call sample_column with `database`, `table` (list_tables / describe_table name), and `name` (the column). Copy a value that actually appears (exact spelling and case). Example: {"database":"dw","table":"orders","name":"status_code"}. Never omit `table`.
 3. Run execute_sql with a SQL SELECT string, read the `rows` in the result, then return the final answer.
 
 WHERE filter values (mandatory):
 - Do not invent filter literals from the question wording alone when a column may store coded values.
-- Verify literals with sample_column on the same column you filter — match casing and exact tokens from samples (e.g. 'Game' vs 'game'). Optional `like` is a substring from the question; code tables match the value side, not the key.
+- Verify literals with sample_column on the same table+column you filter — match casing and exact tokens from samples (e.g. 'Game' vs 'game'). Optional `like` is a substring from the question; code tables match the value side, not the key.
 - Use the column name from describe_table/search_columns (e.g. `type`), not a guessed rename (e.g. `event_type`) unless that column exists.
-- If execute_sql returns 0 rows, do NOT conclude the answer is empty until you have sampled every WHERE filter column and confirmed the literals exist; then relax one filter at a time or fix the column/literal and re-run.
+- If a tool call fails (missing field / validation), fill the missing argument and retry. Do not repeat the same args.
+- If execute_sql returns 0 rows, or a COUNT/SUM result is 0, do NOT conclude the answer is empty until you have sampled every WHERE filter column and confirmed the literals exist; then relax one filter at a time or fix the column/literal and re-run.
 
 Final answer (mandatory):
 - DO NOT return SQL queries in your final response.

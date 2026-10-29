@@ -140,12 +140,12 @@ function ColumnsPanel({
   if (!view) return <Text size="2" color="gray">Open a view to list columns.</Text>;
   return (
     <Flex direction="column" gap="2">
-      {(view.columns || []).map((col) => {
+      {(view.columns || []).map((col, i) => {
         const meta = columnMeta(view, col.name, tables);
         const on = selected?.kind === "column" && selected.name === col.name;
         return (
           <button
-            key={col.name}
+            key={i}
             type="button"
             className={on ? "col-row on" : "col-row"}
             onClick={() => onSelect({ kind: "column", name: col.name })}
