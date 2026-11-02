@@ -1,5 +1,7 @@
 # sql-mcp
 
+[English](README.md)
+
 AI 코딩 에이전트(Cursor, Claude 등)가 **데이터 웨어하우스(DW)** 를 시맨틱 계층으로 질의하게 해주는 MCP 서버입니다.
 
 테이블이 수십·수백 개일 때 물리 스키마를 그대로 넘기면 에이전트가 길을 잃기 쉽습니다. sql-mcp는 table → view → cube → metric/segment 메타를 등록한 뒤, 에이전트가 **시맨틱 SQL**만 쓰면 서버가 물리 SELECT로 컴파일해 실행합니다. **테이블이 대략 100개 이상**인 DW에서 특히 효과가 큽니다.

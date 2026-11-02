@@ -12,7 +12,7 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
 |------|------|------|
 | `AGENTS.md` (이 파일, 정본) ← `CLAUDE.md`, `GEMINI.md` 심볼릭 | 수행 방법 + 문서 레이아웃 + 현황 | 루트 |
 | `ARCHITECTURE.md` | **계약사항(불변 규칙)** + 컴포넌트 *간* 인터페이스 형태(스키마·레이아웃·이벤트) | 루트 |
-| `README.md` | **사용자** 온보딩: Cursor/Claude 등에 설치 · 메타 구성 · DW 질의 (기여자 온보딩 아님) | 루트 |
+| `README.md` · `README.ko.md` | **사용자** 온보딩 (영어 · 한국어): Cursor/Claude 등에 설치 · 메타 구성 · DW 질의 (기여자 온보딩 아님). 내용은 같고 언어만 다르다. 한쪽을 고치면 다른 쪽도 맞춘다 | 루트 |
 | `ROADMAP.md` | 수행 계획(마일스톤·순서·미결정 항목) | 루트 |
 | `<comp>/DESIGN.md` | 컴포넌트 *내부* 설계 + `## Commands` (빌드/실행/테스트) | `server/` (M1+), `semantic/`, `client/`, `semantic-ui/`. 조회 Admin API는 취소. 작성 HTTP `/api`는 D30 |
 | `deploy/SETUP.md` | 배포 런북 | `deploy/` |
@@ -29,12 +29,13 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
 | `client/docs/change_semantic.md` | BIRD eval 기반 시맨틱 메타 수정 계획(결정됨; `generate_meta`+`semantic_plan.yaml`+`enrich_meta_from_qa`) | `client/docs/` |
 | `client/docs/semantic_layer_ui.svg` | 시맨틱 작성 UI 레이아웃 초안(타깃 선택 · Physical/Cubes · 보기 전용 다이어그램 · meta JSON 편집) | `client/docs/` |
 | `semantic-ui/DESIGN.md` | 작성 화면(Vite React). HTTP `/api` · 정적 `GET /ui` | `semantic-ui/` |
+| `agensi/sql-mcp/` | Agensi 무료 스킬 원본(`SKILL.md` + 설치 안내). 설치 절차는 `README.md`와 맞춘다. `agensi/LISTING.md`는 등록 문구(ZIP에 넣지 않음) | `agensi/` |
 
 #### 규칙:
 
 - **ARCHITECTURE.md §1 (계약) vs §2 이후 (형태).** §1은 "지켜야 하는 규칙(왜)" — 짧고 단정적. §2 이후는 "그 규칙을 구현하는 모양(어떻게)" — 스키마·필드·이벤트 목록. 규칙이 바뀌면 §1을 먼저 고치고 §2 이후를 따라 고친다. 두 부분을 다른 파일로 쪼개면 동기화 부담만 늘어 단일 문서로 둔다.
 - **ARCHITECTURE.md vs `<comp>/DESIGN.md`.** ARCHITECTURE는 컴포넌트 *간*, 서브폴더 DESIGN은 해당 컴포넌트 *내부*. 두 쪽에 같은 내용을 적지 않는다.
-- **README.md vs ARCHITECTURE.md / DESIGN.md.** README는 **인간 사용자**(MCP 설치·메타·DW 질의)용이다. 기여자 온보딩은 이 파일. 계약·내부 설계는 README에 복사하지 않고 [ARCHITECTURE.md](ARCHITECTURE.md)·`<comp>/DESIGN.md`로 **링크만** 한다. 
+- **README.md · README.ko.md vs ARCHITECTURE.md / DESIGN.md.** README는 **인간 사용자**(MCP 설치·메타·DW 질의)용이다. 영어가 `README.md`, 한국어가 `README.ko.md`이며 내용은 같다. 기여자 온보딩은 이 파일. 계약·내부 설계는 README에 복사하지 않고 [ARCHITECTURE.md](ARCHITECTURE.md)·`<comp>/DESIGN.md`로 **링크만** 한다. 
 - **배포 가능한 패키지·실행 하네스**에는 README를 둘 수 있다 — 해당 디렉터리 **로컬 사용법만**.
 - 파일이 새로 생기거나 용도가 바뀌면 위 표를 즉시 갱신한다.
 - 배포 런북은 `deploy/SETUP.md`, Kustomize 베이스는 `deploy/k8s/base/`, CI는 `.github/workflows/ci.yml`, CD는 `.github/workflows/cd.yml` (Release `current`). 빈 stub을 만들지 않는다.
