@@ -32,7 +32,7 @@ View 편집은 메모리 JSON; **Save**가 `POST`/`PUT /api/meta`.
 - 왼쪽: 저장된 view 목록. 뷰 이름을 눌러도 큐브를 열지 않는다(한 뷰가 여러 큐브에 속할 수 있음). 뷰 Detail만 연다. 뷰는 테이블과 같이 **choice 스택으로 드래그**한다. **Add to cube stack** 버튼·체크박스는 없다.
 - 가운데 **CubeHeader**(이름 · New / Open / Rename / Save / Delete) + choice 스택(드래그 우선순위; 마지막=정본 `cube.view`). Open은 저장된 cube 목록 대화상자. 행 왼쪽 핸들은 위아래 화살표+가로줄(순서 변경). 스택 행 ×는 해당 뷰만 `choice`/`view`에서 뺀다(문서 삭제 아님). 스택은 스크롤된다(행 수 상한 없음).
 - **뷰 Delete는 큐브를 지우지 않는다.** 해당 뷰를 cube `choice`/`view`에서 빼고 캔버스 스택에서 즉시 제거한다. 큐브 Delete만 cube·metric·segment를 지운다.
-- 오른쪽: dimension · fact · metric · segment 목록. Columns와 같은 `.col-row`(36px PK · 72px type · 이름 1fr, 이름은 한 줄·말줄임). PK는 멤버 `column`이 뷰 PK일 때. dim `type`은 `id`/`code`/`date`/`time`/`datetime`/`string`. 위 **Map members** · **Add metric** · **Add segment**. Map members → CubeMappingEditor. 행 Kind는 dimension/fact 콤보.
+- 오른쪽: dimension · fact · metric · segment 목록. Columns와 같은 `.col-row`(36px PK · 72px type · 이름 1fr, 이름은 한 줄·말줄임). PK는 멤버 `column`이 뷰 PK일 때. dim `type`은 `id`/`code`/`date`/`time`/`datetime`/`string`. 위 **Map members** · **Add dimension** · **Add fact** · **Add metric** · **Add segment**. Map members → CubeMappingEditor(뷰 컬럼 매핑). Add dimension/fact는 `column` 없는 expression 초안(이름 `dimension`/`fact`, dim `type=string` · fact `type=quantity`). 행 Kind는 dimension/fact 콤보. Map members Apply는 expression-only 멤버를 유지한다.
 - 아래: 왼쪽에서 **뷰**를 고르면 Detail 2단 — 왼쪽 combine·description, 오른쪽 매핑 컬럼(`name` · 파생 물리 `type` · PK). `viewColumn`은 `name`+`mappings`만이고 type은 table `columns[].type`을 mappings로 파생한다. 큐브(description · grain · role) 또는 멤버 타입별 Detail. dim/fact Detail **Name**은 별도 Rename UI 없이 **Apply**로 큐브 초안에 반영(헤더 **Save**가 `POST`/`PUT`). metric/segment Detail **Name**은 **Save** 때 `/api/meta`(이름 바뀌면 `PUT` 옛 name + 새 `body.name`). dim/fact는 type enum, column XOR expression, encryption, dim `as_code`, fact `additive`, `role`. metric은 expression · aggregation · (`group`이면 `group_by`) · filter(`null` 허용) · role. segment는 filter · role.
 - cube 로드 시 붙은 metric/segment를 함께 읽고, 큐브 헤더 Save 시 cube 초안과 함께 저장.
 - **검증은 HTTP `/api/meta`.** 클라에서 스키마를 다시 검사하거나 Save를 막지 않는다. 400 `{ code, message }`는 상단 배너(code · 본문 · 닫기). Map members의 PK 디멘션 `type`은 `id`다. 뷰 Delete는 큐브를 `view: ""`로 고치지 않는다. 참조 중이면 서버 메시지를 보여 준다. Rename 후 Save는 `PUT /api/meta/{kind}/{이전이름}`에 새 `body.name`을 보낸다(view/cube/metric/segment). 서버가 저장 id를 유지하므로 큐브 스택을 클라에서 다시 쓰지 않는다.
@@ -54,7 +54,7 @@ BIRD `superhero` 타깃. 만든 문서만 지운다. sql-mcp HTTP `:8090` + `npm
 3. **컬럼 매핑** — 각 뷰 Map columns에서 매핑 확인·Apply 후 Save.
 4. **큐브 만들기** — Cubes 탭 → 저장한 view를 choice 스택으로 드래그 → Save.
 5. **큐브 디멘션·팩트 매핑** — **Map members**. 체크한 행이 dimension/fact, Apply 후 Members의 Dimensions / Facts.
-6. **metric·segment 만들기** — Members에서 추가 후 Detail Expression / Filter, cube Save.
+6. **expression dim/fact · metric·segment 만들기** — Members에서 Add dimension/fact/metric/segment 후 Detail Expression / Filter, cube Save.
 7. **뷰 리네임** — 뷰 Rename 후 Save.
 8. **큐브 리네임** — 큐브 Rename 후 Save.
 9. **열어서 보기** — Open으로 저장한 뷰·큐브를 다시 연다.
@@ -65,7 +65,7 @@ BIRD `superhero` 타깃. 만든 문서만 지운다. sql-mcp HTTP `:8090` + `npm
 재현 오류 (superhero 12단계 사이클):
 - ~~헤더 아래 join/union/minus 버튼 중복~~ → 헤더 View type만. 드롭은 캔버스.
 - ~~Map members 체크가 바로 풀린다~~ → 다이얼로그를 열 때만 rows를 심음. Kind는 dimension/fact 콤보.
-- Add metric / Add segment.
+- Add dimension / Add fact / Add metric / Add segment.
 - Rename 후 옛 문서 `DELETE`.
 
 ## Commands

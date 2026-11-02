@@ -787,6 +787,7 @@ function MemberDetail({
               delete next.expression;
               setLocal(next);
             }}
+            aria-label="Member column"
           />
         </Field>
         <Field label="Expression">
@@ -799,6 +800,7 @@ function MemberDetail({
               delete next.column;
               setLocal(next);
             }}
+            aria-label="Member expression"
           />
         </Field>
         <Field label="Encryption">

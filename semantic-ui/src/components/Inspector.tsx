@@ -17,6 +17,8 @@ export function Inspector({
   onSelect,
   onOpenViewMapping,
   onOpenCubeMapping,
+  onAddDimension,
+  onAddFact,
   onAddMetric,
   onAddSegment,
   onChangeView,
@@ -34,6 +36,8 @@ export function Inspector({
   onSelect: (pick: Selection) => void;
   onOpenViewMapping: () => void;
   onOpenCubeMapping: () => void;
+  onAddDimension?: () => void;
+  onAddFact?: () => void;
   onAddMetric?: () => void;
   onAddSegment?: () => void;
   onChangeView?: (view: Doc) => void;
@@ -93,6 +97,8 @@ export function Inspector({
             {tab === "cubes" && cube && (
               <>
                 <Button size="1" variant="soft" onClick={onOpenCubeMapping}>Map members</Button>
+                <Button size="1" variant="soft" onClick={onAddDimension}>Add dimension</Button>
+                <Button size="1" variant="soft" onClick={onAddFact}>Add fact</Button>
                 <Button size="1" variant="soft" onClick={onAddMetric}>Add metric</Button>
                 <Button size="1" variant="soft" onClick={onAddSegment}>Add segment</Button>
               </>

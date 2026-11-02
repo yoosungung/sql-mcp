@@ -331,7 +331,7 @@ export function detailDoc(
   return view || table;
 }
 
-export function uniqueName(base: string, docs: Doc[]): string {
+export function uniqueName(base: string, docs: { name: string }[]): string {
   if (!docs.some((d) => d.name === base)) return base;
   let n = 2;
   while (docs.some((d) => d.name === `${base}_${n}`)) n += 1;

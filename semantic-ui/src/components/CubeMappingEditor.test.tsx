@@ -88,4 +88,35 @@ describe("CubeMappingEditor", () => {
     });
     expect(onApply.mock.calls[0][0].dimensions).toEqual([]);
   });
+
+  it("keeps expression-only members when applying column maps", async () => {
+    const user = userEvent.setup();
+    const onApply = vi.fn();
+    const withExpr: Doc = {
+      ...cube,
+      dimensions: [
+        {
+          name: "full_name",
+          description: "",
+          type: "string",
+          expression: "first_name || ' ' || last_name",
+          encryption: false,
+        },
+      ],
+    };
+    render(
+      <Theme>
+        <CubeMappingEditor open onOpenChange={() => {}} cube={withExpr} views={[view]} onApply={onApply} />
+      </Theme>,
+    );
+    await user.click(await screen.findByRole("checkbox", { name: "map id" }));
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    const next = onApply.mock.calls[0][0] as Doc;
+    expect(next.dimensions?.some((m) => m.name === "id" && m.column === "id")).toBe(true);
+    expect(
+      next.dimensions?.some(
+        (m) => m.name === "full_name" && m.expression === "first_name || ' ' || last_name" && !m.column,
+      ),
+    ).toBe(true);
+  });
 });

@@ -463,6 +463,9 @@ def test_round4_logic_filter_confusion_text():
     assert "colour" in sh["skin_colour"]
     club = DOMAIN_SPECS["student_club"]["descriptions"]["club_expense"]
     assert "category" in club and "Food" in club["category"]
+    shirt = DOMAIN_SPECS["student_club"]["descriptions"]["_all"]["t_shirt_size"]
+    assert "'Medium'" in shirt and "'medium'" in shirt
+    assert "'Small'" in shirt and "'Large'" in shirt and "'X-Large'" in shirt
     segs = {s["name"]: s for s in DOMAIN_SPECS["thrombosis_prediction"]["segments"]}
     assert segs["diagnosis_aps"]["filter"] == "Diagnosis = 'APS'"
     assert segs["diagnosis_aps"]["cube"] == "throm_patient"

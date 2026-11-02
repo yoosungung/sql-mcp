@@ -90,7 +90,7 @@ D10/D11 조회 Admin API 취소는 유지한다. D30이 작성 HTTP `/api`를 �
 - [x] Columns/Column Detail은 PK · type · name · mappings. `table.table`=물리명
 - [x] View type 전환이 join 화면/`joins` 키를 맞춘다
 - [x] Map members Kind dim/fact. Member: type enum · column XOR expression · encryption · as_code · additive · role
-- [x] 큐브 Detail: description · grain · role. Add metric/segment · aggregation/`group_by`/filter/`role`
+- [x] 큐브 Detail: description · grain · role. Add dimension/fact(expression 초안) · Add metric/segment · aggregation/`group_by`/filter/`role`
 - [x] Rename은 새 문서 저장 후 옛 DELETE. 마지막 뷰 Delete는 큐브를 `view: ""`로 고치지 않음
 
 ## 구현 시 작업 규칙

@@ -63,7 +63,11 @@ export function CubeMappingEditor({
       if (row.kind === "dimension") dimensions.push(member);
       else facts.push(member);
     }
-    onApply({ ...cube, dimensions, facts });
+    onApply({
+      ...cube,
+      dimensions: [...dimensions, ...expressionOnly(cube.dimensions)],
+      facts: [...facts, ...expressionOnly(cube.facts)],
+    });
     onOpenChange(false);
   }
 
@@ -191,9 +195,16 @@ function MemberRow({
   );
 }
 
+function expressionOnly(members: Member[] | undefined): Member[] {
+  return (members || []).filter(
+    (m) => Boolean((m.expression || "").trim()) && !(m.column || "").trim(),
+  );
+}
+
 function buildRows(cube: Doc, views: Doc[], tables: Doc[]): Row[] {
   const rows: Row[] = [];
   for (const d of cube.dimensions || []) {
+    if (expressionOnly([d]).length) continue;
     const byView: Record<string, string> = {};
     for (const v of views) {
       if ((v.columns || []).some((c) => c.name === d.column)) byView[v.name] = d.column || "";
@@ -206,6 +217,7 @@ function buildRows(cube: Doc, views: Doc[], tables: Doc[]): Row[] {
     });
   }
   for (const f of cube.facts || []) {
+    if (expressionOnly([f]).length) continue;
     const byView: Record<string, string> = {};
     for (const v of views) {
       if ((v.columns || []).some((c) => c.name === f.column)) byView[v.name] = f.column || "";

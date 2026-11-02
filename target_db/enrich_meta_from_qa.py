@@ -1572,6 +1572,10 @@ DOMAIN_SPECS: dict[str, dict[str, list[dict]]] = {
                 "first_name": "Member first name. Full name is first_name AND last_name (two filters, not concat).",
                 "last_name": "Member last name. Full name is first_name AND last_name (two filters, not concat).",
                 "event_name": "Event name (e.g. October Meeting, Yearly Kickoff). Distinct from type.",
+                "t_shirt_size": (
+                    "Member T-shirt size: 'Small', 'Medium', 'Large', 'X-Large' "
+                    "(exact casing; not 'medium')."
+                ),
             },
             "club_event": {
                 "type": "Event type (Meeting, etc.). Not budget category and not zip type.",

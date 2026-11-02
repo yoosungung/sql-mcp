@@ -28,6 +28,7 @@ import {
   uniqueSourceAlias,
   withChoiceStack,
   type Doc,
+  type Member,
 } from "./model";
 
 export function App({ api }: { api?: AuthorApi }) {
@@ -481,6 +482,50 @@ export function App({ api }: { api?: AuthorApi }) {
     setSelection({ kind: "cube", name });
   }
 
+  function cubeMemberNames(): { name: string }[] {
+    if (!liveCube) return [];
+    return [
+      ...(liveCube.dimensions || []),
+      ...(liveCube.facts || []),
+      ...metricDrafts,
+      ...segmentDrafts,
+    ];
+  }
+
+  function addDimension() {
+    if (!liveCube) return;
+    const name = uniqueName("dimension", cubeMemberNames());
+    const member: Member = {
+      name,
+      description: "",
+      type: "string",
+      expression: "",
+      encryption: false,
+    };
+    setCubeDraft({
+      ...liveCube,
+      dimensions: [...(liveCube.dimensions || []), member],
+    });
+    setSelection({ kind: "dimension", name });
+  }
+
+  function addFact() {
+    if (!liveCube) return;
+    const name = uniqueName("fact", cubeMemberNames());
+    const member: Member = {
+      name,
+      description: "",
+      type: "quantity",
+      expression: "",
+      encryption: false,
+    };
+    setCubeDraft({
+      ...liveCube,
+      facts: [...(liveCube.facts || []), member],
+    });
+    setSelection({ kind: "fact", name });
+  }
+
   function addMetric() {
     if (!liveCube) return;
     const name = uniqueName("metric", [
@@ -668,6 +713,8 @@ export function App({ api }: { api?: AuthorApi }) {
             onSelect={setSelection}
             onOpenViewMapping={() => setMappingEditor({ mode: "view" })}
             onOpenCubeMapping={() => setMappingEditor({ mode: "cube" })}
+            onAddDimension={addDimension}
+            onAddFact={addFact}
             onAddMetric={addMetric}
             onAddSegment={addSegment}
             onChangeView={changeView}

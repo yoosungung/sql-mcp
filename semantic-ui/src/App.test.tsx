@@ -1067,6 +1067,68 @@ describe("production shell", () => {
     expect(screen.getByText(/used by view/i)).toBeTruthy();
   });
 
+  it("adds an expression dimension and fact on an open cube", async () => {
+    const updated: Doc[] = [];
+    const user = userEvent.setup();
+    const columns = [{ name: "id", type: "int", nullable: false }];
+    render(
+      <App
+        api={
+          {
+            ...api([
+              { kind: "table", name: "account", target: "bird", table: "account", columns, pk: ["id"] },
+              {
+                kind: "view",
+                name: "accounts",
+                target: "bird",
+                combine: "join",
+                description: "",
+                sources: [{ kind: "table", table: "account" }],
+                columns: [{ name: "id", mappings: [{ source: "account", column: "id" }] }],
+                joins: [],
+              },
+              { kind: "cube", name: "accounts_cube", target: "bird", view: "accounts", description: "", dimensions: [], facts: [] },
+            ]),
+            update: async (_kind: string, _name: string, doc: Doc) => {
+              updated.push(doc);
+            },
+          } as unknown as AuthorApi
+        }
+      />,
+    );
+    await user.click(await screen.findByRole("tab", { name: /Cubes/ }));
+    await openSavedCube(user, "accounts_cube");
+    await user.click(screen.getByRole("button", { name: "Add dimension" }));
+    expect(screen.getByRole("heading", { name: /dimension · / })).toBeTruthy();
+    const dimName = screen.getByRole("textbox", { name: "Member name" });
+    await user.clear(dimName);
+    await user.type(dimName, "full_name");
+    await user.type(screen.getByRole("textbox", { name: "Member expression" }), "first_name || ' ' || last_name");
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await user.click(screen.getByRole("button", { name: "Add fact" }));
+    expect(screen.getByRole("heading", { name: /fact · / })).toBeTruthy();
+    const factName = screen.getByRole("textbox", { name: "Member name" });
+    await user.clear(factName);
+    await user.type(factName, "qty");
+    await user.type(screen.getByRole("textbox", { name: "Member expression" }), "1");
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await user.click(within(screen.getByRole("region", { name: "Cube header" })).getByRole("button", { name: "Save" }));
+    expect(
+      updated.some(
+        (d) =>
+          d.kind === "cube" &&
+          (d.dimensions || []).some((m) => m.name === "full_name" && m.expression === "first_name || ' ' || last_name" && !m.column),
+      ),
+    ).toBe(true);
+    expect(
+      updated.some(
+        (d) =>
+          d.kind === "cube" &&
+          (d.facts || []).some((m) => m.name === "qty" && m.expression === "1" && !m.column),
+      ),
+    ).toBe(true);
+  });
+
   it("adds a metric and a segment on an open cube", async () => {
     const created: { kind?: string; cube?: string; expression?: string }[] = [];
     const user = userEvent.setup();
