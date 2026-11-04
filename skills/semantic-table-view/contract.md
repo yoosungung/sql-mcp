@@ -71,10 +71,19 @@
    - **라벨·측정값 우선:** 룩업의 표시 컬럼(`publisher_name`, `alignment`, `power_name` 등), 허브 자연키/이름, fact 수치.
    - **raw FK/PK id**는 허브 식별에 필요한 최소만(예: `hero_id` 또는 `id`). 모든 `*_id`를 view 컬럼으로 나열하지 않는다.
    - 조인 키 동치류: prune에 필요하면 `mappings`에 여러 source를 넣되, **바깥 `name`은 에이전트가 쓸 라벨/허브 키**로 둔다. 비-루트 범용 `"id"`를 별도 컬럼으로 노출하지 않아도 된다.
-6. **허브 우선 `sources` 순서:**
+   - **엔티티 한정 (agent-surface 평탄 이름):** join view에 여러 source를 펼치면, DW 에이전트는 물리 출처보다 **바깥 `columns[].name` 목록**으로 NL→컬럼을 고른다. 물리명이 `notes`·`amount`·`status`·`type`·`location`·`approved`·`date`처럼 **여러 엔티티에 쓰일 수 있는 공통명사**이면, 논리 이름을 엔티티로 한정한다(예: `order_notes` / `shipment_notes`, `order_amount` / `payment_amount`, `order_status` / `customer_status`). 허브·도메인에서 이미 유일한 이름(`first_name`, `order_id`, `sale_amount`)에는 접두를 억지로 붙이지 않는다. 물리 컬럼명·`mappings.column`은 그대로 두고 **논리 `name`만** 바꾼다. dim/fact는 이 논리 이름을 따른다.
+6. **속성 동치 다중 매핑 (조인 키 아님):**
+   - FK(또는 view `joins` 간선)로 연결된 두 source에, **조인 `on` 컬럼이 아닌** 컬럼이 같은 업무 의미를 담는 경우가 있다(부모 상태·유형·이름을 자식에 복사한 형태).
+   - **판정 (이름만으로 조인 간선을 새로 만들지 말 것 — 이미 있는 간선 위에서만):**
+     1. 물리 샘플: 해당 join으로 붙였을 때 두 컬럼 값이 **항상(또는 결측만 제외하고) 일치**, 또는
+     2. Q-SQL/증거가 같은 개념을 **서로 다른 물리 컬럼**으로 읽음(한쪽 테이블만 FROM해도 됨).
+   - 그때 view에는 컬럼을 둘로 쪼개지 말고 **논리 컬럼 하나**에 `mappings`를 **양쪽 source**에 넣는다. `mappings[0]`은 허브(또는 속성의 정본 쪽 — 보통 부모/룩업).
+   - 값이 어긋나는 행이 있으면 동치로 묶지 말고 별도 컬럼(접두·출처 구분)으로 둔다.
+   - 조인 키 동치(`id`/`link_to_*` 등)와 **구분:** 키 동치 = prune용 키, 속성 동치 = 복제된 비키 속성.
+7. **허브 우선 `sources` 순서:**
    - `joins`가 있으면 `sources[0]`은 조인 그래프의 **허브**(차수가 가장 높은 중심 테이블). 그 다음 말단·룩업.
    - 공유 조인 키의 `mappings[0]`도 허브. identity view는 source 1개가 허브다.
-7. **표면 모드 (에이전트 UX vs 그레인):**
+8. **표면 모드 (에이전트 UX vs 그레인):**
    - **agent-surface (기본 초안):** 타깃당 **질의 표면 view(+cube) 하나**를 우선한다. 스키마 FK로 연결된 룩업·브릿지를 한 join view에 넣어도 된다. 자식/브릿지 조인에는 `relationship: "one_to_many"`를 반드시 적는다. (`SQL_MCP_GRAIN_GUARD`가 꺼진 전제.)
    - **grain-split:** `SQL_MCP_GRAIN_GUARD`가 켜졌거나 eval이 팬/캐즘 FAIL을 내면, 형제 팩트·브릿지를 **허브별 view/cube로 분리**한다 — [semantic-from-eval](../semantic-from-eval/methodology.md).
 
@@ -87,6 +96,8 @@
 - [ ] view `sources[].table`이 카탈로그 table `name`과 일치하고, `alias`(생략 시=`table`)는 view 내 유일
 - [ ] join `on` 컬럼이 각 source에 존재
 - [ ] 노출 컬럼이 라벨·측정 위주(불필요한 raw `*_id` 남발 없음)
+- [ ] 평탄 view에서 공통명사 논리 이름은 엔티티로 한정됨(물리명 유지; 유일하면 접두 불필요)
+- [ ] FK로 연결된 테이블 쌍에 값·증거가 같은 비키 속성이 있으면 한 view 컬럼에 다중 `mappings`(속성 동치)
 - [ ] `joins`가 있으면 `sources[0]`·공유 키 `mappings[0]`이 허브
 - [ ] union/minus: 모든 mapping이 전 source를 덮음
 - [ ] 필터 식별자는 물리 컬럼
