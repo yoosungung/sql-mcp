@@ -31,7 +31,7 @@ def default_qa_path() -> Path:
     return repo_root() / "client" / "bird" / "bird_qa" / "mini_dev_sqlite.json"
 
 
-# config.bird.toml --small 타깃과 맞춤
+# bird/config.bird.toml --small 타깃과 맞춤
 SMALL_DBS = frozenset(
     {
         "superhero",

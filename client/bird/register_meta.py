@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""client/bird/*/meta/*.json → sql-mcp HTTP /api/meta.
+"""bird/*/meta/*.json → sql-mcp HTTP /api/meta.
 
 view update 시 cube가 view를 FK로 참조하므로, 의존 metric/cube를 잠시 지웠다가
 view 교체 후 다시 넣는다.
 
 예:
-  SQL_MCP_URL=http://127.0.0.1:8090 python3 client/bird/register_meta.py
-  python3 client/bird/register_meta.py --db superhero --prune
+  SQL_MCP_URL=http://127.0.0.1:8090 python3 bird/register_meta.py
+  python3 bird/register_meta.py --db superhero --prune
 """
 
 from __future__ import annotations
@@ -201,7 +201,7 @@ def prepare_view_replace(
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--url", default=None)
-    p.add_argument("--db", help="only this db_id folder under client/bird/")
+    p.add_argument("--db", help="only this db_id folder under bird/")
     p.add_argument(
         "--prune",
         action="store_true",

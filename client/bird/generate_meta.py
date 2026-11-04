@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""client/bird/{db}/*.sqlite → meta/{name}.json (table|view|cube|metric 골격).
+"""bird/{db}/*.sqlite → meta/{name}.json (table|view|cube|metric 골격).
 
 물리 카탈로그는 sqlite에서 직접 읽고, MCP는 쓰지 않는다.
 `semantic_plan.yaml`이 있으면 허브(팩트)마다 view+cube 하나(`{db}_all` 없음).

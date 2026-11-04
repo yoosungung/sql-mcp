@@ -11,6 +11,7 @@ client/bird/**
 !client/bird/**/semantic_plan.yaml
 !client/bird/README.md
 !client/bird/env.bird.example
+!client/bird/config.bird.toml
 client/.venv/
 client/eval/
 .DS_Store

@@ -1,32 +1,34 @@
 # client — LangChain + sql-mcp (BIRD)
 
-BIRD Mini-Dev 질문 한 건을 골라 LangChain v1 `create_agent()`로 sql-mcp MCP 툴을 호출하는 예제입니다. **sql-mcp는 별도로 HTTP 기동**하고, client는 연결만 합니다.
+BIRD Mini-Dev 질문 한 건을 골라 LangChain v1 `create_agent()`로 sql-mcp MCP 툴을 호출하는 예제입니다. **sql-mcp는 별도로 HTTP 기동**하고, 이 패키지는 연결만 합니다.
+
+에이전트 가이드: [AGENTS.md](AGENTS.md). 계획: [ROADMAP.md](ROADMAP.md). 내부 설계: [DESIGN.md](DESIGN.md).
 
 ## 준비
 
 ```bash
-# 1) SQLite 타깃 + 질문-SQL JSON
-./client/bird/fetch_bird.sh --small
-# → client/bird/<db>/*.sqlite
-# → client/bird/bird_qa/mini_dev_sqlite.json
+# 1) SQLite 타깃 + 질문-SQL JSON (client/ 기준)
+./bird/fetch_bird.sh --small
+# → bird/<db>/*.sqlite
+# → bird/bird_qa/mini_dev_sqlite.json
 
 # 2) Python 3.12+
-uv venv --python 3.12 client/.venv   # 또는 python3.12 -m venv client/.venv
-source client/.venv/bin/activate
-pip install -r client/requirements.txt
-# 기본 모델: Ollama gemma4:e2b (ollama serve 필요). OpenAI면 OPENAI_API_KEY + --model openai:…
+uv venv --python 3.12 .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+# 기본 모델: Ollama gemma4:e2b. OpenAI면 OPENAI_API_KEY + --model openai:…
 ```
 
 ## 실행
 
 ```bash
-# 터미널 1 (저장소 루트) — sql-mcp HTTP
-set -a && source ./client/bird/env.bird.example && set +a
-export SQL_MCP_CONFIG=./server/examples/config.bird.toml
-cargo run -p sql-mcp
+# 터미널 1 — sql-mcp HTTP (env가 config·semantic.db·DSN 설정)
+set -a && source ./bird/env.bird.example && set +a
+# 모노레포 루트: cargo run -p sql-mcp
+# 분리 후: sql-mcp   # PATH 바이너리
 
 # 터미널 2
-cd client && source .venv/bin/activate
+cd client && source .venv/bin/activate   # 이미 client/면 cd 생략
 python agent_bird.py --db superhero --show-gold
 ```
 
@@ -34,16 +36,12 @@ python agent_bird.py --db superhero --show-gold
 
 ### eval.json (개선용)
 
-질문·evidence·gold SQL/행 + DW agent 실행 결과를 한 JSON으로 모읍니다.
-
 ```bash
-cd client && source .venv/bin/activate
-python run_eval.py --db superhero --limit 3 --skip-agent          # gold만
-python run_eval.py --url http://127.0.0.1:8090/mcp --concurrency 8  # 전체, 병렬 8
-# → client/eval/eval.json
-# 채점·문항별 md · EX FAIL SQL: DESIGN.md Commands (`write_eval_md` · `write_eval_sql.py`)
+source .venv/bin/activate
+python run_eval.py --db superhero --limit 3 --skip-agent
+python run_eval.py --url http://127.0.0.1:8090/mcp --concurrency 8
+# → eval/eval.json
+# 채점·문항별 md · EX FAIL SQL: DESIGN.md Commands
 ```
 
-Cursor/VS Code: `Debug BIRD: sql-mcp + agent`(compound) 또는 서버(`:8090`) 기동 후 `Debug client agent (BIRD HTTP)`.
-
-내부 설계·테스트: [DESIGN.md](DESIGN.md).
+모노레포 Cursor/VS Code: `Debug BIRD: sql-mcp + agent`(compound).

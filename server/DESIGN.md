@@ -11,7 +11,7 @@ MCP 서버(`sql-mcp`) 내부 설계. 컴포넌트 간 계약은 [ARCHITECTURE.md
 - **컴파일**: `pipeline` (시맨틱 SQL → 물리 SELECT). 상세 [spec.md](spec.md)
 - **방언(D21)**: 컴파일은 엔진 중립. 물리 emit·행상한·(선택) bind/날짜 rewrite만 `DialectProfile`(`TargetConfig.engine`)
 - **타깃**: 엔진 **Postgres**·**MySQL**(`sqlx` 0.9) · **SQLite**(`libsql` 로컬) · **Oracle**(`oracledb` thin, Instant Client 없음) · SELECT only · ADBC/JDBC/ODBC 비채택
-- **BIRD 예제**: SQLite·Q-SQL·시맨틱 레이어·`semantic.db` → [`client/bird/`](../client/bird/README.md). 서버 단위 테스트는 임시 SQLite.
+- **단위 테스트 타깃**: 임시 SQLite. BIRD DW agent 예제·eval은 [`client/`](../client/AGENTS.md) (이 서버 문서 밖).
 
 ## 모듈
 
@@ -115,15 +115,8 @@ cargo run -p sql-mcp -- --stdio
 # SQL_MCP_TARGET_DW_URL · SQL_MCP_TARGET_MYSQL_URL · SQL_MCP_TARGET_ORACLE_URL
 cargo test -p sql-mcp --test http_smoke -- --ignored
 
-# BIRD 예제 (client/bird 준비 후 — ../client/bird/README.md)
-# env 가 SQL_MCP_SEMANTIC_PATH=client/bird/semantic.db 를 넣는다. 제품 기본 ./data/semantic.db 와 분리.
-set -a && source ./client/bird/env.bird.example && set +a
-export SQL_MCP_CONFIG=./server/examples/config.bird.toml
-cargo run -p sql-mcp
-
-# Cursor/VS Code 디버그: Run and Debug → Debug sql-mcp (BIRD)
-# preLaunchTask `build semantic-ui` 후 CodeLLDB (.vscode/launch.json)
-# GUI 태스크는 zshrc를 안 읽으므로 PATH에 ~/.local/bin·Homebrew를 넣는다.
+# BIRD 예제로 기동하는 방법은 ../client/AGENTS.md · ../client/DESIGN.md Commands.
+# Cursor/VS Code: Debug sql-mcp (BIRD) — .vscode/launch.json (client 소유 경로).
 
 # 컨테이너·K8s: ../deploy/SETUP.md
 ```

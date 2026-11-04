@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# BIRD Mini-Dev SQLite → client/bird/<db_id>/<db_id>.sqlite
-# + 질문-SQL JSON → client/bird/bird_qa/mini_dev_sqlite.json
+# BIRD Mini-Dev SQLite → bird/<db_id>/<db_id>.sqlite
+# + 질문-SQL JSON → bird/bird_qa/mini_dev_sqlite.json
 # 기본: 공식 Alibaba minidev.zip (HF LFS는 지역에 따라 403일 수 있음)
 set -euo pipefail
 

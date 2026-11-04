@@ -2,6 +2,8 @@
 
 수행 계획·순서·미결정 항목. 일정(일/주) 추정은 두지 않는다 — 마일스톤과 의존성으로만 나눈다. 완료는 한 줄, 남은 일만 상세. 계약 본문은 [ARCHITECTURE.md](ARCHITECTURE.md).
 
+BIRD DW agent·eval 계획·게이트는 [client/ROADMAP.md](client/ROADMAP.md) (별도 repo 후보).
+
 ## 목표
 
 Rust MCP(`rmcp`) 서버: **임베디드 시맨틱 DB** + **복수 타깃 DB** 조회(SELECT) + **작성 HTTP `/api`(메타 JSON · 물리 카탈로그)**. Transport는 **일반 HTTP**(기본) + **stdio**(로컬 조회). 세션형 Streamable HTTP는 취소.
@@ -10,7 +12,7 @@ Rust MCP(`rmcp`) 서버: **임베디드 시맨틱 DB** + **복수 타깃 DB** �
 
 - M0: 문서·계약. MCP-only, 임베디드 libSQL, 일반 HTTP + stdio.
 - M1: 타깃 SELECT·탐색·메타 JSON CRUD가 일반 HTTP로 동작.
-- M2: `search_columns`(BM25/벡터/hybrid), 컴파일, CI, SQLite·BIRD `client/bird/`.
+- M2: `search_columns`(BM25/벡터/hybrid), 컴파일, CI, SQLite 타깃.
 - M3: release·컨테이너·`deploy/k8s/base/`, MySQL·Oracle, RBAC·타임아웃.
 - M4: 타입별 `meta_*`, `execute_sql`은 시맨틱 SQL만, 요약 뷰·pruning·union.
 - M5: SELECT 절 전체, 전 계층 `role`, 카탈로그 캐시·`SQL_MCP_TIMEOUT_MS`.
@@ -20,7 +22,7 @@ Rust MCP(`rmcp`) 서버: **임베디드 시맨틱 DB** + **복수 타깃 DB** �
 - D7: release 바이너리 + 컨테이너. Kustomize는 `deploy/k8s/base/`.
 - D9: dimension `as_code`는 집계 후 `{dim}__value`.
 - D12: JSON 교환 `document.schema.json`, 저장은 `meta_*`, 검색은 FTS5 + embedding.
-- D13: Postgres·MySQL·SQLite·Oracle. 테스트 타깃은 BIRD Mini-Dev SQLite.
+- D13: Postgres·MySQL·SQLite·Oracle. 로컬 SQLite 스모크(예제 타깃은 client 패키지).
 - D14: 임베딩은 외부 API만. 없거나 기동 시 연결 실패면 BM25. 로컬 ONNX 비채택.
 - D15: `metadata_update`는 전체 replace.
 - D16: metric·segment 식은 새 DSL 없이 SQL 조각 + AST 제한.
@@ -42,58 +44,33 @@ Rust MCP(`rmcp`) 서버: **임베디드 시맨틱 DB** + **복수 타깃 DB** �
 
 ## 남은 일 — Cube 관계 모델 · 팬아웃 거절 (D29)
 
-**구현됨. 거절 플래그는 꺼져 있고 BIRD는 아직 돌리지 않았다.** 허브 정본 `semantic_plan.yaml`(팩트 테이블 1 = view+cube 1)은 유지하고, 그 옆에 Cube식 관계를 둔다. 큐브 그레인 = 허브 `table.pk`. `table.fk`가 허브 `dimensions`를 가리키면 `many_to_one`. 컴파일은 MetricFlow식 **거절**(primary–foreign 팬아웃 · 캐즘). 조회 표면은 `execute_sql` 시맨틱 SELECT(D19). **비채택:** Cube.dev 런타임 교체 · Looker 심바가 재작성(행 집합이 바뀜) · `Never JOIN` 설명문으로 거절.
+**구현됨. 거절 플래그는 기본 끔.** 큐브 그레인 = 허브 `table.pk`. `table.fk`가 허브 `dimensions`를 가리키면 `many_to_one`. 컴파일은 MetricFlow식 **거절**(primary–foreign 팬아웃 · 캐즘). 조회 표면은 `execute_sql` 시맨틱 SELECT(D19). **비채택:** Cube.dev 런타임 교체 · Looker 심바가 재작성 · `Never JOIN` 설명문으로 거절.
 
-전제: 에이전트는 `semantic_plan.yaml`을 직접 읽지 않는다. `generate_meta`가 허브로 만든 큐브를 `execute_sql`로 조회한다. `viewJoin.type`은 SQL 조인(`inner`/`left`/`right`/`full`)이고, `relationship`이 카디널리티다. D23 비-`DISTINCT` Ungrouped cube JOIN 거절은 유지된다. 뷰 안 행 배율 거절은 `SQL_MCP_GRAIN_GUARD`에 적힌 target에서만 돈다.
+`viewJoin.type`은 SQL 조인(`inner`/`left`/`right`/`full`)이고, `relationship`이 카디널리티다. D23 비-`DISTINCT` Ungrouped cube JOIN 거절은 유지. 뷰 안 행 배율 거절은 `SQL_MCP_GRAIN_GUARD`에 적힌 target에서만.
 
-컷오버 전까지 기존 큐브 JSON·설명문은 그대로 두고, 관계와 거절은 옆에 얹는다. 계약 문서는 구현 착수 때 `ARCHITECTURE.md`·`semantic/schema/document.schema.json`·`server/DESIGN.md`를 이 절과 함께 고친다.
+1. **관계 스키마.** `viewJoin.relationship` · 허브 `pk` 그레인. 형제 팩트·브릿지는 뷰에 흡수하지 않음.
+2. **컴파일 거절.** 팬아웃·캐즘 → `validation`. `many_to_one`·Grouped cube JOIN은 통과. 합계 재작성 없음.
+3. **조회 경로.** 거절은 플래그. 검증 통과 DB만 켠다.
 
-1. **yaml 옆에 Cube 관계.** 허브 목록은 팩트 정본으로 유지한다. 관계 초안은 허브 + `table.pk` + `table.fk`에서 만들고, 메타 디렉터리를 비우지 않는다. `viewJoin`에 SQL `type`과 별도로 `relationship`(`many_to_one` / `one_to_one` / `one_to_many`)을 둔다. 큐브 그레인은 허브 테이블 `pk`다.
-2. **팩트 큐브 ↔ pk/fk.** 각 허브에서 팩트 `pk`가 그레인이다. `fk` 대상이 그 허브 `dimensions`에 있으면 `many_to_one`이다. `fk`가 다른 허브(형제 팩트)를 가리키면 뷰에 흡수하지 않고 기존 cube JOIN으로 남긴다. 브릿지(`connected`, `attendance` 등)는 자체 허브 `pk`다. 다대다는 한 조인으로 합치지 않는다.
-3. **컴파일 거절.** 팬아웃(집계 측 `pk`가 조인으로 복제)과 캐즘(형제 팩트 또는 두 일대다가 한 뷰에서 만남)은 `validation`으로 거절한다. `many_to_one` 차원 조인과, 각 측을 집계한 뒤 잇는 Grouped cube JOIN은 통과한다. 합계를 기본키 기준으로 다시 쓰지 않는다. D23 Ungrouped `DISTINCT` 가드와 D28 `additive: false`는 유지한다. 테스트가 먼저다.
-4. **조회 경로.** 1단계에서는 관계가 있어도 거절은 플래그 뒤이고, 에이전트는 지금처럼 등록 큐브 `execute_sql`만 쓴다. 2단계는 검증을 통과한 DB만 거절을 켠다. 큐브 선택은 `Never JOIN` 문장이 아니라 그 큐브의 dimension/fact로 한다. yaml을 에이전트 입력으로 바꾸지 않는다.
-5. **컷오버 전 검증.** `hub_grain.py`와 같은 dry_run으로 컴파일된 물리 테이블이 허브(팩트 + 나열 차원) 안에 있는지 본다. 골든은 두 갈래다. 의도된 팬아웃·캐즘 SQL은 거절되고, 이미 맞던 `many_to_one` 집계의 물리 SQL은 유지된다. BIRD는 바꾼 DB만 돌린다. 그레인 FAIL이 줄지 않거나 해당 DB의 EX가 R3(`client/eval` 116/286의 그 DB 부분집합)보다 내려가면 그 DB는 끈다. 286 전체는 DB별 게이트 뒤에만 한다.
-
-- [x] `viewJoin.relationship` + 허브 `pk` 그레인 스키마 · yaml에서 관계 초안 생성(기존 JSON 유지)
-- [x] 허브별 pk/fk → `many_to_one` 매핑 · 형제 팩트·브릿지는 뷰에 흡수하지 않음
-- [x] 팬아웃·캐즘 `validation` 거절 테스트 → 컴파일러. 심바가 재작성 없음
-- [x] 거절 플래그 `SQL_MCP_GRAIN_GUARD`. 켠 DB 없음. 조회는 `execute_sql`(D19)
-- [x] dry_run 그레인 골든(뷰 소스·컴파일 테이블 ⊆ 허브, `many_to_one` 물리 SQL 유지)
-- [x] 플래그 끈 채 SMALL_DBS 286 재eval (카탈로그 `data/semantic.d29.eval.db`, EX **116/286** R3 동률, 그레인 34→30). 보고 [`client/docs/eval_report.md`](client/docs/eval_report.md)
-- [ ] 거절 켠 DB별 게이트. 그레인 FAIL이 줄고 해당 DB EX ≥ R3일 때만 유지. `pk`가 비어 grain을 못 단 큐브: `throm_examination`, `hero_attribute`, `hero_power`
+- [x] `viewJoin.relationship` + 허브 `pk` 그레인 스키마
+- [x] 팬아웃·캐즘 `validation` 거절 테스트 → 컴파일러
+- [x] 거절 플래그 `SQL_MCP_GRAIN_GUARD`. 켠 DB 없음
+- [ ] 거절 켠 타깃별 게이트 — BIRD EX·그레인 검증은 [client/ROADMAP.md](client/ROADMAP.md)
 
 ## semantic-ui (작성 화면) — 구현됨
 
-D10/D11 조회 Admin API 취소는 유지한다. D30이 작성 HTTP `/api`를 둔다. 조회 계약(`execute_sql` 등)과 `client/` 에이전트는 바꾸지 않는다. 레이아웃 초안은 [`client/docs/semantic_layer_ui.svg`](client/docs/semantic_layer_ui.svg). 정본은 meta JSON이다. `semantic-map.md`는 생성 투영이라 이 화면에서 고치지 않는다.
+D10/D11 조회 Admin API 취소는 유지. D30이 작성 HTTP `/api`. 조회 계약(`execute_sql` 등)은 바꾸지 않는다. 정본은 meta JSON. `semantic-map.md`는 생성 투영이라 이 화면에서 고치지 않는다. UI 설계 [`semantic-ui/DESIGN.md`](semantic-ui/DESIGN.md).
 
-루트 `semantic-ui/`는 Vite React다. 빌드 산출물은 sql-mcp HTTP가 정적 파일로 서빙한다. 데이터는 `/api`(타깃·물리 테이블·`/api/meta`). `POST /mcp`는 DW 조회만.
-
-1. **타깃을 먼저 고른다.** 셀렉터 하나. 타깃 사이 조인은 없다. 목록은 `list_databases`.
-2. **왼쪽 두 탭.** Physical은 물리 테이블을 `join` · `union` · `minus`로 끌어 초안을 만든다. 체크도 된다. Cubes는 뷰 목록과 `New cube`(체크한 뷰의 마지막이 정본 `cube.view`, 나머지가 `choice`).
-3. **가운데가 연 뷰다.** Physical은 고른 테이블의 join 선, 또는 union/minus 포개기다. 첫 테이블이 기준이다. Cubes의 choice 스택은 위가 요약 우선. 드래그는 순서만 바꾸고 `Save view`가 cube를 저장한다.
-4. **오른쪽이 컬럼이다.** Physical 초안과 조인 뷰는 물리 컬럼 매핑이다. Cubes는 cube 트리(dimension · fact · metric · segment).
-5. **저장과 삭제는 연 뷰의 막대다.** `Save view`가 생성과 수정이다. `Delete view`는 확인 후 그 뷰의 metric · segment · cube를 지우고 뷰를 지운다. Cubes의 choice 생성은 `New cube`.
-6. **아래 상세는 선택 항목의 meta JSON.** 물리 테이블이면 테이블 정보만(컬럼 목록은 오른쪽 매핑에 있다). 뷰를 고르면 뷰 문서. 오른쪽 트리에서 dimension / fact / metric / segment를 고르면 그 항목.
-7. **정적 라우트.** Rust `http`가 `semantic-ui` 빌드 산출물을 서빙한다. `/health` · `/api` · `/mcp` · `/ui`.
-
-- [x] 루트 `semantic-ui/` Vite React. `server/` 컴파일과 `client/`는 그대로
-- [x] 타깃 셀렉터 · Physical에서 join/union/minus 초안 · Cubes의 cube.choice 스택 · 오른쪽 매핑 · 아래 상세
-- [x] cube.choice 우선순위 스택(드래그)
-- [x] HTTP `/api/databases` · 물리 tables/sample · `/api/meta` CRUD. MCP는 조회만.
-- [x] sql-mcp 정적 파일 라우트. 빌드 산출물 `semantic-ui/dist` → `GET /ui/`
+- [x] 루트 `semantic-ui/` Vite React. `server/` 컴파일은 그대로
+- [x] 타깃 셀렉터 · Physical join/union/minus · Cubes · `/api` CRUD · `GET /ui/`
 
 ## 남은 일 — semantic-ui · 스키마 화면 + API 오류
 
-정본 [`semantic/schema/document.schema.json`](semantic/schema/document.schema.json). **화면이 스키마 필드**를 편집한다. 없는 필드(view 컬럼 `description`)는 두지 않는다. **클라 JSON Schema 가드·Save 비활성은 없다.** 거절은 `POST`/`PUT /api/meta` 400 `{ code, message }`를 배너에 나눈다. 내용 [`semantic-ui/DESIGN.md`](semantic-ui/DESIGN.md).
+정본 [`semantic/schema/document.schema.json`](semantic/schema/document.schema.json). **화면이 스키마 필드**를 편집. **클라 JSON Schema 가드·Save 비활성은 없다.** 거절은 `POST`/`PUT /api/meta` 400을 배너에. 내용 [`semantic-ui/DESIGN.md`](semantic-ui/DESIGN.md).
 
-- [x] `/api` 오류 배너: code · message · 닫기
-- [x] Columns/Column Detail은 PK · type · name · mappings. `table.table`=물리명
-- [x] View type 전환이 join 화면/`joins` 키를 맞춘다
-- [x] Map members Kind dim/fact. Member: type enum · column XOR expression · encryption · as_code · additive · role
-- [x] 큐브 Detail: description · grain · role. Add dimension/fact(expression 초안) · Add metric/segment · aggregation/`group_by`/filter/`role`
-- [x] Rename은 새 문서 저장 후 옛 DELETE. 마지막 뷰 Delete는 큐브를 `view: ""`로 고치지 않음
+- [x] `/api` 오류 배너 · Columns/Map members · cube Detail · Rename/Delete 규칙
 
 ## 구현 시 작업 규칙
 
-1. 계획 → 이 파일 · 계약 → `ARCHITECTURE.md` · 등록 스키마 → `semantic/` · 서버 내부 → `server/DESIGN.md`
+1. 계획 → 이 파일 · 계약 → `ARCHITECTURE.md` · 등록 스키마 → `semantic/` · 서버 내부 → `server/DESIGN.md` · BIRD agent/eval → `client/ROADMAP.md`
 2. 스켈레톤 → 테스트 → 구현

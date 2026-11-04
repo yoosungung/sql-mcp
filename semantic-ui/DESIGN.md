@@ -46,7 +46,7 @@ View 편집은 메모리 JSON; **Save**가 `POST`/`PUT /api/meta`.
 
 ## E2E 시나리오
 
-BIRD `superhero` 타깃. 만든 문서만 지운다. sql-mcp HTTP `:8090` + `npm run dev`.
+로컬 SQLite 타깃 예: client 패키지 BIRD `superhero`([`client/bird/`](../client/bird/README.md)). 만든 문서만 지운다. sql-mcp HTTP `:8090` + `npm run dev`.
 정본 경로는 아래 **한 사이클**(12단계)이다. 뷰 생성은 캔버스 드래그. New→Create 빈 껍질은 정본이 아니다(두 번째 뷰를 시작하려면 저장 후 New로 캔버스만 비운 뒤 다시 드래그).
 
 1. **테이블 등록** — Register로 물리 테이블(조인용 `superhero`+`publisher`, 유니온용 공통 컬럼 테이블 둘).
@@ -74,10 +74,10 @@ BIRD `superhero` 타깃. 만든 문서만 지운다. sql-mcp HTTP `:8090` + `npm
 cd semantic-ui
 npm install
 npm test
-# 정본 E2E: BIRD superhero · sql-mcp HTTP 127.0.0.1:8090 + vite. 브라우저에서 DESIGN 12단계 한 사이클.
+# 정본 E2E: client/bird superhero · sql-mcp HTTP 127.0.0.1:8090 + vite. 브라우저에서 DESIGN 12단계 한 사이클.
 # 샌드박스 cargo는 aws-lc EPERM → 권한(all)로 기동.
 
-# dist는 sql-mcp가 선행 빌드한다: cargo build/run, Debug sql-mcp (BIRD), docker build, CI/CD.
+# dist는 sql-mcp가 선행 빌드한다: cargo build/run, Debug sql-mcp (BIRD)·docker·CI/CD.
 # 수동:
 npm run build
 # 산출물: semantic-ui/dist  →  sql-mcp GET /ui/

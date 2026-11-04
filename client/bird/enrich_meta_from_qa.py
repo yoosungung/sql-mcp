@@ -5,8 +5,8 @@ generate_meta.py가 만든 table/view/cube/*_count 골격 위에, mini_dev_sqlit
 evidence에 이름이 붙은 공식·코호트만 승격한다(질문 1건 = 문서 1개 금지).
 
 예:
-  python3 client/bird/enrich_meta_from_qa.py
-  python3 client/bird/enrich_meta_from_qa.py --db financial
+  python3 bird/enrich_meta_from_qa.py
+  python3 bird/enrich_meta_from_qa.py --db financial
 """
 
 from __future__ import annotations
@@ -1954,7 +1954,7 @@ def write_docs(db_id: str, docs: list[dict]) -> int:
 
 def main() -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--db", help="only this db_id under client/bird/")
+    p.add_argument("--db", help="only this db_id under bird/")
     args = p.parse_args()
     dbs = [args.db] if args.db else sorted(DOMAIN_SPECS)
     total = 0

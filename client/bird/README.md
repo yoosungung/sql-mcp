@@ -1,64 +1,65 @@
-# client/bird — BIRD Mini-Dev SQLite
+# bird — BIRD Mini-Dev SQLite · 시맨틱 레이어
 
-예제 에이전트용 **BIRD 타깃과 시맨틱 레이어**. [BIRD](https://bird-bench.github.io/) Mini-Dev SQLite는 `client/bird/<db_id>/<db_id>.sqlite`. 등록 카탈로그는 `client/bird/semantic.db`(gitignore). 제품 서버 기본 경로는 `./data/semantic.db`.
+이 패키지(client) 소유의 **BIRD 타깃과 시맨틱 레이어**. Mini-Dev SQLite는 `<db_id>/<db_id>.sqlite`. 등록 카탈로그는 `semantic.db`(gitignore). sql-mcp 제품 기본 경로(`./data/semantic.db` 등)와 **섞지 않는다**.
+
+에이전트·eval: [../AGENTS.md](../AGENTS.md). 계획: [../ROADMAP.md](../ROADMAP.md).
 
 ## Fetch
 
 ```text
-./client/bird/fetch_bird.sh          # 11개 전부
-./client/bird/fetch_bird.sh --small  # 스모크용 6개
+./bird/fetch_bird.sh          # 11개 전부
+./bird/fetch_bird.sh --small  # 스모크용 6개
 ```
+
+(모노레포 루트에서는 `./client/bird/fetch_bird.sh`.)
 
 출처: BIRD Mini-Dev 공식 zip  
 `https://bird-bench.oss-cn-beijing.aliyuncs.com/minidev.zip`  
-([bird-bench/mini_dev](https://github.com/bird-bench/mini_dev)). zip 캐시는 `client/bird/.cache/`(gitignore).
+([bird-bench/mini_dev](https://github.com/bird-bench/mini_dev)). zip 캐시는 `.cache/`(gitignore).
 
 `.sqlite`는 gitignore — 스크립트로만 받는다.
 
 같은 zip에서 **질문-SQL**도 추출한다:
 
 ```text
-client/bird/bird_qa/mini_dev_sqlite.json   # NL question + gold SQL (500건)
+bird/bird_qa/mini_dev_sqlite.json   # NL question + gold SQL (500건)
 ```
-
-에이전트 예제: [client/README.md](../README.md).
 
 ## Meta JSON
 
 물리 SQLite를 MCP 없이 읽어 `document.schema.json` 골격 JSON을 만든다(코딩 에이전트 스킬과 동일 계약). gitignore — 로컬 생성물.
 
 ```text
-python3 ./client/bird/generate_meta.py
-# → client/bird/<db_id>/meta/<name>.json   (table | view | cube | metric)
-python3 ./client/bird/enrich_meta_from_qa.py
+python3 ./bird/generate_meta.py
+# → bird/<db_id>/meta/<name>.json   (table | view | cube | metric)
+python3 ./bird/enrich_meta_from_qa.py
 # → evidence 기반 domain metric/segment 추가 (generate_meta 이후; 덮어쓰지 않음)
-python3 ./client/bird/generate_semantic_map.py
-# → client/bird/<db_id>/meta/semantic-map.md  (diagram-first ERD + OLAP Mermaid)
-python3 ./client/bird/generate_semantic_map.py financial   # 단일 DB
-python3 ./client/bird/register_meta.py --db formula_1 --prune --url http://127.0.0.1:8090
-python3 ./client/bird/hub_grain.py --url http://127.0.0.1:8090/mcp
+python3 ./bird/generate_semantic_map.py
+# → bird/<db_id>/meta/semantic-map.md  (diagram-first ERD + OLAP Mermaid)
+python3 ./bird/generate_semantic_map.py financial   # 단일 DB
+python3 ./bird/register_meta.py --db formula_1 --prune --url http://127.0.0.1:8090
+python3 ./bird/hub_grain.py --url http://127.0.0.1:8090/mcp
 ```
 
-- **semantic-map.md** (`generate_semantic_map.py`): meta JSON의 읽기 전용 투영. §A Views(Mermaid=테이블명+join · Column mappings에 `(PK)`/`(FK)`) · §B Cubes(표). SoT는 JSON. 테스트: `python3 -m pytest client/bird/test_generate_semantic_map.py` (venv의 pytest).
+- **semantic-map.md** (`generate_semantic_map.py`): meta JSON의 읽기 전용 투영. §A Views(Mermaid=테이블명+join · Column mappings에 `(PK)`/`(FK)`) · §B Cubes(표). SoT는 JSON. 테스트: `python3 -m pytest bird/test_generate_semantic_map.py`.
 
 - **table** / **view** / **cube**: `target`=`{db_id}`(MCP `list_databases.name` = `TargetConfig.id`와 동일). table은 `schema`=`main`, 필터 비움. FK `to`가 비면 참조 테이블 PK로 채우며, 선언 순서(컬럼 순서 우선)를 유지한다. 선언 FK가 없어도 컬럼 `{table}_id`/`{Table}Id` → 논리 테이블 `{table}`(또는 `{table}s`)의 `id`/`Id` FK·조인을 추론한다. (`as_code`는 table 컬럼이 아니라 cube dimension에만 둔다.)
-- **view**: FK + (`{table}_id`→`{table}.id`) + (컬럼명=타 테이블 PK, **단 child 자신의 PK 컬럼 제외**) + (동일 FK 컬럼 패턴 전파, PK→PK 제외)로 그래프를 만든다. `client/bird/<db>/semantic_plan.yaml`(git 추적)이 있으면 **허브(팩트)마다** view+cube 하나 — 허브에서 나열된 차원만 BFS, 형제 팩트는 넣지 않음, `{db_id}_all` 없음. 단일 테이블 허브는 identity view(`sources` 1 · `joins: []`). 플랜이 없으면 연결 요소마다 스패닝 간선 + **사이클을 닫는 추가 FK 간선**을 `inner` join으로 보존하고, 전부 연결되면 `{db_id}_all`. 조인 키 동치류 내 물리명이 다르면(`event_id` vs `link_to_event`) 각 이름을 모두 노출한다.
+- **view**: FK + (`{table}_id`→`{table}.id`) + (컬럼명=타 테이블 PK, **단 child 자신의 PK 컬럼 제외**) + (동일 FK 컬럼 패턴 전파, PK→PK 제외)로 그래프를 만든다. `<db>/semantic_plan.yaml`(git 추적)이 있으면 **허브(팩트)마다** view+cube 하나 — 허브에서 나열된 차원만 BFS, 형제 팩트는 넣지 않음, `{db_id}_all` 없음. 단일 테이블 허브는 identity view(`sources` 1 · `joins: []`). 플랜이 없으면 연결 요소마다 스패닝 간선 + **사이클을 닫는 추가 FK 간선**을 `inner` join으로 보존하고, 전부 연결되면 `{db_id}_all`. 조인 키 동치류 내 물리명이 다르면(`event_id` vs `link_to_event`) 각 이름을 모두 노출한다.
 - **cube** / **metric**: view당 휴리스틱 초안(자연 이름은 cube/dim/fact/metric 우선; 충돌 시 table/view/view컬럼에 `_table`/`_view`/`_col`). cube·dim·fact·metric `description`은 메타 **사용**용이므로 자동 생성 시 비운다(`""`; 생성 출처 문구 금지). 자동·도메인 metric의 `group_by`는 **기본 grain만**(D24): 이벤트 날짜 1개와 id가 아닌 `code` 차원, 코드가 없으면 짧은 범주 라벨 1개. 차원 전체 나열(allowlist)은 하지 않는다. 비율식은 `DIVIDE` 대신 `(a) / (b)`.
 - **domain metric/segment** (`enrich_meta_from_qa.py`): evidence의 이름 붙은 공식·코호트만 승격하고, dim/fact `description`·expression dim/fact를 빈 칸에만 채운다(`semantic-from-qa`). 동명(`position`/`points`/`wins`)과 혼동 쌍(`GPT`/`GLU`, `colour`/`skin_colour`, `circuitRef`, `EdOpsCode`, `Diagnosis`, `CPK`)은 비어 있지 않아도 덮어쓴다. 행 비율은 `additive: false` fact, 그룹 `SUM/SUM`은 metric(다른 이름, D28). 허브 큐브 `description`은 `Copy: SELECT … FROM {cube}`(JOIN ON/GROUP BY 레시피 없음). tox atom/bond·club expense·CA SAT/FRPM·throm lab/exam은 형제 큐브 JOIN 금지(P1 한 큐브). 허브가 여러 개면 metric/segment마다 `cube` 필수. `generate_meta`가 meta를 비우므로 항상 그 다음에 실행한다.
 - 동일 테이블 쌍 다중 FK는 PK 타깃·컬럼명 일치·짧은 키 순으로 대표 간선을 선택하되, 동일 부모를 2~3회 참조하는 역할(Role-Playing) FK는 **클론 table 없이** view `sources` `{ kind, table, alias? }`로 이중 조인한다(예: `Team` + `alias: away_team`). 소규모 룩업(≤4 cols)은 최대 3역할, 2역할은 더 큰 차원도 허용. 동일 부모 FK가 4개 초과(라인업 슬롯)는 조인 제외·ID만 유지하며, `Player`+`Player_Attributes`는 별도 `player` view/cube로 분리한다.
 - BIRD처럼 물리 컬럼에 공백·기호가 있으면 table/`mappings.column`에는 **물리명 그대로**(D22 `physical_ident`). view 컬럼 `name`은 시맨틱 패턴으로 sanitize하고, cube dim/fact는 그 별칭을 쓴다.
-- JSON 생성만 하면 서버에는 안 들어간다. **등록은 HTTP `/api/meta`** (`python3 ./client/bird/register_meta.py --db <db> --prune`) 또는 `semantic-register` 스킬. 같은 시맨틱 DB를 HTTP와 stdio가 **동시에** 열지 말 것(libSQL 파일 락). CRUD 성공 시 해당 프로세스 캐시는 즉시 갱신된다. 그레인 게이트: `python3 ./client/bird/hub_grain.py --url …` (`SELECT 1 FROM cube` dry_run, 컴파일 테이블 ⊆ yaml 허브).
+- JSON 생성만 하면 서버에는 안 들어간다. **등록은 HTTP `/api/meta`** (`python3 ./bird/register_meta.py --db <db> --prune`) 또는 `semantic-register` 스킬. 같은 시맨틱 DB를 HTTP와 stdio가 **동시에** 열지 말 것(libSQL 파일 락). CRUD 성공 시 해당 프로세스 캐시는 즉시 갱신된다. 그레인 게이트: `python3 ./bird/hub_grain.py --url …` (`SELECT 1 FROM cube` dry_run, 컴파일 테이블 ⊆ yaml 허브).
 
 ## Run with sql-mcp
 
-저장소 루트에서:
+`env.bird.example`이 `SQL_MCP_CONFIG`·`SQL_MCP_SEMANTIC_PATH`·타깃 DSN을 넣는다.
 
 ```text
-./client/bird/fetch_bird.sh --small
-set -a && source ./client/bird/env.bird.example && set +a
-export SQL_MCP_CONFIG=./server/examples/config.bird.toml
-cargo run -p sql-mcp
+./bird/fetch_bird.sh --small
+set -a && source ./bird/env.bird.example && set +a
+# 모노레포: 저장소 루트에서 cargo run -p sql-mcp
+# 분리 후: PATH의 sql-mcp (동일 env)
 ```
 
-DSN 형식: `sqlite:<절대또는상대경로>?mode=ro`  
-(서버는 SQLite 타깃을 `libsql`로 연다 — `sqlx` sqlite feature와 이중 링크하지 않음.)
+DSN 형식: `sqlite:<절대또는상대경로>?mode=ro`.
