@@ -40,7 +40,7 @@ Progress:
 - [ ] 2. 입력 정규화 (질문 / 지식 / 참고 SQL)
 - [ ] 3. 재사용 단위 추출 → 후보 목록 (methodology.md)
 - [ ] 4. 기존 cube에 merge (dim/fact 보강 · metric · segment)
-- [ ] 5. grain 불일치 시 view/cube 분리 제안만 (필요 시 table-view·cube 스킬로)
+- [ ] 5. 같은 표면 보강만 제안 (FK·role-play·summary choice — methodology.md). view/cube grain-split 금지
 - [ ] 6. contract quick checks; 등록은 요청 시 semantic-register
 ```
 
@@ -53,13 +53,13 @@ Progress:
 [methodology.md](methodology.md): cohort → `segment`, 재사용 KPI → `metric`, 분석 축 → `dimension`(필요 시 `fact`/`expression`), 반복 코드 리터럴 → dim/fact `samples`(D31).  
 **질문 1건 = metric/segment 1개 금지.** 빈도·지식에서 이름이 붙은 개념만 승격. 기존 멤버·`samples`와 합치고, Auto 휴리스틱보다 지식·질문 신호를 우선한다.
 
-### 5–6. Grain · hand off
+### 5–6. Surface reinforce · hand off
 
-agent-surface 단일 큐브로 커버 가능한지 먼저 본다. 팬/캐즘·가드가 필요하면 새 view/cube 분리를 **제안**만 하고, 작성·분할 루프는 `semantic-table-view` / `semantic-cube-metric-segment` / `semantic-from-eval`에 넘긴다. 검증·CRUD는 **`semantic-register`**.
+agent-surface(단일 표면)를 유지한 채 description·metric·segment·`samples`만 채운다. 같은 view 안 FK/`relationship`·role-play alias·summary `choice` 보강은 **제안**할 수 있다([methodology.md](methodology.md)). **형제 팩트 grain-split·새 허브 view/cube 분리는 하지 않는다** — 실행 FAIL·가드가 나면 **`semantic-from-eval`**. 검증·CRUD는 요청 시 **`semantic-register`**.
 
 ## Do not
 
-- table/view를 이 스킬에서 새로 만들지 않는다(제안만).
+- table/view/cube를 이 스킬에서 **새로 만들거나 grain-split하지 않는다**(형제 허브 분리 포함). 같은 표면 FK·alias·`choice` 보강 제안만 허용.
 - 참고 SQL·벤치 gold 전체 문장을 metric/segment/`expression`에 그대로 넣지 않는다.
 - 다중 문장 · 쓰기 SQL을 시맨틱 식에 넣지 않는다.
 - 실행 결과 비교·EX/Soft-F1 등 **eval 하네스**를 여기서 돌리거나 설계하지 않는다(`semantic-from-eval`).

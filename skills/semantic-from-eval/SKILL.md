@@ -83,7 +83,7 @@ CTE·인라인 별칭은 물리 테이블이 아니다. sql-mcp 버그는 이 �
 
 ### 4. Grain
 
-**언제 분할하는가.** 초기 초안(`semantic-table-view`)은 agent-surface로 **타깃당 표면 view/cube 하나**(형제 팩트·브릿지 포함 + `relationship`)를 허용한다. 이 단계(from-eval)에서 그레인 FAIL이 있거나 `SQL_MCP_GRAIN_GUARD`가 켜진 타깃이면 **grain-split**으로 전환한다.
+**언제 분할하는가.** 초기 초안(`semantic-table-view`)은 agent-surface로 **타깃당 표면 view/cube 하나**(형제 팩트·브릿지 포함 + `relationship`)를 허용한다. `semantic-from-qa`는 description·KPI·cohort만 채우고 **grain-split을 제안하지 않는다.** 이 단계(from-eval)에서 그레인 FAIL이 있거나 `SQL_MCP_GRAIN_GUARD`가 켜진 타깃이면 **grain-split**으로 전환한다.
 
 grain-split 규칙:
 

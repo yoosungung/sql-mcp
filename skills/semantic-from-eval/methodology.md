@@ -32,6 +32,8 @@ compiled 있고 테이블 집합 ⊆ gold      → agent가 실패      (로직/
 | agent-surface | 기본 초안 · `SQL_MCP_GRAIN_GUARD` 끔 · 그레인 FAIL 없음 | 타깃당 표면 view/cube 하나. 스키마 FK 조인 + `relationship`(`one_to_many` 포함) 허용 |
 | grain-split | 그레인 FAIL > 0 또는 `SQL_MCP_GRAIN_GUARD` 켠 타깃 | 아래 규칙으로 허브 분할 |
 
+`semantic-from-qa`는 Q&A·지식으로 description·metric·segment만 채우며 **grain-split을 제안·작성하지 않는다.** 허브 분할은 이 스킬(from-eval) 전용이다.
+
 **grain-split 규칙:**
 
 1. 비즈니스 프로세스(측정 사건)당 cube 하나. 팩트 테이블 = 허브.

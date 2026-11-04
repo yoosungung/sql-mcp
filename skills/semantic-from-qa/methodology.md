@@ -36,7 +36,7 @@
 - 질문마다 다른 one-shot 리터럴 식을 전부 metric화
 - 물리 테이블 별칭(`T1`, `T2`)을 cube 외부 식 식별자로 쓰기 (view 컬럼 / dim·fact 이름만)
 
-번역 실패(멤버·view 컬럼으로 못 옮김)면 **스킵**하거나 view grain 변경을 제안만 한다. 억지 등록 금지.
+번역 실패(멤버·view 컬럼으로 못 옮김)면 **스킵**한다. 억지 등록·허브 분리로 우회하지 않는다.
 
 ## 지식(knowledge) 우선
 
@@ -53,17 +53,17 @@
 - segment `filter`는 cube **멤버 이름** 기준 boolean 한 식(필요 시 `IN (SELECT …)`/`EXISTS (SELECT …)` 포함 가능).
 - 이름 우선권·식 제한은 cube 스킬 contract와 동일.
 
-## Grain 분기
+## 같은 표면 보강 (grain-split 아님)
 
-컴파일러는 `combine: "join"` 뷰에서 질의가 참조한 테이블들($T_{req}$)만 최단 경로(Steiner)로 연결하고 미사용 테이블(루트 포함)을 자동 프루닝한다. 스키마 FK와 조인 키 동치류가 맞으면 prune이 동작한다.
+컴파일러는 `combine: "join"` 뷰에서 질의가 참조한 테이블들($T_{req}$)만 최단 경로(Steiner)로 연결하고 미사용 테이블(루트 포함)을 자동 프루닝한다. 스키마 FK와 조인 키 동치류가 맞으면 prune이 동작한다. 초안은 agent-surface(단일 표면)를 유지한다.
 
-**형제 팩트가 한 뷰에 있으면** 에이전트가 잘못된 멤버를 집을 때 팬/캐즘이 남는다. 기본 초안은 agent-surface(단일 표면)를 허용하고, **eval·`SQL_MCP_GRAIN_GUARD`로 드러나면** [semantic-from-eval](../semantic-from-eval/methodology.md)에서 grain-split한다. 그 전에 다음이면 view 보강 또는 분리만 **제안**한다:
+이 스킬은 **형제 팩트 grain-split·새 허브 view/cube 분리를 제안·작성하지 않는다.** 팬/캐즘·가드는 실행 증거로 **[semantic-from-eval](../semantic-from-eval/methodology.md)** 에서만 분할한다. Q&A만으로 허브를 미리 나누지 않는다.
 
-- `view.joins`에 **스키마에 있는** 직접 FK 간선이 빠져 우회 조인이 생기는 경우 → 해당 FK·`relationship` 보강 제안 (이름 패턴으로 FK를 새로 추론하지 않음)
-- 동일 소규모 룩업을 스키마가 여러 역할 FK로 참조하는데 alias가 빠진 경우 → role-play `alias` 보강 제안
-- 사전 집계 요약과 상세를 함께 라우팅해야 하는 경우 → 요약은 별도 join view + cube `choice`(`summary: true`) + `prefer: "summary"` 제안
+같은 표면 안에서만 다음을 **제안**할 수 있다(작성은 `semantic-table-view` / `semantic-cube-metric-segment`):
 
-→ view/table 수정이나 신규 생성이 필요하면 짧게 제안하고 `semantic-table-view` / `semantic-cube-metric-segment`로 넘긴다.
+- `view.joins`에 **스키마에 있는** 직접 FK 간선이 빠져 우회 조인이 생기는 경우 → 해당 FK·`relationship` 보강 (이름 패턴으로 FK를 새로 추론하지 않음)
+- 동일 소규모 룩업을 스키마가 여러 역할 FK로 참조하는데 alias가 빠진 경우 → role-play `alias` 보강
+- 사전 집계 요약과 상세를 함께 라우팅해야 하는 경우 → 요약은 별도 join view + cube `choice`(`summary: true`) + `prefer: "summary"`
 
 ## 산출 체크리스트
 
@@ -73,4 +73,5 @@
 - [ ] `samples` ≤8 · 기존과 합집합(없는 값만) · `encryption`과 비동시 · 고유명/고카디널리티 제외
 - [ ] `aggregation=group` metric의 `group_by`가 기본으로 쓸 리포트 축만 담음(차원 전부 나열하지 않음)
 - [ ] 질문 건수 ≫ 신규 metric/segment 건수 (과적합 아님)
+- [ ] grain-split·신규 허브 view/cube를 이 산출에 넣지 않음 (분리는 `semantic-from-eval`)
 - [ ] eval·실행 비교를 이 산출의 완료 조건으로 쓰지 않음 (`semantic-from-eval`)
