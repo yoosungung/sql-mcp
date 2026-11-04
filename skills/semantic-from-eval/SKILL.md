@@ -83,12 +83,14 @@ CTE·인라인 별칭은 물리 테이블이 아니다. sql-mcp 버그는 이 �
 
 ### 4. Grain
 
-한 측정 사건(팩트 허브) = view+cube 하나. 형제 팩트를 한 뷰에 묶지 않는다. 공유 차원만 재사용. 브릿지 테이블은 흡수하지 않고 자체 그레인.
+**언제 분할하는가.** 초기 초안(`semantic-table-view`)은 agent-surface로 **타깃당 표면 view/cube 하나**(형제 팩트·브릿지 포함 + `relationship`)를 허용한다. 이 단계(from-eval)에서 그레인 FAIL이 있거나 `SQL_MCP_GRAIN_GUARD`가 켜진 타깃이면 **grain-split**으로 전환한다.
 
-허브 목록을 로컬 계획으로 문서화한다(`hubs: [{table, cube, dimensions}]` 형태면 충분). FK 연결 요소 1개라고 형제 팩트를 한 view에 묶지 않는다.  
-교차 팩트 질의는 **cube JOIN**(D23)에 맡긴다.
+grain-split 규칙:
 
-초안 작성: `semantic-table-view` / `semantic-cube-metric-segment`.
+- 한 측정 사건(팩트 허브) = view+cube 하나. 형제 팩트를 한 뷰에 묶지 않는다. 공유 차원만 재사용. 브릿지 테이블은 흡수하지 않고 자체 그레인.
+- 허브 목록을 로컬 계획으로 문서화한다(`hubs: [{table, cube, dimensions}]`). 스키마 FK로 연결됐다 해서 형제 팩트를 한 view에 두지 않는다.
+- 교차 팩트 질의는 **cube JOIN**(D23)에 맡긴다.
+- 초안 작성: `semantic-table-view` / `semantic-cube-metric-segment`.
 
 ### 5. Knowledge
 
@@ -120,7 +122,7 @@ CTE·인라인 별칭은 물리 테이블이 아니다. sql-mcp 버그는 이 �
 
 - 에이전트 SYSTEM·모델·재시도 한도를 이 스킬에서 고치지 않는다.
 - gold 물리 SQL을 `execute_sql`에 넣거나 metric/segment에 복붙하지 않는다.
-- One-Big-View로 형제 팩트를 다시 묶지 않는다.
+- **grain-split 모드에서** One-Big-View로 형제 팩트를 다시 묶지 않는다. (agent-surface 초안·가드 꺼진 단일 표면 큐브를 이 스킬이 “처음부터 금지”하지는 않는다 — FAIL/가드가 있을 때만 분할.)
 - 그룹 비율을 가산 fact로 올리지 않는다(`SUM(rate)` 함정). 행 비율만 `additive: false` fact.
 - 일회성 고유명을 segment로 하드코딩하지 않는다.
 - 특정 벤치 경로·DB 목록을 전제로 두지 않는다.

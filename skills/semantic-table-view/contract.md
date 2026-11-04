@@ -5,7 +5,7 @@
 ## 역할
 
 - **코딩 에이전트**가 `table` / `view` JSON을 작성한다.
-- 참조 방향: `table → view → cube → metric|segment` (cube 이하는 다른 스킬).
+- 참조 방향: `table → view → cube → metric|segment` (cube 이하는 다른 스킬). 초안 직후 도메인 서술은 **`semantic-from-qa`**.
 
 ## 이름
 
@@ -13,6 +13,7 @@
 - **물리 `physical_ident`:** 공백·기호 허용(따옴표·백틱·제어·`;` 금지) — `db`/`schema`/`table`, table 컬럼/`pk`/`fk` 컬럼, view `mappings.column`·join `on` 컬럼
 - 파일로 둘 때 파일명(확장자 제외) = 문서 `name`
 - **우선권:** cube · dimension · fact · metric · segment가 자연스러운 이름을 먼저 갖는다(검색 대상). 겹치면 table · view · view 컬럼 논리 이름에 `_table` / `_view` / `_col` 등을 붙인다. 물리 경로는 유지. 물리 컬럼명이 시맨틱 패턴 밖이면 view에서 별칭을 두고 mapping에 물리를 남긴다. dim/fact `name`과 그 `column`(view 컬럼)이 같으면 공유 허용.
+- **kind 간 동명:** `table`/`view`/`cube`는 kind가 다르면 같은 `name`을 쓸 수 있다(예: cube `superhero` + table `superhero`). 파일명이 충돌하면 outdir에서 kind별 하위 폴더를 쓰거나, table/view만 `_table`/`_view` 접미사를 붙인다.
 
 ## table
 
@@ -23,11 +24,13 @@
 | `db` / `schema` / `table` | 물리 DB·스키마·테이블 |
 | `name` | 논리 테이블 이름(view·fk가 이 이름으로 참조) |
 | `columns[]` | `name`, `type`, `nullable` (`as_code`는 dimension에 둠 — cube 스킬) |
-| `pk` | 컬럼 이름 배열 |
-| `fk[]` | `columns`(이 테이블) + `references.table`(다른 **논리** table `name`) + `references.columns`. **이름 규칙:** 컬럼 `{table}_id`(또는 CamelCase `{Table}Id`)가 있고 논리 테이블 `{table}`(대소문자 무시; 없으면 단순 복수 `{table}s`)에 `id`/`Id` 컬럼이 있으면 `fk`·join은 `{col} → {table}.id`로 둔다(자식 자신의 PK 컬럼은 제외). |
+| `pk` | 물리 스키마에 **선언된** PK 컬럼만. 없으면 `[]` |
+| `fk[]` | 물리 스키마에 **선언된** FK만. `columns` + `references.table`(논리 table `name`) + `references.columns`. 스키마에 FK가 없으면 `[]` |
 | `permission_filters[]` | `{ role, expression }` — 호출자 role과 같을 때 행 필터 |
 | `scope_filter` / `default_filter` | `{ expression }` 또는 `null` |
 | `role` | 생략 또는 `"all"` 또는 role 이름 배열 |
+
+**PK/FK 추론 금지.** 컬럼명 패턴(`{table}_id`, `{Table}Id`)만으로 `pk`/`fk`·join을 만들지 않는다. 방언 카탈로그·`PRAGMA foreign_key_list`·`INFORMATION_SCHEMA` 등 **DW가 노출한 제약**만 옮긴다. 제약이 비어 있으면 `pk: []` / `fk: []`이고, view `joins`도 스키마 FK(또는 사용자가 명시한 조인) 없이 추측하지 않는다.
 
 **필터 식은 물리 컬럼 이름**을 쓴다. 신뢰된 SQL 조건식이며 새 DSL이 아니다. 서브쿼리·다중 문장·쓰기·쓰기 CTE 금지.
 
@@ -35,45 +38,55 @@
 
 ## view
 
-필수: `kind`, `name`, `combine`, `sources`, `columns`. cube는 view 하나에 연결되므로, 단일 물리 테이블 허브도 **identity view**(`combine: join`, source 1, `joins: []`)로 둔다.
+필수: `kind`, `name`, `target`, `combine`, `sources`, `columns`. cube는 view 하나에 연결되므로, 단일 물리 테이블 허브도 **identity view**(`combine: join`, source 1, `joins: []`)로 둔다.
 
 | combine | sources | 추가 |
 |---------|---------|------|
-| `join` | table (≥1) | source 1개면 `joins: []`(identity). 2개 이상이면 `joins`(≥1): `left`, `right`, `type`(`inner`/`left`/`right`/`full`), `on[]`(`left_column`, `right_column`, 선택 `op` 생략=`=`) |
+| `join` | table (≥1) | source 1개면 `joins: []`(identity). 2개 이상이면 `joins`(≥1): `left`, `right`, `type`(`inner`/`left`/`right`/`full`), **`relationship`**, `on[]`(`left_column`, `right_column`, 선택 `op` 생략=`=`) |
 | `union` / `minus` | table | 첫 source가 기준; 각 view 컬럼의 `mappings`가 **모든** source를 가리킴 |
 
 요약·상세 후보는 view가 아니라 cube `choice`다.
 
-`columns[]`: `name` + `mappings[]`(`source` = source 문서 `name`, `column` = 그 source의 물리 컬럼).
+`columns[]`: `name` + `mappings[]`(`source` = source 문서 `name` 또는 alias, `column` = 그 source의 물리 컬럼).
 
 ### Join 뷰 설계 및 프루닝 규칙 (`combine: "join"`)
 
-1. **직접 FK 간선(사이클 포함) 전수 보존:**
-   - 단일 BFS 스패닝 트리만 남기고 사이클을 닫는 유효 FK 간선(예: `orders ↔ customer`, `order_lines ↔ products`)을 버리지 않는다.
-   - 서버 컴파일러(Step 4)가 질의된 컬럼의 필수 테이블 집합($T_{req}$) 간 **최단 경로(Steiner)**만 선택하고 사이클 없는 스패닝 트리 `JOIN`만 방출하므로, `view.joins`에는 테이블 쌍별 유효 FK 간선을 모두 넣어야 불필요한 허브 테이블 경유(Fan/Chasm Trap)가 발생하지 않는다.
+1. **스키마 FK 간선만 사용 (사이클 포함 전수):**
+   - view `joins`는 물리 스키마에 선언된 FK(및 동일 부모로의 다중 FK)에 대응한다. 이름 패턴으로 간선을 **추가 추론하지 않는다**.
+   - 서버 컴파일러(Step 4)가 질의된 컬럼의 필수 테이블 집합($T_{req}$) 간 **최단 경로(Steiner)**만 선택하므로, 스키마에 있는 직접 FK 간선은 `view.joins`에 빠뜨리지 않는다.
+   - **기본 `type`은 `inner`.** nullable FK로 행 보존이 필요할 때만 `left`(사용자·도메인이 명시한 경우).
    - 모든 조인이 `inner`이면 질의에 쓰이지 않은 `sources[0]`(루트 테이블)도 자동 프루닝된다.
-2. **가짜 PK↔PK 조인 추론 금지 · `{table}_id`→`{table}.id` · 다중 FK 우선순위:**
-   - 서로 다른 엔티티의 단일 PK 컬럼명이 우연히 같다고(`product.id`와 `warehouse.id`) 직접 조인하지 않는다. M:N은 연결 테이블(예: `stock(product_id, warehouse_id)`) 경유.
-   - 물리/선언 FK가 없어도 컬럼 `{table}_id` 또는 `{Table}Id`가 있으면 논리 테이블 `{table}`(없으면 `{table}s`)의 `id`/`Id`와 조인한다. 예: `orders.customer_id → customer.id`, `comments.PostId → posts.Id`. 자식 테이블 자신의 PK이거나 부모에 `id` 컬럼이 없으면 적용하지 않는다.
-   - 카탈로그 FK 목록 순서는 방언마다 다를 수 있다(역순·미지정). **테이블 컬럼 선언 순서**로 정렬한 뒤 쓴다.
-   - 동일 테이블 쌍에 대체 키 FK가 여럿이면 **참조 부모 PK 여부 → 물리 컬럼명 일치(`customer_id = customer_id`) → 더 짧은 대표 키(`customer_id` < `customer_legacy_id`) → 컬럼 선언 순서**로 대표 간선을 선택한다.
-3. **Role-Playing 소규모 룩업 테이블 분리:**
-   - 한 자식 테이블이 룩업의 동일 키를 2~3개 역할 FK로 참조하면(예: `ship_to_address_id`/`bill_to_address_id`→`address.id`), **클론 table 문서를 만들지 말고** view `sources`에 동일 `table` + 서로 다른 `alias`로 이중 조인한다(예: `{ kind:"table", table:"address" }` · `{ kind:"table", table:"address", alias:"bill_to" }`).
-   - 역할별 컬럼은 alias 접두로 노출되며, 질의에서 참조한 역할 조인만 프루닝으로 남긴다. 동일 부모 FK가 4개 초과(슬롯 배열 등)면 조인하지 않고 ID dimension만 둔다.
-4. **조인 키 동치류(Equivalence Class) 다중 매핑:**
-   - `on` 조건으로 묶인 조인 키 동치류에서 물리 컬럼명이 같으면(`customer_id`, `order_id`) 하나의 view 컬럼으로 묶고, 모든 참여 테이블의 `{ source, column }`을 `mappings`에 넣는다(PK 테이블 우선).
-   - 조인 양끝의 물리 컬럼명이 다르면(`orders.order_id = shipments.ref_order`, `customer.postal_code = region.zip`), 오른쪽 PK 컬럼을 흡수해 없애지 말고 **양쪽 이름을 모두 view 컬럼으로 노출**하되(단, 비-루트 테이블의 범용 `"id"` 컬럼은 제외), 각 view 컬럼의 `mappings`에 자신의 테이블을 첫 번째(`mappings[0]`)로 두고 동치류의 상대 테이블 매핑을 뒤에 추가한다. 그래야 컴파일러가 어느 쪽 테이블만 단독 질의하더라도 불필요한 조인 없이 포함된 테이블의 컬럼으로 안전하게 바인딩한다.
-5. **허브 우선 `sources` 순서:**
-   - `joins`가 있으면 `sources[0]`은 조인 그래프의 **허브**(차수가 가장 높은 중심 테이블, 예: `superhero`). 그 다음 말단·룩업 테이블.
-   - 공유 조인 키(`hero_id` 등)의 `mappings[0]`도 허브로 둔다. 컴파일러는 다중 매핑을 해석할 때 `mappings[0]`을 쓰므로, 자식 팩트(`hero_power`)가 앞에 있으면 `COUNT(hero_id)`가 그 테이블을 끌어와 팬아웃한다. identity view(`joins: []`)는 source 1개가 곧 허브다.
+2. **`relationship` (필수에 가깝게):**
+   - 각 join에 `relationship`: `many_to_one` | `one_to_one` | `one_to_many` (SQL `type`과 별개, D29).
+   - 허브→룩업·부모 PK = 보통 `many_to_one` 또는 `one_to_one`. 허브→자식/브릿지(행 복제) = `one_to_many`.
+   - 비우면 그레인 가드가 그 조인을 보지 않는다. 에이전트 표면용 초안에서도 카디널리티를 적어 둔다.
+3. **가짜 PK↔PK 조인 금지 · 다중 FK(스키마) 우선순위:**
+   - 서로 다른 엔티티의 단일 PK 컬럼명이 우연히 같다고 직접 조인하지 않는다. M:N은 연결 테이블 경유(스키마 FK가 있을 때).
+   - 동일 테이블 쌍에 스키마 FK가 여럿이면 **참조 부모 PK 여부 → 물리 컬럼명 일치 → 더 짧은 키 → 컬럼 선언 순서**로 대표 간선을 고르되, **역할이 다른 FK는 모두** role-play로 남긴다.
+   - 카탈로그 FK 목록 순서는 방언마다 다를 수 있다. **테이블 컬럼 선언 순서**로 정렬한 뒤 쓴다.
+4. **Role-Playing (스키마에 동일 부모 FK가 2~3개일 때):**
+   - 예: `eye_colour_id`/`hair_colour_id`/`skin_colour_id`→`colour.id`가 **스키마 FK로** 있으면, 클론 table 없이 view `sources`에 동일 `table` + 서로 다른 `alias`.
+   - 역할별 라벨 컬럼은 alias 접두로 노출. 동일 부모 FK가 4개 초과면 조인하지 않고 ID만 둘 수 있다.
+5. **컬럼 노출 (검색·필터 표면):**
+   - **라벨·측정값 우선:** 룩업의 표시 컬럼(`publisher_name`, `alignment`, `power_name` 등), 허브 자연키/이름, fact 수치.
+   - **raw FK/PK id**는 허브 식별에 필요한 최소만(예: `hero_id` 또는 `id`). 모든 `*_id`를 view 컬럼으로 나열하지 않는다.
+   - 조인 키 동치류: prune에 필요하면 `mappings`에 여러 source를 넣되, **바깥 `name`은 에이전트가 쓸 라벨/허브 키**로 둔다. 비-루트 범용 `"id"`를 별도 컬럼으로 노출하지 않아도 된다.
+6. **허브 우선 `sources` 순서:**
+   - `joins`가 있으면 `sources[0]`은 조인 그래프의 **허브**(차수가 가장 높은 중심 테이블). 그 다음 말단·룩업.
+   - 공유 조인 키의 `mappings[0]`도 허브. identity view는 source 1개가 허브다.
+7. **표면 모드 (에이전트 UX vs 그레인):**
+   - **agent-surface (기본 초안):** 타깃당 **질의 표면 view(+cube) 하나**를 우선한다. 스키마 FK로 연결된 룩업·브릿지를 한 join view에 넣어도 된다. 자식/브릿지 조인에는 `relationship: "one_to_many"`를 반드시 적는다. (`SQL_MCP_GRAIN_GUARD`가 꺼진 전제.)
+   - **grain-split:** `SQL_MCP_GRAIN_GUARD`가 켜졌거나 eval이 팬/캐즘 FAIL을 내면, 형제 팩트·브릿지를 **허브별 view/cube로 분리**한다 — [semantic-from-eval](../semantic-from-eval/methodology.md).
 
 ## Quick checks
 
-- [ ] `fk.references.table`은 존재(또는 함께 등록할) 논리 table `name` (등록 시 부모 table 먼저 생성하거나 `fk: []`로 선생성 후 update)
-- [ ] `{table}_id`/`{Table}Id` 컬럼은 부모 `{table}.id`(또는 `{table}s.id`)로 `fk`·join 되어 있음(자체 PK 제외)
-- [ ] view `sources[].table`이 카탈로그 table/view `name`과 일치하고, `alias`(생략 시=`table`)는 view 내 유일
-- [ ] join `on` 컬럼이 각 source에 존재하며, 사이클을 닫는 직접 FK 조인 간선이 누락되지 않음
-- [ ] 조인 키 컬럼의 `mappings`에 동치류 테이블들이 함께 매핑되어 단독 테이블 질의 시 조인 프루닝이 가능함
-- [ ] `joins`가 있으면 `sources[0]`·공유 키 `mappings[0]`이 허브 테이블(말단이 아님)
+- [ ] `pk`/`fk`는 물리 스키마 제약만 (이름 패턴 추론 없음). 없으면 `[]`
+- [ ] `fk.references.table`은 존재(또는 함께 등록할) 논리 table `name`
+- [ ] view `joins`의 각 간선이 스키마 FK(또는 사용자 명시)에 대응하고, `relationship`이 채워짐
+- [ ] 기본 join `type`이 `inner`(예외만 `left` 등)
+- [ ] view `sources[].table`이 카탈로그 table `name`과 일치하고, `alias`(생략 시=`table`)는 view 내 유일
+- [ ] join `on` 컬럼이 각 source에 존재
+- [ ] 노출 컬럼이 라벨·측정 위주(불필요한 raw `*_id` 남발 없음)
+- [ ] `joins`가 있으면 `sources[0]`·공유 키 `mappings[0]`이 허브
 - [ ] union/minus: 모든 mapping이 전 source를 덮음
 - [ ] 필터 식별자는 물리 컬럼

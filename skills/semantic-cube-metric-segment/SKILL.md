@@ -14,29 +14,32 @@ description: >-
 
 ## Output layout
 
-`{outdir}/{name}.json` (table/view와 같은 디렉터리에 평탄하게). view가 많으면 휴리스틱 초안 스크립트 허용 — dimension/fact 분류·metric은 [contract.md](contract.md) 준수 후 검토. **MCP 등록은 사용자 요청 전 금지.**
+`{outdir}/{name}.json` (table/view와 같은 디렉터리에 평탄하게). view가 많으면 휴리스틱 초안 스크립트 허용 — dimension/fact 분류는 [contract.md](contract.md) 준수 후 검토. **자명한 metric/segment 대량 생성 금지.** **MCP 등록은 사용자 요청 전 금지.**
 
 ## Workflow
 
 ```
 Progress:
 - [ ] 1. view 컬럼 목록 확보 (초안 파일 또는 GET /api/meta)
-- [ ] 2. cube: name/description(사용용; 없으면 "") + dimensions/facts(column XOR expression)
-- [ ] 3. metric: name/description(사용용) · expression · aggregation · group_by · filter
-- [ ] 4. segment: name/description(사용용) + 비어 있지 않은 boolean filter (선택)
-- [ ] 5. 이름 충돌 검사; 등록은 요청 시에만 semantic-register
+- [ ] 2. cube: 기본 name=target · description("") 가능 · dimensions/facts · grain은 GRAIN_GUARD 시에만
+- [ ] 3. metric/segment: 이 단계에서 휴리스틱 남발 금지 — 골격만 필요하면 최소
+- [ ] 4. 이름 충돌 검사
+- [ ] 5. 필수 handoff → semantic-from-qa (description·KPI·cohort)
+- [ ] 6. 등록은 요청 시에만 semantic-register
 ```
 
 ### 1. Bound view
 
 `cube.view`는 정본(상세) view 하나. view `columns[].name`이 dimension/fact `column` 및 expression 식별자의 기준이다. 사전 집계 요약 view가 있으면 `choice: [{ "view": "<summary_view>", "summary": true }]`와 `prefer: "summary"`를 둔다. 이미 등록됐으면 `GET /api/meta/view/{name}`으로 가져온다(물리 DW 조회용이 아님).
 
+agent-surface 기본: **타깃당 cube 하나**, `name` = `target`.
+
 ### 2–4. Draft
 
 [contract.md](contract.md) 해당 절. 형태:
 
 - [examples/cubes/sales.json](examples/cubes/sales.json)
-- [examples/metrics/revenue.json](examples/metrics/revenue.json)
+- [examples/metrics/revenue.json](examples/metrics/revenue.json) — **예시일 뿐**, 모든 큐브에 복제하지 말 것
 - [examples/segments/paid.json](examples/segments/paid.json)
 
 파생·고급 식 예:
@@ -49,13 +52,17 @@ Progress:
   - 단순 조건: `status_code = 'PAID'`
   - 서브쿼리 코호트: `region_code IN (SELECT region_code FROM sales GROUP BY region_code HAVING SUM(sale_amount) > 1000)`
 
+룩업 라벨 dim `type`은 기본적으로 `string`이면 충분하다.
+
 ### 5. Hand off
 
-질문·도메인 지식·참고 SQL로 기존 cube를 다듬을 때는 **`semantic-from-qa`**. 실행 정확도 eval·그레인 분할은 **`semantic-from-eval`**.  
+**cube 골격 직후 `semantic-from-qa`**로 description·이름 붙은 metric/segment를 채운다.  
+실행 정확도 eval·그레인 분할은 **`semantic-from-eval`**.  
 등록 순서: cube → metric | segment. 검증·CRUD는 **`semantic-register`**.
 
 ## Do not
 
 - table/view를 여기서 만들지 않는다.
 - 타깃 DW 물리 탐색에 MCP를 쓰지 않는다.
+- `COUNT`/`AVG` 등 자명한 metric·일회성 segment를 휴리스틱으로 대량 생성하지 않는다.
 - 외부 레포 경로를 정본으로 삼지 않는다 — 이 스킬 폴더만.

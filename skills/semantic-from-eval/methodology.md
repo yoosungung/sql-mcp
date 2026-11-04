@@ -25,16 +25,23 @@ compiled 있고 테이블 집합 ⊆ gold      → agent가 실패      (로직/
 
 **원인:** 한 view가 형제 팩트(또는 브릿지)를 INNER JOIN으로 묶으면, 에이전트가 그 cube만 `FROM` 해도 컴파일러가 미사용 팩트를 넣는다. 뷰 **안**에 이미 묶인 팩트는 D23 cube-JOIN 가드가 나누지 못한다. Steiner prune은 **질의에 나온 테이블**만 남긴다 — 에이전트가 잘못된 형제 멤버를 집으면 팬/캐즘이 남는다.
 
-**규칙:**
+**모드:**
+
+| 모드 | 언제 | 형태 |
+|------|------|------|
+| agent-surface | 기본 초안 · `SQL_MCP_GRAIN_GUARD` 끔 · 그레인 FAIL 없음 | 타깃당 표면 view/cube 하나. 스키마 FK 조인 + `relationship`(`one_to_many` 포함) 허용 |
+| grain-split | 그레인 FAIL > 0 또는 `SQL_MCP_GRAIN_GUARD` 켠 타깃 | 아래 규칙으로 허브 분할 |
+
+**grain-split 규칙:**
 
 1. 비즈니스 프로세스(측정 사건)당 cube 하나. 팩트 테이블 = 허브.
 2. 허브 뷰는 허브 + **나열한 차원**만. 다른 허브는 차원이라 명시하지 않으면 넣지 않음.
 3. 브릿지(M:N, 출석·할당 등)는 허브에 흡수하지 않고 자체 cube.
 4. 공유 차원은 여러 허브 뷰에 재사용. metric/segment는 문서마다 `cube` 명시.
 5. 교차 팩트 KPI는 한 SELECT에 복수 팩트 metric을 넣지 않는다. 같은 `target`의 cube JOIN.
-6. 형제 팩트를 한 장의 One-Big-View로 만들지 않는다(디버그 포함).
+6. grain-split에서는 형제 팩트를 One-Big-View로 다시 묶지 않는다.
 
-허브는 FK 그래프로 **자동 탐지하지 않는다.** 도메인 담당이 고른 팩트 목록이 정본이다.
+허브는 스키마 FK 그래프로 **자동 탐지하지 않는다.** 도메인 담당이 고른 팩트 목록이 정본이다. table `fk`/view join도 **스키마에 선언된 FK만** 사용한다(이름 패턴 추론 금지 — [semantic-table-view/contract.md](../semantic-table-view/contract.md)).
 
 ## 지식
 

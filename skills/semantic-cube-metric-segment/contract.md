@@ -4,15 +4,18 @@
 
 ## 선행
 
-대상 `view`(및 그 table)가 이미 초안·등록되어 있어야 한다. 없으면 `semantic-table-view` 먼저.
+대상 `view`(및 그 table)가 이미 초안·등록되어 있어야 한다. 없으면 `semantic-table-view` 먼저.  
+도메인 서술·이름 붙은 KPI/cohort는 이 스킬의 휴리스틱만으로 채우지 말고 **`semantic-from-qa`**로 보강한다.
 
 참조 방향: `table → view → cube → metric|segment`.
 
 ## 이름·설명 (메타 사용 표면)
 
-`name`·`description`은 **메타 사용**(DW 에이전트 검색·동의어·업무 의미)용이다. 메타 **생성** 메모(`from table.column`, `Auto cube over view…`, `Dimension X from Y` 등)를 넣지 않는다. 사용 서술이 없으면 `description`은 빈 문자열(`""`)이 낫다.
+`name`·`description`은 **메타 사용**(DW 에이전트 검색·동의어·업무 의미)용이다. 메타 **생성** 메모(`from table.column`, `Auto cube over view…`, `Dimension X from Y` 등)을 넣지 않는다. 사용 서술이 없으면 `description`은 빈 문자열(`""`)이 낫다.
 
 자연스러운 `name`은 **cube · dimension · fact · metric · segment** 우선(검색 대상: 이름·설명, dim/fact는 type 추가). 중복 시 table · view · view 컬럼이 접미사를 받아 양보한다(물리 경로·물리 컬럼명은 유지). dim/fact가 가리키는 view 컬럼과 멤버명이 같으면 OK.
+
+**타깃 기본 큐브:** agent-surface 초안에서는 보통 **타깃당 cube 하나**, `name`은 `target`과 같게(예: target `superhero` → cube `superhero`). kind가 다르면 table과 동명 허용. 파일명 충돌 시 table/view만 접미사.
 
 ## 식·역할 공통
 
@@ -35,10 +38,14 @@
 
 `view`는 정본(상세) view 문서 **하나**. 요약 view가 있으면 선택 `choice[]`(`{ view, summary: true }`)와 `prefer: "summary"`를 함께 둔다. choice view의 `target`은 cube와 같고, 이름은 `cube.view`와 달라야 한다. 질의 컬럼 커버리지는 컴파일 때 검사한다.
 
+**`grain` (선택):** D29/`SQL_MCP_GRAIN_GUARD`를 쓸 때만 허브 PK 컬럼 배열을 넣는다. 가드가 꺼진 agent-surface 초안에서는 생략(`null`/미기재)해도 된다.
+
 **dimension**
 
 - `description` 필드 필수, **내용**은 메타 사용용(검색·동의어·업무 의미). 없으면 `""`. 생성 출처(`from {table}.{column}` 등) 금지. 동명 컬럼 구분은 `name` 접두·view 매핑으로 하고 description에 물리 출처를 쓰지 않는다.
-- `type`: `id` | `code` | `date` | `time` | `datetime` | `string` (`id`=식별 키, `code`=코드값)
+- `type`: `id` | `code` | `date` | `time` | `datetime` | `string`
+  - 허브 식별 키 → `id`. 날짜·시각 → `date`/`time`/`datetime`.
+  - **룩업 라벨**(publisher_name, alignment, colour 라벨 등)은 `code`를 강제하지 않는다. 에이전트 검색 표면에서는 **`string`이 기본으로 충분**하다. `as_code`가 필요할 때만 `code`.
 - `column`(view 컬럼) **또는** `expression`(view 컬럼명을 쓰는 **스칼라**, 집계 금지 D28) — 둘 중 하나만
 - `encryption`, `role`
 - 선택 `as_code`: `{ table, key_column, value_column, where? }` 코드사전(집계 후 바깥에서 `LEFT JOIN`하여 `{dim}__value` 컬럼을 **추가 프로젝션**함; 주의: `{dim}` 조회 시 반환 컬럼 수가 늘어나며 WHERE에서 `{dim}__value` 직접 필터링은 불가하므로, 값 자체로 WHERE 필터링하거나 반환 컬럼 수를 유지해야 하는 룩업은 `view.joins`의 룩업/역할 테이블 조인으로 노출하는 것이 유리함)
@@ -66,13 +73,19 @@
 | `filter` | `{ expression }` 또는 `null` |
 | `name` | 같은 cube의 dimension·fact 이름과 **겹치면 안 됨**(행 비율 fact와 그룹 KPI metric은 다른 이름) |
 
+**휴리스틱으로 metric을 대량 생성하지 않는다.** `COUNT(*)`/`AVG(height)` 같은 자명한 집계는 cube fact만으로 충분하다. 이름 붙은 KPI·비율·도메인 공식은 **`semantic-from-qa`**(또는 eval 지식 패치)에서만 승격한다.
+
 ## segment
 
 필수: `kind`, `name`, `description`, `cube`, `filter`. `filter`는 비울 수 없음. 식은 cube 멤버 이름(단순 boolean 비교 및 `IN (SELECT …)`/`EXISTS (SELECT …)` 등 서브쿼리 허용). 예: `status_code = 'PAID'`.
 
+**휴리스틱 cohort segment를 대량 생성하지 않는다.** 지식·질문에 반복·이름이 붙은 코호트만 `semantic-from-qa`로 승격한다.
+
 ## Quick checks
 
 - [ ] `cube.view` 존재; `column` ∈ 정본 view columns
+- [ ] agent-surface면 타깃당 기본 cube 하나·`name`≈`target` (예외는 문서화)
+- [ ] `grain`은 GRAIN_GUARD/D29 쓸 때만
 - [ ] `choice`와 `prefer`는 함께; choice view는 다른 join/union/minus view, 같은 target
 - [ ] cube·dim·fact·metric·segment `description`은 메타 사용 서술만(생성 출처 문구 없음). 없으면 `""`
 - [ ] `column`과 `expression` 동시 사용 없음
@@ -81,3 +94,4 @@
 - [ ] segment `filter.expression` non-empty
 - [ ] 식에 다중 문장·쓰기·쓰기 CTE 없음
 - [ ] `as_code.table`·key/value 컬럼이 등록 table에 존재(dimension만)
+- [ ] 자명한 COUNT/AVG metric·일회성 segment를 휴리스틱으로 넣지 않음

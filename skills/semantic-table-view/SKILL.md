@@ -17,17 +17,18 @@ description: >-
 
 문서마다 `{outdir}/{name}.json` 한 파일(파일명 = `name`, `kind`는 JSON 안). 하위 `tables/` 폴더는 필수가 아니다. `outdir`는 사용자가 준 초안 디렉터리(프로젝트마다 다름).
 
-다수 테이블이면 카탈로그를 읽는 **로컬 스크립트**로 table/view 골격을 만들어도 된다. 결과는 [contract.md](contract.md)를 지켜야 하며, 에이전트가 샘플·`as_code`·필터를 검토한다. **사용자가 요청하기 전에는 `/api/meta`로 등록하지 않는다.**
+다수 테이블이면 카탈로그를 읽는 **로컬 스크립트**로 table/view 골격을 만들어도 된다. 결과는 [contract.md](contract.md)를 지켜야 하며, 에이전트가 샘플·필터를 검토한다. **PK/FK·join은 물리 스키마 제약만** — 컬럼명으로 추론하지 않는다. **사용자가 요청하기 전에는 `/api/meta`로 등록하지 않는다.**
 
 ## Workflow
 
 ```
 Progress:
-- [ ] 1. 타깃 DW를 MCP 밖에서 탐색 (카탈로그·컬럼·샘플)
+- [ ] 1. 타깃 DW를 MCP 밖에서 탐색 (카탈로그·컬럼·선언 PK/FK·샘플)
 - [ ] 2. 이미 등록된 시맨틱 table/view 이름 확인 (선택, GET /api/meta)
 - [ ] 3. table JSON 초안 → {outdir}/{name}.json
-- [ ] 4. view JSON 초안 → {outdir}/{name}.json
-- [ ] 5. 등록은 사용자 요청 시에만 semantic-register
+- [ ] 4. view JSON 초안 → {outdir}/{name}.json  (joins에 relationship · 기본 inner)
+- [ ] 5. cube 초안은 semantic-cube-metric-segment → 이어서 semantic-from-qa
+- [ ] 6. 등록은 사용자 요청 시에만 semantic-register
 ```
 
 ### 1. Explore target DW (not MCP)
@@ -38,7 +39,7 @@ Progress:
 
 - 물리 `db` / `schema` / `table` 이름
 - 컬럼명·타입·nullable
-- PK·FK 후보
+- **선언된** PK·FK만 (없으면 빈 배열로 둠 — 이름 패턴 추론 금지)
 - 필터·코드값 분포(코드사전 `as_code`는 cube dimension에 등록)
 
 ### 2. Existing semantic names (optional)
@@ -51,13 +52,20 @@ Progress:
 
 ### 4. Draft `view`
 
-[contract.md](contract.md)의 view 절. 예시는 [examples/views/orders_customer.json](examples/views/orders_customer.json). `joins`가 있으면 `sources[0]`은 허브 테이블, 그 다음 말단. 공유 조인 키 `mappings[0]`도 허브.
+[contract.md](contract.md)의 view 절. 예시는 [examples/views/orders_customer.json](examples/views/orders_customer.json).
 
-### 5. Hand off
+- `joins`가 있으면 `sources[0]`은 허브, 공유 키 `mappings[0]`도 허브.
+- 각 join에 `relationship` · 기본 `type: "inner"`.
+- 기본은 **agent-surface**: 타깃당 표면 view 하나(스키마 FK로 룩업·브릿지 포함 가능). 그레인 분할은 `SQL_MCP_GRAIN_GUARD`/eval 후에 `semantic-from-eval`.
 
-초안을 파일 또는 메시지로 둔 뒤 **`semantic-register`**에 맡긴다. 등록 순서: 참조되는 table → view.
+### 5–6. Hand off
+
+cube/metric 골격 → **`semantic-cube-metric-segment`**.  
+도메인 description·KPI·cohort → **`semantic-from-qa`**(table/view/cube 초안 직후 **필수에 가깝게**).  
+등록 → 요청 시 **`semantic-register`** (table → view → cube → metric|segment).
 
 ## Do not
 
 - 타깃 DW 탐색에 MCP `list_tables` / `describe_table` / `sample_column` / `execute_sql`에 의존하지 않는다.
-- cube / metric / segment는 `semantic-cube-metric-segment`. Q&A·지식 보강은 `semantic-from-qa`. eval 기반 그레인 분할은 `semantic-from-eval`.
+- 컬럼명만 보고 FK/join을 추론하지 않는다.
+- cube / metric / segment 본문은 `semantic-cube-metric-segment`. Q&A·지식 보강은 `semantic-from-qa`. eval 그레인 분할은 `semantic-from-eval`.

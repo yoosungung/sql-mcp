@@ -1,0 +1,13 @@
+# BIRD payloads / drafts (scripts·plan·README는 추적). 루트 .gitignore와 맞춤.
+bird/**
+!bird/**/
+!bird/**/*.sh
+!bird/**/*.py
+!bird/**/semantic_plan.yaml
+!bird/README.md
+!bird/env.bird.example
+!bird/config.bird.toml
+
+eval/
+.venv/
+.pytest_cache/

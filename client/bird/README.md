@@ -4,6 +4,23 @@
 
 에이전트·eval: [../AGENTS.md](../AGENTS.md). 계획: [../ROADMAP.md](../ROADMAP.md).
 
+## Catalog vs drafts
+
+| 경로 | 역할 |
+|------|------|
+| `semantic.db` | 사람이 **최종 확인**한 등록 카탈로그. eval·런타임 SoT. |
+| `<db_id>/meta/` | `generate_meta.py` / `enrich_meta_from_qa.py` 스크립트 산출(휴리스틱). |
+| `.samentic-cursor/` | 코딩 에이전트가 제품 `skills/` 계약으로 만든 **미확정** JSON 경과. `semantic.db`를 초안 SoT로 쓰지 않는다. |
+
+에이전트는 각 `*.sqlite`를 MCP 밖에서 읽고 `skills/`(`semantic-table-view` → `semantic-cube-metric-segment` → 선택 `semantic-from-qa` \| `semantic-from-eval` → `semantic-register`) 순으로 초안을 둔다. 사람 피드백 전·요청 전에는 `/api/meta`·`register_meta`로 `semantic.db`에 올리지 않는다. `semantic.db` 대조는 요청 시에만.
+
+```text
+bird/.samentic-cursor/
+  <db_id>/              # 예: superhero, formula_1
+    <name>.json         # 문서당 1파일 (파일명 = 문서 name)
+    NOTES.md            # 선택: grain·미결정·질문
+```
+
 ## Fetch
 
 ```text

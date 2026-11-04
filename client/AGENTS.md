@@ -14,9 +14,11 @@ sql-mcp(서버 코드·제품 스킬·제품 기본 시맨틱 DB)는 **외부 �
 | `ROADMAP.md` | 이 패키지 수행 계획·eval 게이트 |
 | `DESIGN.md` | 에이전트·채점·미들웨어 **내부** 설계 + `## Commands` |
 | `README.md` | 사람용 quickstart |
-| `bird/README.md` | BIRD SQLite · Q-SQL · meta · 등록 |
+| `bird/README.md` | BIRD SQLite · Q-SQL · meta · 등록 · `.samentic-cursor` |
 | `bird/config.bird.toml` | sql-mcp 타깃 설정 (이 패키지 소유) |
 | `bird/env.bird.example` | DSN + `SQL_MCP_CONFIG` + `SQL_MCP_SEMANTIC_PATH` |
+| `bird/semantic.db` | 사람 확정 카탈로그(eval SoT). gitignore |
+| `bird/.samentic-cursor/` | 스킬 기반 에이전트 미확정 JSON(`<db>/<name>.json`). `semantic.db`를 초안 SoT로 쓰지 않음 — 상세 [bird/README.md](bird/README.md) |
 | `bird/<db>/semantic_plan.yaml` | 허브(팩트) 정본 (`{db}_all` 없음). git 추적 |
 | `docs/eval_report.md` · `docs/eval.md` | eval 요약 / 문항별 |
 | `eval/` | 런타임 산출. gitignore |
@@ -25,7 +27,7 @@ sql-mcp(서버 코드·제품 스킬·제품 기본 시맨틱 DB)는 **외부 �
 
 ## 2. 소유 경계
 
-**이 패키지** — `agent_bird.py` · `bird_qa.py` · `bird_eval.py` · `run_eval.py` · `write_eval_sql.py` · `bird/`(SQLite·Q-SQL·플랜·meta 스크립트·`config.bird.toml`·`semantic.db`) · `docs/` · `tests/` · 이 문서들.
+**이 패키지** — `agent_bird.py` · `bird_qa.py` · `bird_eval.py` · `run_eval.py` · `write_eval_sql.py` · `bird/`(SQLite·Q-SQL·플랜·meta 스크립트·`config.bird.toml`·`semantic.db`·`.samentic-cursor/`) · `docs/` · `tests/` · 이 문서들.
 
 **sql-mcp (외부)** — MCP 조회 · HTTP `/api/meta` · 컴파일러 · 제품 시맨틱 경로(BIRD와 분리).
 

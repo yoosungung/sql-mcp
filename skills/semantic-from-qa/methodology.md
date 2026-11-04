@@ -52,11 +52,13 @@
 
 ## Grain 분기
 
-컴파일러는 `combine: "join"` 뷰에서 질의가 참조한 테이블들($T_{req}$)만 최단 경로(Steiner)로 연결하고 미사용 테이블(루트 포함)을 자동 프루닝한다. 직접 FK와 조인 키 동치류가 맞으면 prune이 동작한다. **형제 팩트가 한 뷰에 있으면** 에이전트가 그 cube만 FROM 해도 팬/캐즘이 남는다 — eval로 드러나면 [semantic-from-eval](../semantic-from-eval/methodology.md)에서 허브 분할. 그 전에 다음이면 view 보강 또는 별도 view/cube 분리를 제안한다:
+컴파일러는 `combine: "join"` 뷰에서 질의가 참조한 테이블들($T_{req}$)만 최단 경로(Steiner)로 연결하고 미사용 테이블(루트 포함)을 자동 프루닝한다. 스키마 FK와 조인 키 동치류가 맞으면 prune이 동작한다.
 
-- `view.joins`에 직접 FK 간선이 빠져 우회 조인(Chasm/Fan Trap)이 발생하는 경우 → `view.joins`에 누락된 FK 간선 및 조인 키 양방향 매핑 보강 제안
-- 동일 소규모 룩업 테이블을 여러 역할 FK(`ship_to_address_id`, `bill_to_address_id` 등)로 참조해 동시 필터링이 막히는 경우 → 역할별 룩업 `table` 문서 분리 제안
-- 사전 집계 요약 테이블과 원천 상세 테이블을 함께 라우팅해야 하는 경우 → 요약은 별도 join view로 두고 cube `choice`(`summary: true`) + `prefer: "summary"` 제안
+**형제 팩트가 한 뷰에 있으면** 에이전트가 잘못된 멤버를 집을 때 팬/캐즘이 남는다. 기본 초안은 agent-surface(단일 표면)를 허용하고, **eval·`SQL_MCP_GRAIN_GUARD`로 드러나면** [semantic-from-eval](../semantic-from-eval/methodology.md)에서 grain-split한다. 그 전에 다음이면 view 보강 또는 분리만 **제안**한다:
+
+- `view.joins`에 **스키마에 있는** 직접 FK 간선이 빠져 우회 조인이 생기는 경우 → 해당 FK·`relationship` 보강 제안 (이름 패턴으로 FK를 새로 추론하지 않음)
+- 동일 소규모 룩업을 스키마가 여러 역할 FK로 참조하는데 alias가 빠진 경우 → role-play `alias` 보강 제안
+- 사전 집계 요약과 상세를 함께 라우팅해야 하는 경우 → 요약은 별도 join view + cube `choice`(`summary: true`) + `prefer: "summary"` 제안
 
 → view/table 수정이나 신규 생성이 필요하면 짧게 제안하고 `semantic-table-view` / `semantic-cube-metric-segment`로 넘긴다.
 

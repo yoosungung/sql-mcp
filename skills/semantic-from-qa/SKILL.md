@@ -14,6 +14,8 @@ description: >-
 
 선행: 대상 `table`/`view`/(가능하면) `cube` 초안이 있어야 한다. 없으면 `semantic-table-view` → `semantic-cube-metric-segment` 먼저.
 
+**위치:** table/view/cube **골격 직후 기본 다음 단계**다. cube 스킬의 휴리스틱 metric/segment·빈 description만으로 끝내지 말고, 질문·지식(또는 `bird_qa` 등)이 있으면 이 스킬로 도메인 표면을 채운다.
+
 문서 형태: [../semantic-cube-metric-segment/contract.md](../semantic-cube-metric-segment/contract.md).  
 마이닝 규칙 상세: [methodology.md](methodology.md).
 
@@ -53,7 +55,7 @@ Progress:
 
 ### 5–6. Grain · hand off
 
-한 cube/view로 커버 못 하는 grain이면 새 view/cube 초안을 **제안**하고, 작성은 `semantic-table-view` / `semantic-cube-metric-segment`에 넘긴다. 검증·CRUD는 **`semantic-register`**.
+agent-surface 단일 큐브로 커버 가능한지 먼저 본다. 팬/캐즘·가드가 필요하면 새 view/cube 분리를 **제안**만 하고, 작성·분할 루프는 `semantic-table-view` / `semantic-cube-metric-segment` / `semantic-from-eval`에 넘긴다. 검증·CRUD는 **`semantic-register`**.
 
 ## Do not
 
