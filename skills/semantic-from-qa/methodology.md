@@ -14,7 +14,8 @@
 | 지식·질문의 cohort (`유료 고객`, `EUR 결제`, `SME`) | 동일 조건이 여러 질문/지식에 재등장하거나 용어로 고정 | `segment` (`filter.expression`) |
 | GROUP BY·“by X”· dig 축 | view 컬럼(또는 파생 스칼라)으로 안정적 | `dimension` |
 | 금액·수량·환율 등 측정값 | 집계 대상이 반복 | `fact` (`amount`/`quantity`/`fx`) |
-| 코드값 + 표시명 | 사전 테이블이 시맨틱에 있음 | dimension `type: code` + `as_code` |
+| 코드값 + 표시명 | 사전 테이블이 시맨틱에 있음 | dimension `type: code` + `as_code`(describe 비노출) |
+| 지식·증거의 **반복 코드·라벨** (`'PAID'`, `Marvel Comics`) | WHERE에 쓰는 값이 여러 질문/지식에 재등장 | 해당 dim/fact `samples`(≤8, D31). `encryption: true` 금지 |
 | 날짜 잘림·연/월 grain | `date_trunc` 등으로 스칼라화 가능 | dimension `expression` (view 컬럼 기준) |
 
 ## 참고 SQL 사용법
@@ -22,6 +23,7 @@
 허용:
 
 - 조인·필터에 쓰인 **물리 컬럼** → 기존 view 컬럼/`mappings`와 대조해 누락 dim·fact 후보
+- gold/증거가 이미 있는 view 개념을 **다른 물리 컬럼**으로만 참조하면: 새 dim을 만들기보다 해당 view 컬럼 `mappings`에 그 source·column을 추가(속성 동치 — [semantic-table-view/contract.md](../semantic-table-view/contract.md))
 - WHERE/HAVING의 **비교·AND·재사용 가능한 서브쿼리 필터(`IN (SELECT …)`/`EXISTS (SELECT …)`)** → segment 후보 (식별자를 cube 멤버명으로 번역)
 - SELECT의 **그룹 집계·비율·윈도우** (`SUM(a)/SUM(b)`, `OVER (...)`) → metric `expression` 초안(D26 examples)
 - 행 그레인 비율(`col_a / col_b`를 SELECT/ORDER BY) → fact `expression` + `additive: false`(D28)
@@ -39,8 +41,9 @@
 ## 지식(knowledge) 우선
 
 1. 명시 공식·용어 정의 > 참고 SQL 패턴 > 질문 문구 휴리스틱  
-2. 동의어는 `description`·검색용 서술로 남기고, `name`은 짧고 안정적인 식별자 하나  
-3. 지식이 “필터”인지 “KPI”인지 모호하면: 결과는 스칼라 지표 → metric, 행 집합 제한 → segment  
+2. 동의어·혼동 축은 `description`·검색용 서술로 남기고, `name`은 짧고 안정적인 식별자 하나  
+3. 반복 코드 리터럴은 `samples`(합집합·≤8); 고유명·고카디널리티는 samples에 넣지 않음  
+4. 지식이 “필터”인지 “KPI”인지 모호하면: 결과는 스칼라 지표 → metric, 행 집합 제한 → segment  
 
 ## 병합 규칙
 
@@ -67,6 +70,7 @@
 - [ ] 후보마다: 재사용성(다른 질문/지식에서도 의미 있음) 확인
 - [ ] metric/segment 외부 식에 물리 SQL 별칭 잔재(`T1.` 등) 없음
 - [ ] 식별자가 대상 cube의 dim/fact/view 컬럼 규칙과 맞음
+- [ ] `samples` ≤8 · 기존과 합집합(없는 값만) · `encryption`과 비동시 · 고유명/고카디널리티 제외
 - [ ] `aggregation=group` metric의 `group_by`가 기본으로 쓸 리포트 축만 담음(차원 전부 나열하지 않음)
 - [ ] 질문 건수 ≫ 신규 metric/segment 건수 (과적합 아님)
 - [ ] eval·실행 비교를 이 산출의 완료 조건으로 쓰지 않음 (`semantic-from-eval`)

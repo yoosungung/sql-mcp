@@ -50,8 +50,8 @@ Progress:
 
 ### 3–4. Mine · merge
 
-[methodology.md](methodology.md): cohort → `segment`, 재사용 KPI → `metric`, 분석 축 → `dimension`(필요 시 `fact`/`expression`).  
-**질문 1건 = metric/segment 1개 금지.** 빈도·지식에서 이름이 붙은 개념만 승격. 기존 멤버와 합치고, Auto 휴리스틱보다 지식·질문 신호를 우선한다.
+[methodology.md](methodology.md): cohort → `segment`, 재사용 KPI → `metric`, 분석 축 → `dimension`(필요 시 `fact`/`expression`), 반복 코드 리터럴 → dim/fact `samples`(D31).  
+**질문 1건 = metric/segment 1개 금지.** 빈도·지식에서 이름이 붙은 개념만 승격. 기존 멤버·`samples`와 합치고, Auto 휴리스틱보다 지식·질문 신호를 우선한다.
 
 ### 5–6. Grain · hand off
 

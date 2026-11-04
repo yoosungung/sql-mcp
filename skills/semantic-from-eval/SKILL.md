@@ -5,7 +5,7 @@ description: >-
   (grain vs agent knowledge vs compiler bug) with a frozen classifier, and
   patches sql-mcp semantic JSON until gates hit or progress stalls. Use when
   evaluating a semantic layer, looping EX/row-set gaps, splitting cubes that
-  fan/chasm, or turning eval evidence into descriptions/metrics/segments.
+  fan/chasm, or turning eval evidence into descriptions/samples/metrics/segments.
 ---
 
 # Semantic refine · from eval
@@ -49,7 +49,7 @@ Progress:
 반복:
 - [ ] 3. 잔여 FAIL만 분류 (methodology.md). cause_counts 기록
 - [ ] 4. 그레인 > 0 → 허브 패치 (이미 맞는 cube는 건드리지 않음)
-- [ ] 5. 지식 > 0 → description / expression / metric / segment (멱등)
+- [ ] 5. 지식 > 0 → description / samples / expression / metric / segment (멱등)
 - [ ] 6. 등록 (요청 시 semantic-register). JSON 전체 wipe 금지
 - [ ] 7. 그레인: 같은 agent SQL dry_run. 지식: 재eval (회귀 포함)
 - [ ] 8. 정지? 게이트 충족 / Δ=0 / sql-mcp·기타만 남음 → 보고 후 종료
@@ -94,25 +94,26 @@ grain-split 규칙:
 
 ### 5. Knowledge
 
-프롬프트가 아니라 **시맨틱 표면**. `search_columns`는 dim/fact만 인덱스하고, metric/segment는 `describe_table.examples`다(D26).
+프롬프트가 아니라 **시맨틱 표면**. `search_columns`는 dim/fact만 인덱스하고, metric/segment는 `describe_table.examples`다(D26). 코드 리터럴 미리보기는 dim/fact **`samples`**(D31, `describe_table.columns[].samples`).
 
 | 신호 | 산출 |
 |------|------|
-| 동의어·코드값·혼동 금지 | dim/fact `description` (생성 출처 문구 금지) |
+| 동의어·혼동 축(눈 vs 피부 등) | dim/fact `description` (생성 출처 문구 금지) |
+| evidence/`refers to`의 **반복 코드·라벨** | 해당 dim(또는 fact) `samples`에 합집합(≤8) |
 | 연·나이 등 그룹/필터 축 | dimension `expression`(스칼라) |
 | 행 그레인 비율 (`ORDER BY`/`SELECT` 컬럼) | fact `expression` + `additive: false` |
 | 그룹 `SUM(a)/SUM(b)` KPI | **metric** (`examples`만. fact와 **다른 이름**) |
 | 에이전트가 `WHERE name`을 쓰는 코호트 | flag dim (`IIF`/`CASE`). segment는 examples 보조 |
-| 사람 이름 등 일회성 리터럴 | description만 (segment 금지) |
+| 사람 이름 등 일회성 리터럴 | description만 (segment·`samples` 금지) |
 
-질문 1건 = metric/segment 1개 금지. **멱등:** 빈 `description`만 채움, 같은 이름 metric/segment는 expression/filter를 덮어쓰지 않음, 이미 있는 expression dim은 스킵.
+질문 1건 = metric/segment 1개 금지. **멱등:** 빈 `description`만 채움 · `samples`는 없는 값만 append(≤8, FAIL/evidence 빈도 우선 절단) · `encryption: true`면 samples 금지 · 같은 이름 metric/segment는 expression/filter를 덮어쓰지 않음 · 이미 있는 expression dim은 스킵.
 
 ### 6–7. Register · gates
 
 등록 순서·검증: `semantic-register`. 초안 디렉터리 전체를 지우고 재생성하지 않는다(지식 JSON이 사라짐). 바뀐 문서만 create/update.
 
 1. **그레인 게이트** — **같은** agent SQL을 새 메타로 dry_run. 에이전트를 다시 돌리지 않는다.
-2. **지식 게이트** — 에이전트 재eval(문항 집합 전체 — 회귀 확인). description/`examples`가 SQL을 바꾸므로 생략 금지.
+2. **지식 게이트** — 에이전트 재eval(문항 집합 전체 — 회귀 확인). description/`samples`/`examples`가 SQL을 바꾸므로 생략 금지.
 
 매 라운드 `cause_counts`를 이전과 비교한다. 패치를 냈는데 Δ=0이면 같은 수정을 반복하지 말고 원인(분류 vs 메타 vs 에이전트)을 보고 정지한다.
 

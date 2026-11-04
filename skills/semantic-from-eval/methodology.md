@@ -49,17 +49,18 @@ agent가 실패인데 컴파일 테이블은 gold와 같으면, 표면이 질문
 
 | 신호 | 승격 | 금지 |
 |------|------|------|
-| `X refers to Y` / 코드 리터럴 | 해당 dim/fact `description` | 생성 출처(`from table.col`) |
+| 동의어·혼동 축 (`X refers to Y` 서술) | 해당 dim/fact `description` | 생성 출처(`from table.col`) |
+| evidence/`refers to`의 **반복 코드·라벨** (`'Blue'`, `Marvel Comics`) | 해당 dim(또는 fact) `samples`에 **합집합**(≤8, D31) | 고유명·고카디널리티·전 distinct dump · `encryption: true` |
 | 행 그레인 비율 (`SELECT`/`ORDER BY` 이름) | fact `expression` + `additive: false` | 같은 이름을 metric에도 쓰기; `SUM(rate)` |
 | 그룹 `SUM(a)/SUM(b)` KPI | metric `expression` (`examples`만, D26) | 행 비율 fact와 동명 |
 | YEAR/나이/날짜 잘림이 **축** | dimension `expression` (`EXTRACT`, `date_trunc`, `DATEDIFF`) | 물리 별칭 `T1`; 집계를 dim expression에 |
-| 에이전트가 `WHERE name`을 쓰는 코호트 | flag dim (`IIF`/`CASE`) | 질문마다 다른 사람 이름. segment 이름을 SQL 식별자로 |
+| 에이전트가 `WHERE name`을 쓰는 코호트 | flag dim (`IIF`/`CASE`) | 질문마다 다른 사람 이름. segment 이름을 SQL 식별자로 · samples에 복합 식 |
 | full name = 두 컬럼 | 두 dim description | concat dim (결과 열 수가 바뀜) |
 | 미생성 SQL / 파서 오해 | cube `description` + 유효 시맨틱 SELECT 스니펫 | 물리 테이블명을 cube 식에 |
 
-기존 metric 이름이 있으면 **expression을 덮어쓰지 않고** 빈 description만 보강.
+기존 metric 이름이 있으면 **expression을 덮어쓰지 않고** 빈 description만 보강. `samples`는 기존 배열에 **없는 값만 append**; 8 초과면 FAIL·evidence 빈도 높은 값 우선.
 
-`search_columns`는 dimension/fact만 찾는다. 에이전트가 KPI를 쓰려면 metric/segment가 `describe_table.examples`에 보여야 한다.
+`search_columns`는 dimension/fact만 찾는다. 에이전트가 KPI를 쓰려면 metric/segment가 `describe_table.examples`에 보여야 한다. 코드 리터럴 WHERE는 `describe_table.columns[].samples`(라이브 탐색은 `sample_column`).
 
 ## 게이트
 
@@ -76,7 +77,7 @@ agent가 실패인데 컴파일 테이블은 gold와 같으면, 표면이 질문
 |------|------|
 | 분류기 | 라운드 사이에 규칙·임계를 바꾸지 않음 |
 | 문항 집합 | 게이트에 쓴 집합을 유지. 임의로 FAIL만 골라 성공률을 만들지 않음 |
-| 멱등 | 빈 description만 채움. 동명 metric/segment/expression dim은 스킵. 허브 계획은 병합 |
+| 멱등 | 빈 description만 채움. `samples`는 없는 값만 append(≤8). 동명 metric/segment/expression dim은 스킵. 허브 계획은 병합 |
 | 최소 변경 | 이번 라운드 cause에 해당하는 JSON만. 무관한 cube/DB는 그대로 |
 | wipe 금지 | 생성기가 메타 디렉터리를 비우면 지식 문서가 사라짐. 반복 라운드에서는 증분 패치만 |
 
