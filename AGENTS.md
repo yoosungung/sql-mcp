@@ -19,8 +19,8 @@ This file provides guidance to AI coding assistants (Claude Code, Codex, Gemini,
 | `.github/workflows/ci.yml` | CI: PR/push `semantic-ui` `npm run build` 후 `cargo test -p sql-mcp --locked` | `.github/workflows/` |
 | `.github/workflows/cd.yml` | CD: master CI 성공 후 UI 빌드 + linux/windows/macos release → GitHub Release `current` | `.github/workflows/` |
 | `deploy/k8s/base/` | Kustomize 베이스 | `deploy/k8s/base/` |
-| `target_db/README.md` | BIRD Mini-Dev SQLite 로컬 타깃 + Q-SQL(`bird_qa/`) · meta JSON · `semantic-map.md` 생성 | `target_db/` |
-| `target_db/<db>/semantic_plan.yaml` | 허브(팩트) 정본 — `generate_meta`가 이 목록만 view+cube로 만듦 (`{db}_all` 없음). git 추적 | `target_db/` |
+| `client/bird/README.md` | BIRD Mini-Dev SQLite + Q-SQL(`bird_qa/`) · meta JSON · `semantic-map.md`. 카탈로그 런타임은 `client/bird/semantic.db`(gitignore). 제품 기본 `./data/semantic.db`와 분리 | `client/bird/` |
+| `client/bird/<db>/semantic_plan.yaml` | 허브(팩트) 정본 — `generate_meta`가 이 목록만 view+cube로 만듦 (`{db}_all` 없음). git 추적 | `client/bird/` |
 | `client/DESIGN.md` · `client/README.md` | LangChain v1 `create_agent` + sql-mcp 예제 (BIRD 질문) | `client/` |
 | `client/docs/eval_report.md` · `client/docs/eval.md` | BIRD eval **요약** / **문항별**(Gold SQL·rows vs Agent SQL·rows) | `client/docs/` |
 | `client/docs/fail_plan.md` | D29 EX FAIL 170건 **문항별** 개선 계획(패치 묶음 + qid) | `client/docs/` |

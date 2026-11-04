@@ -4,7 +4,7 @@ BIRD Mini-Dev **질문-SQL**을 넣고, LangChain v1 `create_agent()` + `MCPAdap
 
 ## 범위
 
-- Q-SQL 로더: `bird_qa.py` ← `target_db/bird_qa/mini_dev_sqlite.json` (`fetch_bird.sh`가 zip에서 추출)
+- Q-SQL 로더: `bird_qa.py` ← `client/bird/bird_qa/mini_dev_sqlite.json` (`fetch_bird.sh`가 zip에서 추출)
 - 에이전트: `agent_bird.py` — **HTTP만** (sql-mcp 기동은 client 밖). 유저 메시지는 BIRD `question`만 (`evidence`·`db_id`·difficulty 없음). DB는 `list_databases`로 고른다. `SYSTEM`은 출력을 **SQL SELECT 텍스트**(MDX/DAX/JSON 금지)로 고정하고, 표면 용어는 **테이블/컬럼**(`list_tables`/`describe_table`)이다(큐브/멤버라고 하지 않음). `describe_table.columns`는 dim+fact 합침(`kind`=`dimension`\|`fact`). `examples`(metric/segment)는 복사 스니펫이지 컬럼명이 아님. 최종 답은 SQL이 아니라 `execute_sql`의 `rows` 값으로 답하고, 모든 SELECT는 `FROM`에 테이블 이름을 명시. WHERE 코드성 필터는 `sample_column(database, table, name)`(선택 `like` 부분일치, `as_code`는 value)으로 리터럴·대소문자 검증 · `table` 생략 금지 · 툴 오류 시 같은 args 재호출 금지 · 0 rows 또는 COUNT/SUM 0이면 필터 재점검. `SELECT *` 금지 · 리터럴-only(`SELECT 1`/`true`)는 서버 D27 rewrite. D23·읽기 ANSI·`GROUP BY` 비한정·이스케이프·재시도 규칙 포함. **Max Retries:** 공백 정규화한 동일 SQL의 `execute_sql` 검증/실행 실패(`code`·parse·ToolMessage error; 0 rows는 제외)가 **3회**(최초 1 + 재시도 2)면 `IdenticalSqlFailureMiddleware`가 `jump_to=end`로 루프를 즉시 종료한다(Q1457형 18회 반복 방지)
 - 평가 스냅샷: `bird_eval.py` + `run_eval.py` → `client/eval/eval.json`
 - EX 채점: `bird_eval.score_eval_doc` — 마지막 성공 `execute_sql` rows vs `gold_rows` (unordered set). 실패는 `dw_agent` / `sql_mcp_code` / `semantic_layer`로 분류 → `client/eval/score_report.json`
@@ -25,7 +25,7 @@ fetch_bird.sh → bird_qa/mini_dev_sqlite.json
     run_eval.py → eval.json  (question/evidence/gold_sql/gold_rows + agent)
 ```
 
-BIRD gold `SQL`은 **물리 SELECT**이므로 `execute_sql`(시맨틱-only)에 그대로 넣지 않는다. 참고·비교용(`--show-gold`). gold 행은 `target_db/<db>/<db>.sqlite`에 직접 실행해 `gold_rows`로 저장한다.
+BIRD gold `SQL`은 **물리 SELECT**이므로 `execute_sql`(시맨틱-only)에 그대로 넣지 않는다. 참고·비교용(`--show-gold`). gold 행은 `client/bird/<db>/<db>.sqlite`에 직접 실행해 `gold_rows`로 저장한다.
 
 ### eval.json 항목
 
@@ -67,12 +67,12 @@ pip install -r client/requirements.txt
 cd client && pytest
 
 # 데이터 준비
-../target_db/fetch_bird.sh --small
+./bird/fetch_bird.sh --small
 
 # sql-mcp HTTP (다른 터미널, 저장소 루트 — client가 띄우지 않음)
-set -a && source ./target_db/env.bird.example && set +a
+# env 가 SQL_MCP_SEMANTIC_PATH=client/bird/semantic.db 를 넣는다.
+set -a && source ./client/bird/env.bird.example && set +a
 export SQL_MCP_CONFIG=./server/examples/config.bird.toml
-export SQL_MCP_SEMANTIC_PATH=./data/semantic.db
 cargo run -p sql-mcp
 
 # 에이전트 (기본: Ollama gemma4:e2b — ollama serve 필요)
@@ -97,7 +97,7 @@ python write_eval_sql.py --url http://127.0.0.1:8090/mcp
 # 허브 분할 후: FROM {db}를 gold 팩트 허브 큐브로만 바꿔 dry_run (에이전트 재실행 아님)
 python write_eval_sql.py --url http://127.0.0.1:8090/mcp --remap-cubes --output eval/eval_sql.hub.json
 # 등록 큐브 그레인: 컴파일 테이블 ⊆ yaml 허브+차원
-python ../target_db/hub_grain.py --url http://127.0.0.1:8090/mcp
+python bird/hub_grain.py --url http://127.0.0.1:8090/mcp
 
 # Cursor/VS Code 디버그 (.vscode/launch.json)
 # - Debug sql-mcp (BIRD)              — :8090

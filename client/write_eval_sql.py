@@ -23,7 +23,7 @@ from bird_eval import (
     write_eval_sql_json,
 )
 
-_TARGET_DB = Path(__file__).resolve().parents[1] / "target_db"
+_TARGET_DB = Path(__file__).resolve().parent / "bird"
 if str(_TARGET_DB) not in sys.path:
     sys.path.insert(0, str(_TARGET_DB))
 from hub_grain import remap_agent_sql  # noqa: E402

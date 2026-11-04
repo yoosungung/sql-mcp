@@ -69,8 +69,8 @@ def test_default_qa_path_under_repo() -> None:
     from bird_qa import default_qa_path
 
     root = repo_root()
-    assert (root / "target_db").is_dir()
-    assert default_qa_path() == root / "target_db" / "bird_qa" / "mini_dev_sqlite.json"
+    assert (root / "client" / "bird").is_dir()
+    assert default_qa_path() == root / "client" / "bird" / "bird_qa" / "mini_dev_sqlite.json"
 
 
 def test_load_extracted_bird_qa_if_present() -> None:
@@ -78,7 +78,7 @@ def test_load_extracted_bird_qa_if_present() -> None:
 
     path = default_qa_path()
     if not path.is_file():
-        pytest.skip("run ./target_db/fetch_bird.sh first")
+        pytest.skip("run ./client/bird/fetch_bird.sh first")
     rows = load_questions(path, db_ids={"superhero"})
     assert len(rows) >= 1
     assert all(r.db_id == "superhero" and r.sql for r in rows)

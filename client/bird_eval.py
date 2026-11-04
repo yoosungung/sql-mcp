@@ -66,7 +66,7 @@ def default_eval_dir() -> Path:
 
 
 def sqlite_path_for(db_id: str) -> Path:
-    return repo_root() / "target_db" / db_id / f"{db_id}.sqlite"
+    return repo_root() / "client" / "bird" / db_id / f"{db_id}.sqlite"
 
 
 def run_gold_sql(db_id: str, sql: str, *, row_limit: int = 500) -> tuple[list[list[Any]] | None, str | None]:

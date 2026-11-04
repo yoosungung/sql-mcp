@@ -12,7 +12,7 @@ from generate_semantic_map import (
     render_view_graph,
 )
 
-FIXTURE = Path(__file__).resolve().parent.parent / "semantic" / "examples"
+FIXTURE = Path(__file__).resolve().parents[2] / "semantic" / "examples"
 
 
 def _load_examples() -> dict[str, list[dict]]:

@@ -2,7 +2,7 @@
 """BIRD 질문 1건을 LangChain create_agent + sql-mcp(HTTP)로 질의하는 최소 예제.
 
 사전:
-  1. ./target_db/fetch_bird.sh --small   # SQLite + bird_qa JSON
+  1. ./client/bird/fetch_bird.sh --small   # SQLite + bird_qa JSON
   2. sql-mcp HTTP 기동 (client는 서버를 띄우지 않음)
   3. Ollama 기동 + 모델 (기본 `gemma4:e2b`). OpenAI/Anthropic도 `--model`로 가능.
 

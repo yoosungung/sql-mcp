@@ -15,6 +15,6 @@
   "files.watcherExclude": {
     "**/target/**": true,
     "**/data/**": true,
-    "**/target_db/.cache/**": true
+    "**/client/bird/.cache/**": true
   }
 }

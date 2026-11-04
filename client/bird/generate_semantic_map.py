@@ -468,7 +468,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "db_id",
         nargs="*",
-        help="target_db/<db_id> only (default: all dirs with meta/)",
+        help="client/bird/<db_id> only (default: all dirs with meta/)",
     )
     args = parser.parse_args(argv)
     if args.db_id:

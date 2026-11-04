@@ -1,5 +1,5 @@
 # BIRD Mini-Dev SQLite 타깃 예시.
-# DSN: target_db/env.bird.example 을 source 한 뒤 기동.
+# DSN·시맨틱 DB: client/bird/env.bird.example 을 source 한 뒤 기동.
 listen = "127.0.0.1:8080"
 max_rows = 1000
 sample_limit = 20

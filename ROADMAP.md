@@ -10,7 +10,7 @@ Rust MCP(`rmcp`) 서버: **임베디드 시맨틱 DB** + **복수 타깃 DB** �
 
 - M0: 문서·계약. MCP-only, 임베디드 libSQL, 일반 HTTP + stdio.
 - M1: 타깃 SELECT·탐색·메타 JSON CRUD가 일반 HTTP로 동작.
-- M2: `search_columns`(BM25/벡터/hybrid), 컴파일, CI, SQLite·BIRD `target_db/`.
+- M2: `search_columns`(BM25/벡터/hybrid), 컴파일, CI, SQLite·BIRD `client/bird/`.
 - M3: release·컨테이너·`deploy/k8s/base/`, MySQL·Oracle, RBAC·타임아웃.
 - M4: 타입별 `meta_*`, `execute_sql`은 시맨틱 SQL만, 요약 뷰·pruning·union.
 - M5: SELECT 절 전체, 전 계층 `role`, 카탈로그 캐시·`SQL_MCP_TIMEOUT_MS`.
