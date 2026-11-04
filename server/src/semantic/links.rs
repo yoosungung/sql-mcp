@@ -218,6 +218,7 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
                             "cube {name}.{iname}: as_code is only allowed on dimensions"
                         )));
                     }
+                    validate_member_samples(name, iname, item)?;
                 }
             }
         }
@@ -282,6 +283,43 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
         }
     }
 
+    Ok(())
+}
+
+fn validate_member_samples(cube: &str, member: &str, item: &Value) -> Result<(), AppError> {
+    let Some(samples) = item.get("samples") else {
+        return Ok(());
+    };
+    if samples.is_null() {
+        return Ok(());
+    }
+    let Some(arr) = samples.as_array() else {
+        return Err(AppError::Validation(format!(
+            "cube {cube}.{member}: samples must be an array"
+        )));
+    };
+    if arr.len() > 8 {
+        return Err(AppError::Validation(format!(
+            "cube {cube}.{member}: samples length {} exceeds max 8",
+            arr.len()
+        )));
+    }
+    for (i, v) in arr.iter().enumerate() {
+        if !(v.is_string() || v.is_number() || v.is_boolean() || v.is_null()) {
+            return Err(AppError::Validation(format!(
+                "cube {cube}.{member}: samples[{i}] must be string|number|boolean|null"
+            )));
+        }
+    }
+    let encrypted = item
+        .get("encryption")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if encrypted && !arr.is_empty() {
+        return Err(AppError::Validation(format!(
+            "cube {cube}.{member}: samples not allowed when encryption=true"
+        )));
+    }
     Ok(())
 }
 
@@ -509,6 +547,32 @@ mod tests {
         match err {
             AppError::Validation(msg) => {
                 assert!(msg.contains("duplicate column"), "{msg}");
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_samples_when_encryption_true() {
+        let mut docs = load_examples();
+        for d in &mut docs {
+            if d.get("kind").and_then(|v| v.as_str()) == Some("cube")
+                && d.get("name").and_then(|v| v.as_str()) == Some("sales")
+            {
+                let region = d["dimensions"]
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find(|x| x["name"] == "region_code")
+                    .unwrap();
+                region["encryption"] = json!(true);
+                region["samples"] = json!(["KR"]);
+            }
+        }
+        let err = validate_links(&docs).unwrap_err();
+        match err {
+            AppError::Validation(msg) => {
+                assert!(msg.contains("samples not allowed when encryption=true"), "{msg}");
             }
             other => panic!("expected Validation, got {other:?}"),
         }

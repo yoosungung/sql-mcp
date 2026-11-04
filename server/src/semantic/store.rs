@@ -70,6 +70,7 @@ impl SemanticStore {
         migrate_add_cube_grain(&conn).await?;
         migrate_add_cube_prefer(&conn).await?;
         migrate_surrogate_view_cube_ids(&conn).await?;
+        migrate_add_member_samples(&conn).await?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             embedder: None,
@@ -542,6 +543,20 @@ async fn migrate_add_fact_additive(conn: &Connection) -> Result<(), AppError> {
     )
     .await
     .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(())
+}
+
+/// Curated WHERE preview values on dim/fact (`samples` in document JSON).
+async fn migrate_add_member_samples(conn: &Connection) -> Result<(), AppError> {
+    for table in ["meta_cube_dimensions", "meta_cube_facts"] {
+        if table_has_column(conn, table, "samples_json").await? {
+            continue;
+        }
+        let sql = format!("ALTER TABLE {table} ADD COLUMN samples_json TEXT");
+        conn.execute(&sql, ())
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?;
+    }
     Ok(())
 }
 

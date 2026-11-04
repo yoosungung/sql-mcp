@@ -814,6 +814,10 @@ async fn insert_cube_member(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let role = role_json(item);
+    let samples_json = item
+        .get("samples")
+        .filter(|v| !v.is_null())
+        .map(|v| serde_json::to_string(v).unwrap_or_default());
     if is_dim {
         let dtype = opt_str(item, "type");
         let as_code_json = item
@@ -821,8 +825,8 @@ async fn insert_cube_member(
             .filter(|v| !v.is_null())
             .map(|v| serde_json::to_string(v).unwrap_or_default());
         conn.execute(
-            "INSERT INTO meta_cube_dimensions (cube_id, name, description, type, column_ref, expression, encryption, as_code_json, role_json)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            "INSERT INTO meta_cube_dimensions (cube_id, name, description, type, column_ref, expression, encryption, as_code_json, role_json, samples_json)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
             params![
                 cube_id,
                 name,
@@ -832,7 +836,8 @@ async fn insert_cube_member(
                 expression,
                 encryption as i32,
                 as_code_json,
-                role
+                role,
+                samples_json
             ],
         )
         .await
@@ -844,8 +849,8 @@ async fn insert_cube_member(
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
         conn.execute(
-            "INSERT INTO meta_cube_facts (cube_id, name, description, type, column_ref, expression, encryption, role_json, additive)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            "INSERT INTO meta_cube_facts (cube_id, name, description, type, column_ref, expression, encryption, role_json, additive, samples_json)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
             params![
                 cube_id,
                 name,
@@ -855,7 +860,8 @@ async fn insert_cube_member(
                 expression,
                 encryption as i32,
                 role,
-                additive as i32
+                additive as i32,
+                samples_json
             ],
         )
         .await
@@ -889,7 +895,7 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut dimensions = Vec::new();
     let mut drows = conn
         .query(
-            "SELECT name, description, type, column_ref, expression, encryption, as_code_json, role_json
+            "SELECT name, description, type, column_ref, expression, encryption, as_code_json, role_json, samples_json
              FROM meta_cube_dimensions WHERE cube_id = (SELECT id FROM meta_cubes WHERE name = ?1) ORDER BY name",
             params![name],
         )
@@ -906,7 +912,7 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     let mut facts = Vec::new();
     let mut frows = conn
         .query(
-            "SELECT name, description, type, column_ref, expression, encryption, role_json, additive
+            "SELECT name, description, type, column_ref, expression, encryption, role_json, additive, samples_json
              FROM meta_cube_facts WHERE cube_id = (SELECT id FROM meta_cubes WHERE name = ?1) ORDER BY name",
             params![name],
         )
@@ -980,6 +986,7 @@ fn load_member_dim(r: &libsql::Row) -> Result<Value, AppError> {
     let encryption: i32 = r.get(5).map_err(|e| AppError::Internal(e.into()))?;
     let as_code_json: Option<String> = r.get(6).ok();
     let role_s: String = r.get(7).map_err(|e| AppError::Internal(e.into()))?;
+    let samples_json: Option<String> = r.get(8).ok();
     let mut out = json!({
         "name": name,
         "description": description,
@@ -1000,6 +1007,7 @@ fn load_member_dim(r: &libsql::Row) -> Result<Value, AppError> {
             out["as_code"] = v;
         }
     }
+    attach_samples(&mut out, samples_json);
     Ok(out)
 }
 
@@ -1012,6 +1020,7 @@ fn load_member_fact(r: &libsql::Row) -> Result<Value, AppError> {
     let encryption: i32 = r.get(5).map_err(|e| AppError::Internal(e.into()))?;
     let role_s: String = r.get(6).map_err(|e| AppError::Internal(e.into()))?;
     let additive: i32 = r.get(7).unwrap_or(1);
+    let samples_json: Option<String> = r.get(8).ok();
     let mut out = json!({
         "name": name,
         "description": description,
@@ -1028,7 +1037,18 @@ fn load_member_fact(r: &libsql::Row) -> Result<Value, AppError> {
     if additive == 0 {
         out["additive"] = json!(false);
     }
+    attach_samples(&mut out, samples_json);
     Ok(out)
+}
+
+fn attach_samples(out: &mut Value, samples_json: Option<String>) {
+    if let Some(raw) = samples_json.filter(|s| !s.is_empty()) {
+        if let Ok(v) = serde_json::from_str::<Value>(&raw) {
+            if v.as_array().is_some_and(|a| !a.is_empty()) {
+                out["samples"] = v;
+            }
+        }
+    }
 }
 
 async fn insert_metric(conn: &Connection, body: &Value) -> Result<(), AppError> {

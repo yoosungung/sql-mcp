@@ -193,13 +193,8 @@ impl SqlMcp {
             Err(e) => return tool_err(e),
         };
         let cube_name = args.table.as_str();
-        let mut columns = project_dim_fact_members(cube.get("dimensions"), role, true, "dimension");
-        columns.extend(project_dim_fact_members(
-            cube.get("facts"),
-            role,
-            false,
-            "fact",
-        ));
+        let mut columns = project_dim_fact_members(cube.get("dimensions"), role, "dimension");
+        columns.extend(project_dim_fact_members(cube.get("facts"), role, "fact"));
         let mut examples: Vec<Value> = Vec::new();
         for m in metrics
             .into_iter()
@@ -546,7 +541,6 @@ fn filter_as_expression(filter: Option<&Value>) -> Value {
 fn project_dim_fact_members(
     members: Option<&Value>,
     role: Option<&str>,
-    include_as_code: bool,
     kind: &str,
 ) -> Vec<Value> {
     let Some(arr) = members.and_then(|v| v.as_array()) else {
@@ -560,17 +554,18 @@ fn project_dim_fact_members(
                 "name": m.get("name").cloned().unwrap_or(Value::Null),
                 "description": m.get("description").cloned().unwrap_or(json!("")),
                 "type": m.get("type").cloned().unwrap_or(Value::Null),
-                "encryption": m.get("encryption").cloned().unwrap_or(json!(false)),
             });
-            if include_as_code {
-                if let Some(ac) = m.get("as_code") {
-                    if !ac.is_null() {
-                        out["as_code"] = ac.clone();
+            // encryption / as_code stay off the DW surface (compile · sample_column · D17).
+            if kind == "fact" && m.get("additive").and_then(|v| v.as_bool()) == Some(false) {
+                out["additive"] = json!(false);
+            }
+            let encrypted = m.get("encryption").and_then(|v| v.as_bool()) == Some(true);
+            if !encrypted {
+                if let Some(samples) = m.get("samples").and_then(|v| v.as_array()) {
+                    if !samples.is_empty() {
+                        out["samples"] = json!(samples);
                     }
                 }
-            }
-            if !include_as_code && m.get("additive").and_then(|v| v.as_bool()) == Some(false) {
-                out["additive"] = json!(false);
             }
             out
         })
@@ -944,7 +939,17 @@ mod tests {
             .find(|d| d["name"] == "region_code")
             .expect("region_code");
         assert_eq!(region["kind"], "dimension");
-        assert!(region.get("as_code").is_some());
+        assert!(region.get("as_code").is_none(), "as_code hidden on describe");
+        assert!(
+            region.get("encryption").is_none(),
+            "encryption hidden on describe"
+        );
+        assert_eq!(region["samples"], json!(["KR", "US", "JP"]));
+        let status = cols
+            .iter()
+            .find(|d| d["name"] == "status_code")
+            .expect("status_code");
+        assert_eq!(status["samples"], json!(["PAID", "PENDING", "CANCELLED"]));
 
         let finance = tool_json(
             mcp.describe_table(Parameters(DescribeTableArgs {

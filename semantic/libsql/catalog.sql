@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS meta_cube_dimensions (
   encryption INTEGER NOT NULL,
   as_code_json TEXT,
   role_json TEXT NOT NULL DEFAULT '"all"',
+  samples_json TEXT,
   PRIMARY KEY (cube_id, name)
 ) STRICT;
 
@@ -108,6 +109,7 @@ CREATE TABLE IF NOT EXISTS meta_cube_facts (
   encryption INTEGER NOT NULL,
   role_json TEXT NOT NULL DEFAULT '"all"',
   additive INTEGER NOT NULL DEFAULT 1,
+  samples_json TEXT,
   PRIMARY KEY (cube_id, name)
 ) STRICT;
 

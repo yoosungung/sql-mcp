@@ -9,9 +9,11 @@ import {
   mappingFor,
   memberPayload,
   parseRole,
+  parseSamples,
   removeJoin,
   renameViewColumn,
   roleText,
+  samplesText,
   setJoinRelationship,
   setMapping,
   setSourceAlias,
@@ -807,9 +809,31 @@ function MemberDetail({
           <Checkbox
             checked={Boolean(local.encryption)}
             aria-label="Encryption"
-            onCheckedChange={(v) => setLocal({ ...local, encryption: v === true })}
+            onCheckedChange={(v) => {
+              const encryption = v === true;
+              const next = { ...local, encryption };
+              if (encryption) delete next.samples;
+              setLocal(next);
+            }}
           />
         </Field>
+        {!local.encryption && (
+          <Field label="Samples">
+            <TextField.Root
+              size="2"
+              value={samplesText(local.samples)}
+              onChange={(e) => {
+                const samples = parseSamples(e.target.value);
+                const next = { ...local };
+                if (samples) next.samples = samples;
+                else delete next.samples;
+                setLocal(next);
+              }}
+              placeholder="KR, US, JP"
+              aria-label="Member samples"
+            />
+          </Field>
+        )}
         {kind === "fact" && (
           <Field label="Additive">
             <Checkbox

@@ -84,6 +84,8 @@ export type Member = {
   encryption?: boolean;
   as_code?: AsCode;
   additive?: boolean;
+  /** WHERE preview values (≤8). Cleared when encryption is true. */
+  samples?: Array<string | number | boolean | null>;
   role?: Role;
 };
 
@@ -115,8 +117,33 @@ export function memberPayload(member: Member, kind: "dimension" | "fact"): Membe
     next.as_code = { ...member.as_code };
   }
   if (kind === "fact" && member.additive === false) next.additive = false;
+  if (!(member.encryption ?? false) && member.samples && member.samples.length > 0) {
+    next.samples = member.samples.slice(0, 8);
+  }
   if (member.role && member.role !== "all") next.role = member.role;
   return next;
+}
+
+/** Comma/newline-separated preview values for dim/fact `samples`. */
+export function samplesText(samples?: Array<string | number | boolean | null>): string {
+  if (!samples?.length) return "";
+  return samples.map((v) => (v === null ? "null" : String(v))).join(", ");
+}
+
+export function parseSamples(text: string): Array<string | number | boolean | null> | undefined {
+  const parts = text
+    .split(/[,\n]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 8);
+  if (!parts.length) return undefined;
+  return parts.map((p) => {
+    if (p === "null") return null;
+    if (p === "true") return true;
+    if (p === "false") return false;
+    if (/^-?\d+(\.\d+)?$/.test(p)) return Number(p);
+    return p;
+  });
 }
 
 export function applyCombine(view: Doc, combine: "join" | "union" | "minus"): Doc {

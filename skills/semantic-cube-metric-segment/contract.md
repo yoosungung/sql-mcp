@@ -30,7 +30,8 @@
 - cube/metric/segment 식의 식별자: 저장 시에는 연결 그래프 위주; **컴파일 직전**에 dimension·fact·(해당 시) view/물리 컬럼으로 해석. 실패 시 `validation`.
 - cube·metric·segment의 식에서 쓰는 이름은 그 cube의 **dimension / fact 이름**(metric `expression`의 피연산은 view 컬럼 기준 연산으로 작성하되, 질의·segment filter는 멤버 이름).
 - `role` 생략 또는 `"all"` 또는 role 이름 배열.
-- `encryption: true`인 dimension/fact는 암·복호화하지 않고 응답·샘플·로그에서 원문 마스킹(`null` 또는 `"***"`). AES 등은 타깃 DW 책임.
+- `encryption: true`인 dimension/fact는 암·복호화하지 않고 응답·샘플·로그에서 원문 마스킹(`null` 또는 `"***"`). AES 등은 타깃 DW 책임. `describe_table`에는 `encryption`/`as_code`를 노출하지 않는다.
+- 선택 `samples`(스칼라 ≤8): WHERE 미리보기. `describe_table.columns[].samples`로 노출. `encryption: true`와 동시 등록 금지. 라이브 탐색은 `sample_column`.
 
 ## cube
 
@@ -47,8 +48,8 @@
   - 허브 식별 키 → `id`. 날짜·시각 → `date`/`time`/`datetime`.
   - **룩업 라벨**(publisher_name, alignment, colour 라벨 등)은 `code`를 강제하지 않는다. 에이전트 검색 표면에서는 **`string`이 기본으로 충분**하다. `as_code`가 필요할 때만 `code`.
 - `column`(view 컬럼) **또는** `expression`(view 컬럼명을 쓰는 **스칼라**, 집계 금지 D28) — 둘 중 하나만
-- `encryption`, `role`
-- 선택 `as_code`: `{ table, key_column, value_column, where? }` 코드사전(집계 후 바깥에서 `LEFT JOIN`하여 `{dim}__value` 컬럼을 **추가 프로젝션**함; 주의: `{dim}` 조회 시 반환 컬럼 수가 늘어나며 WHERE에서 `{dim}__value` 직접 필터링은 불가하므로, 값 자체로 WHERE 필터링하거나 반환 컬럼 수를 유지해야 하는 룩업은 `view.joins`의 룩업/역할 테이블 조인으로 노출하는 것이 유리함)
+- `encryption`, `role`, 선택 `samples`
+- 선택 `as_code`: `{ table, key_column, value_column, where? }` 코드사전(집계 후 바깥에서 `LEFT JOIN`하여 `{dim}__value` 컬럼을 **추가 프로젝션**함; 주의: `{dim}` 조회 시 반환 컬럼 수가 늘어나며 WHERE에서 `{dim}__value` 직접 필터링은 불가하므로, 값 자체로 WHERE 필터링하거나 반환 컬럼 수를 유지해야 하는 룩업은 `view.joins`의 룩업/역할 테이블 조인으로 노출하는 것이 유리함). describe 비노출.
 
 **fact**
 
@@ -56,7 +57,7 @@
 - `type`: `amount` | `fx` | `quantity` (취급 방식 — dim `type`과 같은 축)
 - `column` XOR `expression` (`expression`은 스칼라만, D28)
 - `additive`: 기본 `true`. `false`는 행 그레인 비율 등 비가산 — `SUM`/`AVG`/`COUNT(col)` 거절, ungrouped `SELECT`/`WHERE`/`ORDER BY`/`MIN`/`MAX` 허용
-- `encryption`, `role`
+- `encryption`, `role`, 선택 `samples`
 
 `expression`으로 만든 dimension/fact는 **저장 시** view 컬럼 연결 검사를 하지 않는다(식 식별자는 컴파일 단계).
 
@@ -94,4 +95,5 @@
 - [ ] segment `filter.expression` non-empty
 - [ ] 식에 다중 문장·쓰기·쓰기 CTE 없음
 - [ ] `as_code.table`·key/value 컬럼이 등록 table에 존재(dimension만)
+- [ ] `samples` ≤8 · `encryption: true`와 비동시 · describe에 `encryption`/`as_code` 비노출
 - [ ] 자명한 COUNT/AVG metric·일회성 segment를 휴리스틱으로 넣지 않음

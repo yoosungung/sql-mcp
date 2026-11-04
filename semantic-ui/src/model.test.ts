@@ -161,6 +161,19 @@ describe("memberPayload", () => {
     expect(payload.expression).toBe("a - b");
     expect(payload.column).toBeUndefined();
   });
+
+  it("keeps samples unless encryption is on", () => {
+    const withSamples = memberPayload(
+      { name: "region_code", description: "", type: "code", column: "region_code", encryption: false, samples: ["KR", "US"] },
+      "dimension",
+    );
+    expect(withSamples.samples).toEqual(["KR", "US"]);
+    const encrypted = memberPayload(
+      { name: "ssn", description: "", type: "string", column: "ssn", encryption: true, samples: ["x"] },
+      "dimension",
+    );
+    expect(encrypted.samples).toBeUndefined();
+  });
 });
 
 describe("removeJoin", () => {

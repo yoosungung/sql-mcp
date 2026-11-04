@@ -41,6 +41,7 @@ Rust MCP(`rmcp`) 서버: **임베디드 시맨틱 DB** + **복수 타깃 DB** �
 - 제거: D5 세션형 Streamable HTTP, D10/D11 Frontend. stdio는 로컬용으로 복원.
 - semantic-ui: 루트 Vite React 작성 화면. `GET /ui`가 `semantic-ui/dist`를 서빙. 내용 [`semantic-ui/DESIGN.md`](semantic-ui/DESIGN.md).
 - D30: 메타 CRUD·물리 카탈로그는 HTTP `/api`. MCP는 조회만. `SQL_MCP_MODE` 폐기.
+- D31: dim/fact 선택 `samples`(≤8) → `describe_table.columns[].samples`. `encryption`·`as_code`는 describe 비노출(컴파일·sample_column·D17 내부).
 
 ## 남은 일 — Cube 관계 모델 · 팬아웃 거절 (D29)
 

@@ -146,6 +146,36 @@ mod tests {
     }
 
     #[test]
+    fn accepts_member_samples_rejects_too_many() {
+        let mut body: Value =
+            serde_json::from_str(include_str!("../../../semantic/examples/cubes/sales.json"))
+                .unwrap();
+        {
+            let region = body["dimensions"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|d| d["name"] == "region_code")
+                .unwrap();
+            region["samples"] = json!(["KR", "US", "JP", "CN", "GB", "FR", "DE", "IT"]);
+        }
+        validate_document(&body).unwrap();
+        {
+            let region = body["dimensions"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|d| d["name"] == "region_code")
+                .unwrap();
+            region["samples"] = json!(["KR", "US", "JP", "CN", "GB", "FR", "DE", "IT", "AU"]);
+        }
+        assert!(matches!(
+            validate_document(&body),
+            Err(AppError::Validation(_))
+        ));
+    }
+
+    #[test]
     fn accepts_physical_column_with_spaces() {
         let body = json!({
             "kind": "table",

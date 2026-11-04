@@ -33,6 +33,7 @@
         "value_column": "name",
         "where": "lang = 'ko'"
       },
+      "samples": ["KR", "US", "JP"],
       "role": "all"
     },
     {
@@ -46,6 +47,7 @@
         "key_column": "code",
         "value_column": "name"
       },
+      "samples": ["PAID", "PENDING", "CANCELLED"],
       "role": "all"
     },
     {
