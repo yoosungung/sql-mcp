@@ -1035,7 +1035,7 @@ fn docs_with_relationship(rel: &str) -> Vec<Value> {
 fn many_to_one_label_does_not_change_physical_sql() {
     let before =
         compile_metric_select(&example_docs(), "revenue", &["paid"], Some("branch")).unwrap();
-    std::env::set_var("SQL_MCP_GRAIN_GUARD", "dw");
+    let _guard = crate::config::GrainGuardOverride::set(Some("dw"));
     let after = compile_metric_select(
         &docs_with_relationship("many_to_one"),
         "revenue",
@@ -1043,29 +1043,33 @@ fn many_to_one_label_does_not_change_physical_sql() {
         Some("branch"),
     )
     .unwrap();
-    std::env::remove_var("SQL_MCP_GRAIN_GUARD");
     assert_eq!(before, after);
 }
 
 #[test]
 fn grain_guard_defaults_off_and_rejects_only_when_target_is_listed() {
-    std::env::remove_var("SQL_MCP_GRAIN_GUARD");
     let docs = docs_with_relationship("one_to_many");
     let spec = CubeQuerySpec {
         metrics: vec!["revenue".into()],
         dimensions: vec!["customer_status_code".into()],
         ..Default::default()
     };
-    let off = compile_cube_query(&docs, "sales", &spec, Some("branch"), None).unwrap();
+    let off = {
+        let _guard = crate::config::GrainGuardOverride::set(None);
+        compile_cube_query(&docs, "sales", &spec, Some("branch"), None).unwrap()
+    };
     assert!(off.to_ascii_uppercase().contains("SELECT"), "{off}");
-    std::env::set_var("SQL_MCP_GRAIN_GUARD", "other_db");
-    let other = compile_cube_query(&docs, "sales", &spec, Some("branch"), None).unwrap();
+    let other = {
+        let _guard = crate::config::GrainGuardOverride::set(Some("other_db"));
+        compile_cube_query(&docs, "sales", &spec, Some("branch"), None).unwrap()
+    };
     assert_eq!(off, other);
-    std::env::set_var("SQL_MCP_GRAIN_GUARD", "dw");
-    let err = compile_cube_query(&docs, "sales", &spec, Some("branch"), None)
-        .unwrap_err()
-        .to_string();
-    std::env::remove_var("SQL_MCP_GRAIN_GUARD");
+    let err = {
+        let _guard = crate::config::GrainGuardOverride::set(Some("dw"));
+        compile_cube_query(&docs, "sales", &spec, Some("branch"), None)
+            .unwrap_err()
+            .to_string()
+    };
     assert!(err.contains("Fan-out rejected"), "{err}");
 }
 

@@ -103,13 +103,54 @@ impl Config {
 
 /// D29: comma-separated cube `target` ids. Unset or empty keeps fan-out/chasm checks off.
 pub fn grain_guard_on(target: &str) -> bool {
-    let Ok(raw) = env::var("SQL_MCP_GRAIN_GUARD") else {
+    let Some(raw) = grain_guard_raw() else {
         return false;
     };
     raw.split(',')
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .any(|s| s == target)
+}
+
+fn grain_guard_raw() -> Option<String> {
+    #[cfg(test)]
+    {
+        if let Some(over) = GRAIN_GUARD_OVERRIDE.with(|slot| slot.borrow().clone()) {
+            return over.filter(|s| !s.is_empty());
+        }
+    }
+    env::var("SQL_MCP_GRAIN_GUARD")
+        .ok()
+        .filter(|s| !s.is_empty())
+}
+
+#[cfg(test)]
+thread_local! {
+    static GRAIN_GUARD_OVERRIDE: std::cell::RefCell<Option<Option<String>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Forces `SQL_MCP_GRAIN_GUARD` for this thread. `None` turns the guard off.
+/// Parallel tests must not use `env::set_var` for this flag.
+#[cfg(test)]
+pub struct GrainGuardOverride {
+    prev: Option<Option<String>>,
+}
+
+#[cfg(test)]
+impl GrainGuardOverride {
+    pub fn set(value: Option<&str>) -> Self {
+        let prev = GRAIN_GUARD_OVERRIDE.with(|slot| slot.replace(Some(value.map(str::to_string))));
+        Self { prev }
+    }
+}
+
+#[cfg(test)]
+impl Drop for GrainGuardOverride {
+    fn drop(&mut self) {
+        let prev = self.prev.take();
+        GRAIN_GUARD_OVERRIDE.with(|slot| *slot.borrow_mut() = prev);
+    }
 }
 
 #[cfg(test)]
@@ -137,6 +178,20 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains(path.to_string_lossy().as_ref()), "{msg}");
         assert!(msg.contains("invalid config"), "{msg}");
+    }
+
+    #[test]
+    fn grain_guard_matches_listed_targets_only() {
+        let _off = GrainGuardOverride::set(None);
+        assert!(!grain_guard_on("dw"));
+        drop(_off);
+        let _other = GrainGuardOverride::set(Some("other_db"));
+        assert!(!grain_guard_on("dw"));
+        drop(_other);
+        let _listed = GrainGuardOverride::set(Some(" dw , other "));
+        assert!(grain_guard_on("dw"));
+        assert!(grain_guard_on("other"));
+        assert!(!grain_guard_on("other_db"));
     }
 
     #[test]
