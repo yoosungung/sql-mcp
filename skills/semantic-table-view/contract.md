@@ -71,7 +71,6 @@
    - **라벨·측정값 우선:** 룩업의 표시 컬럼(`publisher_name`, `alignment`, `power_name` 등), 허브 자연키/이름, fact 수치.
    - **raw FK/PK id**는 허브 식별에 필요한 최소만(예: `hero_id` 또는 `id`). 모든 `*_id`를 view 컬럼으로 나열하지 않는다.
    - 조인 키 동치류: prune에 필요하면 `mappings`에 여러 source를 넣되, **바깥 `name`은 에이전트가 쓸 라벨/허브 키**로 둔다. 비-루트 범용 `"id"`를 별도 컬럼으로 노출하지 않아도 된다.
-   - **엔티티 한정 (agent-surface 평탄 이름):** join view에 여러 source를 펼치면, DW 에이전트는 물리 출처보다 **바깥 `columns[].name` 목록**으로 NL→컬럼을 고른다. 물리명이 `notes`·`amount`·`status`·`type`·`location`·`approved`·`date`처럼 **여러 엔티티에 쓰일 수 있는 공통명사**이면, 논리 이름을 엔티티로 한정한다(예: `order_notes` / `shipment_notes`, `order_amount` / `payment_amount`, `order_status` / `customer_status`). 허브·도메인에서 이미 유일한 이름(`first_name`, `order_id`, `sale_amount`)에는 접두를 억지로 붙이지 않는다. 물리 컬럼명·`mappings.column`은 그대로 두고 **논리 `name`만** 바꾼다. dim/fact는 이 논리 이름을 따른다.
 6. **속성 동치 다중 매핑 (조인 키 아님):**
    - FK(또는 view `joins` 간선)로 연결된 두 source에, **조인 `on` 컬럼이 아닌** 컬럼이 같은 업무 의미를 담는 경우가 있다(부모 상태·유형·이름을 자식에 복사한 형태).
    - **판정 (이름만으로 조인 간선을 새로 만들지 말 것 — 이미 있는 간선 위에서만):**
@@ -96,7 +95,6 @@
 - [ ] view `sources[].table`이 카탈로그 table `name`과 일치하고, `alias`(생략 시=`table`)는 view 내 유일
 - [ ] join `on` 컬럼이 각 source에 존재
 - [ ] 노출 컬럼이 라벨·측정 위주(불필요한 raw `*_id` 남발 없음)
-- [ ] 평탄 view에서 공통명사 논리 이름은 엔티티로 한정됨(물리명 유지; 유일하면 접두 불필요)
 - [ ] FK로 연결된 테이블 쌍에 값·증거가 같은 비키 속성이 있으면 한 view 컬럼에 다중 `mappings`(속성 동치)
 - [ ] `joins`가 있으면 `sources[0]`·공유 키 `mappings[0]`이 허브
 - [ ] union/minus: 모든 mapping이 전 source를 덮음
