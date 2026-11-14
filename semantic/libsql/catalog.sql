@@ -113,6 +113,16 @@ CREATE TABLE IF NOT EXISTS meta_cube_facts (
   PRIMARY KEY (cube_id, name)
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS meta_cube_hierarchies (
+  cube_id INTEGER NOT NULL REFERENCES meta_cubes(id) ON DELETE CASCADE,
+  pos INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  levels_json TEXT NOT NULL,
+  PRIMARY KEY (cube_id, pos),
+  UNIQUE (cube_id, name)
+) STRICT;
+
 -- 4. Metric & Segment
 CREATE TABLE IF NOT EXISTS meta_metrics (
   name TEXT PRIMARY KEY,

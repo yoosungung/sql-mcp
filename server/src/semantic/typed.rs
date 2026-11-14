@@ -193,6 +193,7 @@ async fn delete_cube_children(conn: &Connection, cube_id: i64) -> Result<(), App
         "DELETE FROM meta_cube_choices WHERE cube_id = ?1",
         "DELETE FROM meta_cube_dimensions WHERE cube_id = ?1",
         "DELETE FROM meta_cube_facts WHERE cube_id = ?1",
+        "DELETE FROM meta_cube_hierarchies WHERE cube_id = ?1",
     ] {
         conn.execute(sql, params![cube_id])
             .await
@@ -769,6 +770,22 @@ async fn insert_cube_children(
             insert_cube_member(conn, "meta_cube_facts", cube_id, f, false).await?;
         }
     }
+    if let Some(hierarchies) = body.get("hierarchies").and_then(|v| v.as_array()) {
+        for (pos, item) in hierarchies.iter().enumerate() {
+            let hname = str_field(item, "name")?;
+            let description = opt_str(item, "description");
+            let levels = item.get("levels").ok_or_else(|| {
+                AppError::Validation(format!("cube hierarchy {hname}: levels missing"))
+            })?;
+            let levels_json = serde_json::to_string(levels).map_err(|e| AppError::Internal(e.into()))?;
+            conn.execute(
+                "INSERT INTO meta_cube_hierarchies (cube_id, pos, name, description, levels_json) VALUES (?1,?2,?3,?4,?5)",
+                params![cube_id, pos as i64, hname, description, levels_json],
+            )
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?;
+        }
+    }
     Ok(())
 }
 
@@ -973,6 +990,34 @@ async fn load_cube(conn: &Connection, name: &str) -> Result<Value, AppError> {
     }
     if !choice.is_empty() {
         out["choice"] = json!(choice);
+    }
+    let mut hierarchies = Vec::new();
+    let mut hrows = conn
+        .query(
+            "SELECT name, description, levels_json FROM meta_cube_hierarchies
+             WHERE cube_id = (SELECT id FROM meta_cubes WHERE name = ?1) ORDER BY pos",
+            params![name],
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    while let Some(r) = hrows
+        .next()
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?
+    {
+        let hname: String = r.get(0).map_err(|e| AppError::Internal(e.into()))?;
+        let hdesc: Option<String> = r.get(1).ok();
+        let levels_s: String = r.get(2).map_err(|e| AppError::Internal(e.into()))?;
+        let levels: Value =
+            serde_json::from_str(&levels_s).map_err(|e| AppError::Internal(e.into()))?;
+        let mut item = json!({ "name": hname, "levels": levels });
+        if let Some(d) = hdesc.filter(|s| !s.is_empty()) {
+            item["description"] = json!(d);
+        }
+        hierarchies.push(item);
+    }
+    if !hierarchies.is_empty() {
+        out["hierarchies"] = json!(hierarchies);
     }
     Ok(out)
 }

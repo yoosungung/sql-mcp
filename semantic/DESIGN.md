@@ -12,7 +12,7 @@
 
 `libsql/catalog.sql`은 HTTP `/api/meta`가 쓰는 시맨틱 DB다. 타깃 DW 물리 테이블이 아니다. `SemanticStore::open`이 매번 적용하므로 DDL은 `IF NOT EXISTS`로 멱등하다.
 
-**저장 계층은 타입별 `meta_*` 테이블**이다(`meta_tables`, `meta_views`, `meta_cubes`, `meta_metrics`, `meta_segments` 및 자식 테이블). `document(kind,name,body)` blob은 쓰지 않는다. `meta_tables` / `meta_views` / `meta_cubes`에 MCP 연결 id **`target`** 컬럼이 있다. 연결 검증 시 view·cube와 leaf table의 `target`이 일치해야 한다.
+**저장 계층은 타입별 `meta_*` 테이블**이다(`meta_tables`, `meta_views`, `meta_cubes`, `meta_metrics`, `meta_segments` 및 자식 테이블 — cube 자식에 `meta_cube_hierarchies` 포함). `document(kind,name,body)` blob은 쓰지 않는다. `meta_tables` / `meta_views` / `meta_cubes`에 MCP 연결 id **`target`** 컬럼이 있다. 연결 검증 시 view·cube와 leaf table의 `target`이 일치해야 한다. optional `cube.hierarchies[]`(`$defs.hierarchy`)는 levels⊆dimension names 검증 후 분해·재조립한다.
 
 `meta_views`와 `meta_cubes`는 `id INTEGER PRIMARY KEY AUTOINCREMENT`와 UNIQUE `name`이다. `meta_cubes.view_id`·`meta_metrics.cube_id`·`meta_segments.cube_id`와 view/cube 자식 행은 이 id를 가리킨다. `meta_table_columns` / `meta_table_permission_filters` / `column_index.doc_name`은 논리 `name`을 쓴다. 교환 JSON·`document.schema.json`에는 `id`가 없다. 서버가 쓰기에 id를 부여하고 읽기에 name으로 푼다. 기존 name-FK DB는 `SemanticStore::open`의 `migrate_surrogate_view_cube_ids`가 id를 채우고 참조를 옮긴다.
 

@@ -401,6 +401,11 @@
           "minItems": 1,
           "items": { "$ref": "#/$defs/physical_ident" },
           "description": "D29 큐브 그레인. 허브 table.pk. 집계 전 이 키가 조인으로 복제되면 팬아웃이다."
+        },
+        "hierarchies": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/hierarchy" },
+          "description": "큐브 계층 목록. levels는 거친→세밀 dimension name(≥2). describe_table에 힌트로 노출."
         }
       },
       "allOf": [
@@ -413,6 +418,27 @@
           "then": { "required": ["choice"] }
         }
       ]
+    },
+    "hierarchy": {
+      "title": "Hierarchy",
+      "description": "큐브 차원 계층. levels는 거친→세밀 순 dimension name(≥2, unique). POST 시 levels ⊆ cube.dimensions[].name.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "levels"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "description": {
+          "type": "string",
+          "description": "계층 설명(선택)."
+        },
+        "levels": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/name" },
+          "description": "차원 name 목록(거친→세밀)."
+        }
+      }
     },
     "cubeChoice": {
       "type": "object",
@@ -455,11 +481,12 @@
           "minLength": 1,
           "description": "view 컬럼 이름으로 만든 스칼라 식(집계 금지, D28). column 과 함께 두지 않는다."
         },
-        "encryption": { "type": "boolean", "description": "true 이면 응답·샘플·로그에서 원문을 마스킹한다(null 또는 ***). 암·복호화 아님(D17)." },
+        "encryption": { "type": "boolean", "description": "true 이면 응답·샘플·로그에서 원문을 마스킹한다(null 또는 ***). 암·복호화 아님(D17). describe_table 에는 노출하지 않는다." },
         "as_code": {
           "$ref": "#/$defs/asCode",
-          "description": "코드사전 조인. 집계 후 이 dim=key로 붙여 dim__value를 SELECT한다(D9). 코딩 에이전트 기입·MCP 저장만."
+          "description": "코드사전 조인. 집계 후 이 dim=key로 붙여 dim__value를 SELECT한다(D9). 코딩 에이전트 기입·/api/meta 저장만. describe_table 에는 노출하지 않는다."
         },
+        "samples": { "$ref": "#/$defs/memberSamples" },
         "role": { "$ref": "#/$defs/role" }
       },
       "oneOf": [
@@ -492,19 +519,28 @@
         },
         "encryption": {
           "type": "boolean",
-          "description": "true 이면 응답·샘플·로그에서 원문을 마스킹한다(null 또는 ***). 암·복호화 아님(D17)."
+          "description": "true 이면 응답·샘플·로그에서 원문을 마스킹한다(null 또는 ***). 암·복호화 아님(D17). describe_table 에는 노출하지 않는다."
         },
         "additive": {
           "type": "boolean",
           "default": true,
           "description": "false면 행 그레인 비율 등 비가산(D28). SUM/AVG/COUNT(col) 거절. SELECT/WHERE/ORDER BY/MIN/MAX 허용. 기본 true."
         },
+        "samples": { "$ref": "#/$defs/memberSamples" },
         "role": { "$ref": "#/$defs/role" }
       },
       "oneOf": [
         { "$ref": "#/$defs/fromColumn" },
         { "$ref": "#/$defs/fromExpression" }
       ]
+    },
+    "memberSamples": {
+      "type": "array",
+      "maxItems": 8,
+      "description": "WHERE 등에 쓸 미리보기 값(시맨틱 작성 시 고정). describe_table.columns[].samples 로 노출. encryption=true 와 동시 금지. metric/segment examples 와 이름 구분. 라이브 탐색은 sample_column.",
+      "items": {
+        "type": ["string", "number", "boolean", "null"]
+      }
     },
     "fromColumn": {
       "required": ["column"],
