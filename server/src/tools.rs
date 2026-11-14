@@ -161,7 +161,7 @@ impl SqlMcp {
     }
 
     #[tool(
-        description = "Describe one table: columns (kind=dimension|fact SQL columns) plus optional examples (metric/segment expression snippets to copy into ad-hoc SELECT—not column names). Call after list_tables or search_columns when you need column details."
+        description = "Describe one table: columns (kind=dimension|fact SQL columns), optional hierarchies (drill grain order: coarse→fine dimension names for GROUP BY), plus optional examples (metric/segment expression snippets to copy into ad-hoc SELECT—not column names). Call after list_tables or search_columns when you need column details."
     )]
     async fn describe_table(
         &self,
@@ -210,13 +210,18 @@ impl SqlMcp {
         {
             examples.push(project_segment_example(&s));
         }
-        ok_json(json!({
+        let hierarchies = project_hierarchies(cube.get("hierarchies"));
+        let mut out = json!({
             "database": cube.get("target").and_then(|v| v.as_str()).unwrap_or(""),
             "name": cube.get("name").and_then(|v| v.as_str()).unwrap_or(cube_name),
             "description": cube.get("description").and_then(|v| v.as_str()).unwrap_or(""),
             "columns": columns,
             "examples": examples,
-        }))
+        });
+        if !hierarchies.is_empty() {
+            out["hierarchies"] = json!(hierarchies);
+        }
+        ok_json(out)
     }
 
     #[tool(
@@ -572,6 +577,26 @@ fn project_dim_fact_members(
         .collect()
 }
 
+/// DW drill hint: coarse→fine dimension names for GROUP BY order (no compiler auto-expand).
+fn project_hierarchies(hierarchies: Option<&Value>) -> Vec<Value> {
+    let Some(arr) = hierarchies.and_then(|v| v.as_array()) else {
+        return vec![];
+    };
+    arr.iter()
+        .filter_map(|h| {
+            let name = h.get("name")?.clone();
+            let levels = h.get("levels")?.clone();
+            let mut out = json!({ "name": name, "levels": levels });
+            if let Some(d) = h.get("description").and_then(|v| v.as_str()) {
+                if !d.is_empty() {
+                    out["description"] = json!(d);
+                }
+            }
+            Some(out)
+        })
+        .collect()
+}
+
 /// D26: metric/segment are example snippets, not SQL columns.
 fn project_metric_example(m: &Value) -> Value {
     let mut out = json!({
@@ -869,6 +894,42 @@ mod tests {
         assert!(body.get("sql").is_none());
         assert!(body.get("cube").is_none());
         assert!(body.get("member").is_none());
+    }
+
+    #[tokio::test]
+    async fn describe_table_exposes_hierarchies_drill_hint() {
+        let store = SemanticStore::open(":memory:").await.unwrap();
+        seed_examples(&store).await;
+        let mut sales = store.get("cube", "sales").await.unwrap();
+        sales["hierarchies"] = json!([{
+            "name": "order_date_h",
+            "description": "연→일",
+            "levels": ["order_year", "order_date"]
+        }]);
+        store.update("cube", "sales", sales).await.unwrap();
+        let cfg = Config {
+            listen: "127.0.0.1:0".into(),
+            max_rows: 100,
+            sample_limit: 10,
+            timeout_ms: 1000,
+            targets: vec![],
+        };
+        let mcp = SqlMcp::new(store, TargetRegistry::empty(), cfg);
+        let desc = tool_json(
+            mcp.describe_table(Parameters(DescribeTableArgs {
+                table: "sales".into(),
+                database: Some("dw".into()),
+                caller_role: None,
+            }))
+            .await
+            .unwrap(),
+        );
+        assert_eq!(desc["hierarchies"][0]["name"], "order_date_h");
+        assert_eq!(
+            desc["hierarchies"][0]["levels"],
+            json!(["order_year", "order_date"])
+        );
+        assert_eq!(desc["hierarchies"][0]["description"], "연→일");
     }
 
     #[tokio::test]

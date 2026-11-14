@@ -222,6 +222,49 @@ pub fn validate_links(docs: &[Value]) -> Result<(), AppError> {
                 }
             }
         }
+        let dim_names: HashSet<String> = cube
+            .get("dimensions")
+            .and_then(|v| v.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.get("name").and_then(|v| v.as_str()).map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if let Some(hierarchies) = cube.get("hierarchies").and_then(|v| v.as_array()) {
+            let mut seen_h: HashSet<String> = HashSet::new();
+            for item in hierarchies {
+                let hname = item.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+                    AppError::Validation(format!("cube {name}: hierarchy missing name"))
+                })?;
+                if !seen_h.insert(hname.to_string()) {
+                    return Err(AppError::Validation(format!(
+                        "cube {name}: duplicate hierarchy name {hname}"
+                    )));
+                }
+                let levels = item
+                    .get("levels")
+                    .and_then(|v| v.as_array())
+                    .ok_or_else(|| {
+                        AppError::Validation(format!(
+                            "cube {name}: hierarchy {hname} levels missing"
+                        ))
+                    })?;
+                for level in levels {
+                    let lname = level.as_str().ok_or_else(|| {
+                        AppError::Validation(format!(
+                            "cube {name}: hierarchy {hname} level must be a string"
+                        ))
+                    })?;
+                    if !dim_names.contains(lname) {
+                        return Err(AppError::Validation(format!(
+                            "cube {name}: hierarchy {hname} level {lname} not in dimensions"
+                        )));
+                    }
+                }
+            }
+        }
         // stash for metric name clash checks
         let _ = dim_fact_names;
     }
@@ -494,6 +537,42 @@ mod tests {
             validate_links(&docs),
             Err(AppError::Validation(_))
         ));
+    }
+
+    #[test]
+    fn accepts_hierarchy_levels_subset_of_dimensions() {
+        let mut docs = load_examples();
+        for d in &mut docs {
+            if d.get("kind").and_then(|v| v.as_str()) == Some("cube")
+                && d.get("name").and_then(|v| v.as_str()) == Some("sales")
+            {
+                d["hierarchies"] = json!([{
+                    "name": "order_date_h",
+                    "levels": ["order_year", "order_date"]
+                }]);
+            }
+        }
+        validate_links(&docs).unwrap();
+    }
+
+    #[test]
+    fn rejects_hierarchy_level_not_in_dimensions() {
+        let mut docs = load_examples();
+        for d in &mut docs {
+            if d.get("kind").and_then(|v| v.as_str()) == Some("cube")
+                && d.get("name").and_then(|v| v.as_str()) == Some("sales")
+            {
+                d["hierarchies"] = json!([{
+                    "name": "bad_h",
+                    "levels": ["order_year", "missing_dim"]
+                }]);
+            }
+        }
+        let err = validate_links(&docs).unwrap_err();
+        assert!(
+            matches!(&err, AppError::Validation(msg) if msg.contains("missing_dim")),
+            "expected missing_dim validation, got {err:?}"
+        );
     }
 
     #[test]

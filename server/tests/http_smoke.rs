@@ -189,6 +189,78 @@ async fn api_meta_roundtrip() {
 }
 
 #[tokio::test]
+async fn api_meta_cube_hierarchies_roundtrip() {
+    let (mcp_url, handle) = spawn_server().await;
+    let base = mcp_url.trim_end_matches("/mcp");
+    let client = reqwest::Client::new();
+    for path in [
+        include_str!("../../semantic/examples/tables/customer.json"),
+        include_str!("../../semantic/examples/tables/region_codes.json"),
+        include_str!("../../semantic/examples/tables/status_codes.json"),
+        include_str!("../../semantic/examples/tables/orders.json"),
+        include_str!("../../semantic/examples/tables/orders_month.json"),
+        include_str!("../../semantic/examples/views/orders_customer.json"),
+        include_str!("../../semantic/examples/cubes/sales.json"),
+    ] {
+        let doc: serde_json::Value = serde_json::from_str(path).unwrap();
+        let resp = client
+            .post(format!("{base}/api/meta"))
+            .json(&doc)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status().as_u16(),
+            200,
+            "{}",
+            resp.text().await.unwrap()
+        );
+    }
+
+    let mut sales: serde_json::Value = client
+        .get(format!("{base}/api/meta/cube/sales"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    sales["hierarchies"] = json!([{
+        "name": "order_date_h",
+        "description": "연→일",
+        "levels": ["order_year", "order_date"]
+    }]);
+    let updated = client
+        .put(format!("{base}/api/meta/cube/sales"))
+        .json(&sales)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        updated.status().as_u16(),
+        200,
+        "{}",
+        updated.text().await.unwrap()
+    );
+
+    let got: serde_json::Value = client
+        .get(format!("{base}/api/meta/cube/sales"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(got["hierarchies"][0]["name"], "order_date_h");
+    assert_eq!(
+        got["hierarchies"][0]["levels"],
+        json!(["order_year", "order_date"])
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
 async fn api_physical_tables_and_sample() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("birdish.sqlite");

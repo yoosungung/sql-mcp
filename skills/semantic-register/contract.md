@@ -49,7 +49,7 @@ segments/{name}.json
 ## DW vs coding agent
 
 - 코딩 에이전트: HTTP `/api/meta` + schema Resource. 물리 카탈로그는 `/api/databases/{id}/tables`.
-- DW 에이전트: 메타 CRUD를 주지 않는다. 테이블=cube, 컬럼=dimension/fact. metric/segment는 `describe_table.examples`만(D26).
+- DW 에이전트: 메타 CRUD를 주지 않는다. 테이블=cube, 컬럼=dimension/fact. metric/segment는 `describe_table.examples`만(D26). optional `describe_table.hierarchies[]`는 drill 시 GROUP BY 순서(거친→세밀 dim) 힌트다.
 
 ## Quick checks
 

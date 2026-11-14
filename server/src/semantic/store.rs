@@ -1012,6 +1012,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cube_hierarchies_roundtrip() {
+        let store = mem().await;
+        for path in [
+            include_str!("../../../semantic/examples/tables/customer.json"),
+            include_str!("../../../semantic/examples/tables/region_codes.json"),
+            include_str!("../../../semantic/examples/tables/status_codes.json"),
+            include_str!("../../../semantic/examples/tables/orders.json"),
+            include_str!("../../../semantic/examples/tables/orders_month.json"),
+            include_str!("../../../semantic/examples/views/orders_customer.json"),
+            include_str!("../../../semantic/examples/cubes/sales.json"),
+        ] {
+            store
+                .create(serde_json::from_str(path).unwrap())
+                .await
+                .unwrap();
+        }
+        let mut sales = store.get("cube", "sales").await.unwrap();
+        sales["hierarchies"] = json!([
+            {
+                "name": "order_date_h",
+                "description": "연→일",
+                "levels": ["order_year", "order_date"]
+            }
+        ]);
+        store.update("cube", "sales", sales).await.unwrap();
+        let got = store.get("cube", "sales").await.unwrap();
+        assert_eq!(got["hierarchies"][0]["name"], "order_date_h");
+        assert_eq!(got["hierarchies"][0]["description"], "연→일");
+        assert_eq!(
+            got["hierarchies"][0]["levels"],
+            json!(["order_year", "order_date"])
+        );
+        // omit hierarchies → additive clear
+        let mut cleared = got.clone();
+        cleared.as_object_mut().unwrap().remove("hierarchies");
+        store.update("cube", "sales", cleared).await.unwrap();
+        let again = store.get("cube", "sales").await.unwrap();
+        assert!(again.get("hierarchies").is_none());
+    }
+
+    #[tokio::test]
     async fn create_view_normalizes_hub_to_sources_zero() {
         let store = mem().await;
         for doc in [

@@ -119,6 +119,28 @@ mod tests {
     }
 
     #[test]
+    fn accepts_cube_hierarchies_and_rejects_one_level() {
+        let mut cube: Value =
+            serde_json::from_str(include_str!("../../../semantic/examples/cubes/sales.json"))
+                .unwrap();
+        cube["hierarchies"] = json!([{
+            "name": "order_date_h",
+            "description": "연→일",
+            "levels": ["order_year", "order_date"]
+        }]);
+        validate_document(&cube).unwrap();
+
+        cube["hierarchies"] = json!([{
+            "name": "bad",
+            "levels": ["order_date"]
+        }]);
+        assert!(matches!(
+            validate_document(&cube),
+            Err(AppError::Validation(_))
+        ));
+    }
+
+    #[test]
     fn accepts_example_cube_metric_segment() {
         for raw in [
             include_str!("../../../semantic/examples/cubes/sales.json"),

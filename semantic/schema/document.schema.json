@@ -401,6 +401,11 @@
           "minItems": 1,
           "items": { "$ref": "#/$defs/physical_ident" },
           "description": "D29 큐브 그레인. 허브 table.pk. 집계 전 이 키가 조인으로 복제되면 팬아웃이다."
+        },
+        "hierarchies": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/hierarchy" },
+          "description": "큐브 계층 목록. levels는 거친→세밀 dimension name(≥2). describe_table에 힌트로 노출."
         }
       },
       "allOf": [
@@ -413,6 +418,27 @@
           "then": { "required": ["choice"] }
         }
       ]
+    },
+    "hierarchy": {
+      "title": "Hierarchy",
+      "description": "큐브 차원 계층. levels는 거친→세밀 순 dimension name(≥2, unique). POST 시 levels ⊆ cube.dimensions[].name.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "levels"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "description": {
+          "type": "string",
+          "description": "계층 설명(선택)."
+        },
+        "levels": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/name" },
+          "description": "차원 name 목록(거친→세밀)."
+        }
+      }
     },
     "cubeChoice": {
       "type": "object",
