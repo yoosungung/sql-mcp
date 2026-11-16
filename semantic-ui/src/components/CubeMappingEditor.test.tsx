@@ -119,4 +119,98 @@ describe("CubeMappingEditor", () => {
       ),
     ).toBe(true);
   });
+
+  it("applies a valid hierarchy when levels are ordered dims", async () => {
+    const user = userEvent.setup();
+    const onApply = vi.fn();
+    const onOpenChange = vi.fn();
+    const dimView: Doc = {
+      kind: "view",
+      name: "orders",
+      columns: [
+        { name: "year", mappings: [{ source: "o", column: "year" }] },
+        { name: "month", mappings: [{ source: "o", column: "month" }] },
+      ],
+    };
+    const dimCube: Doc = {
+      kind: "cube",
+      name: "orders_cube",
+      view: "orders",
+      description: "",
+      dimensions: [
+        { name: "year", description: "", type: "date", column: "year", encryption: false },
+        { name: "month", description: "", type: "date", column: "month", encryption: false },
+      ],
+      facts: [],
+    };
+    render(
+      <Theme>
+        <CubeMappingEditor
+          open
+          onOpenChange={onOpenChange}
+          cube={dimCube}
+          views={[dimView]}
+          onApply={onApply}
+        />
+      </Theme>,
+    );
+    await user.click(await screen.findByRole("button", { name: "Add hierarchy" }));
+    await user.type(screen.getByRole("textbox", { name: "hierarchy name 0" }), "ym");
+    await user.selectOptions(screen.getByRole("combobox", { name: "hierarchy 0 level 0" }), "year");
+    await user.click(screen.getByRole("button", { name: "Add level to hierarchy 0" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "hierarchy 0 level 1" }), "month");
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    expect(onApply).toHaveBeenCalled();
+    const next = onApply.mock.calls[0][0] as Doc;
+    expect(next.hierarchies).toEqual([{ name: "ym", levels: ["year", "month"] }]);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("blocks Apply when hierarchy levels are not a subset of dimensions", async () => {
+    const user = userEvent.setup();
+    const onApply = vi.fn();
+    const dimView: Doc = {
+      kind: "view",
+      name: "orders",
+      columns: [{ name: "year", mappings: [{ source: "o", column: "year" }] }],
+    };
+    const dimCube: Doc = {
+      kind: "cube",
+      name: "orders_cube",
+      view: "orders",
+      description: "",
+      dimensions: [{ name: "year", description: "", type: "date", column: "year", encryption: false }],
+      facts: [],
+      hierarchies: [{ name: "bad", levels: ["year", "missing"] }],
+    };
+    render(
+      <Theme>
+        <CubeMappingEditor open onOpenChange={() => {}} cube={dimCube} views={[dimView]} onApply={onApply} />
+      </Theme>,
+    );
+    expect(await screen.findByRole("textbox", { name: "hierarchy name 0" })).toHaveProperty("value", "bad");
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    expect(onApply).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent || "").toMatch(
+      /not a cube dimension|≥2|unique|level/i,
+    );
+  });
+
+  it("omits hierarchies on Apply when the editor list is empty", async () => {
+    const user = userEvent.setup();
+    const onApply = vi.fn();
+    const withH: Doc = {
+      ...cube,
+      hierarchies: [{ name: "gone", levels: ["a", "b"] }],
+    };
+    render(
+      <Theme>
+        <CubeMappingEditor open onOpenChange={() => {}} cube={withH} views={[view]} onApply={onApply} />
+      </Theme>,
+    );
+    await user.click(await screen.findByRole("button", { name: "Remove hierarchy 0" }));
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    const next = onApply.mock.calls[0][0] as Doc;
+    expect(next.hierarchies).toBeUndefined();
+  });
 });

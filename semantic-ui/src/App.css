@@ -319,3 +319,9 @@ body { margin: 0; }
   font: inherit;
   cursor: grab;
 }
+.hierarchy-card {
+  border: 1px solid var(--gray-a6);
+  border-radius: var(--radius-2);
+  padding: 10px 12px;
+  background: var(--color-panel-solid);
+}

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   applyCombine,
   combineName,
+  hierarchyError,
+  hierarchyLevelsError,
   joinOnOp,
   mappingFor,
   memberPayload,
@@ -18,6 +20,30 @@ import {
   withChoiceStack,
   type Doc,
 } from "./model";
+
+describe("hierarchyLevelsError", () => {
+  const dims = ["year", "month", "day"];
+
+  it("accepts ≥2 unique levels that are subset of dimensions", () => {
+    expect(hierarchyLevelsError(["year", "day"], dims)).toBeNull();
+  });
+
+  it("rejects fewer than 2 levels", () => {
+    expect(hierarchyLevelsError(["year"], dims)).toMatch(/≥2/);
+  });
+
+  it("rejects duplicate levels", () => {
+    expect(hierarchyLevelsError(["year", "year"], dims)).toMatch(/unique/);
+  });
+
+  it("rejects levels outside dimensions", () => {
+    expect(hierarchyLevelsError(["year", "unknown"], dims)).toMatch(/not a cube dimension/);
+  });
+
+  it("requires hierarchy name", () => {
+    expect(hierarchyError({ name: "  ", levels: ["year", "day"] }, dims)).toMatch(/name/);
+  });
+});
 
 describe("reorder", () => {
   it("moves the dragged row and keeps the top as priority 1", () => {
