@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button, Checkbox, Dialog, Flex, Heading, Text } from "@radix-ui/themes";
-import { choiceStack, type Doc, type Member } from "../model";
+import { Button, Checkbox, Dialog, Flex, Heading, Text, TextField } from "@radix-ui/themes";
+import {
+  choiceStack,
+  hierarchyError,
+  type Doc,
+  type Hierarchy,
+  type Member,
+} from "../model";
 import { columnMeta, suggestMemberKind, suggestMemberType } from "./docs";
 
 type Row = {
@@ -10,6 +16,12 @@ type Row = {
   /** viewName -> view column */
   byView: Record<string, string>;
   unmapped?: boolean;
+};
+
+type HierarchyDraft = {
+  name: string;
+  description: string;
+  levels: string[];
 };
 
 export function CubeMappingEditor({
@@ -34,13 +46,31 @@ export function CubeMappingEditor({
   );
 
   const [rows, setRows] = useState<Row[]>([]);
+  const [hierarchies, setHierarchies] = useState<HierarchyDraft[]>([]);
+  const [hierarchyAlert, setHierarchyAlert] = useState<string | null>(null);
+
   useEffect(() => {
-    if (open) setRows(buildRows(cube, viewDocs, tables));
+    if (open) {
+      setRows(buildRows(cube, viewDocs, tables));
+      setHierarchies(seedHierarchies(cube));
+      setHierarchyAlert(null);
+    }
     // Seed only when the dialog opens so checkbox/kind edits are not reset.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const [drag, setDrag] = useState<{ view: string; column: string } | null>(null);
+
+  const dimensionNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const row of rows) {
+      if (row.kind === "dimension" && row.active && row.name.trim()) names.add(row.name.trim());
+    }
+    for (const d of expressionOnly(cube.dimensions)) {
+      if (d.name.trim()) names.add(d.name.trim());
+    }
+    return [...names];
+  }, [rows, cube.dimensions]);
 
   function apply() {
     const dimensions: Member[] = [];
@@ -63,11 +93,37 @@ export function CubeMappingEditor({
       if (row.kind === "dimension") dimensions.push(member);
       else facts.push(member);
     }
-    onApply({
+    const nextDims = [...dimensions, ...expressionOnly(cube.dimensions)];
+    const dimNames = nextDims.map((d) => d.name);
+    for (let i = 0; i < hierarchies.length; i++) {
+      const draft = hierarchies[i];
+      const err = hierarchyError(
+        { name: draft.name, description: draft.description || undefined, levels: draft.levels },
+        dimNames,
+      );
+      if (err) {
+        setHierarchyAlert(`Hierarchy ${i + 1}: ${err}`);
+        return;
+      }
+    }
+    const next: Doc = {
       ...cube,
-      dimensions: [...dimensions, ...expressionOnly(cube.dimensions)],
+      dimensions: nextDims,
       facts: [...facts, ...expressionOnly(cube.facts)],
-    });
+    };
+    if (hierarchies.length) {
+      next.hierarchies = hierarchies.map(
+        (h): Hierarchy => ({
+          name: h.name.trim(),
+          ...(h.description.trim() ? { description: h.description.trim() } : {}),
+          levels: h.levels.slice(),
+        }),
+      );
+    } else {
+      delete next.hierarchies;
+    }
+    setHierarchyAlert(null);
+    onApply(next);
     onOpenChange(false);
   }
 
@@ -138,6 +194,167 @@ export function CubeMappingEditor({
             )),
           )}
         </Flex>
+
+        <Heading size="2" mt="4" mb="2">Hierarchies</Heading>
+        <Text size="2" color="gray" as="p" mb="2">
+          Ordered dimension levels (coarse → fine). levels ⊆ active dimensions, ≥2 unique.
+        </Text>
+        {hierarchyAlert && (
+          <Text role="alert" size="2" color="red" as="p" mb="2">
+            {hierarchyAlert}
+          </Text>
+        )}
+        <Flex direction="column" gap="3">
+          {hierarchies.map((h, hi) => (
+            <div key={hi} className="hierarchy-card">
+              <Flex gap="2" align="center" wrap="wrap" mb="2">
+                <TextField.Root
+                  size="2"
+                  value={h.name}
+                  placeholder="name"
+                  aria-label={`hierarchy name ${hi}`}
+                  onChange={(e) =>
+                    setHierarchies((cur) =>
+                      cur.map((x, i) => (i === hi ? { ...x, name: e.target.value } : x)),
+                    )
+                  }
+                />
+                <Button
+                  type="button"
+                  size="1"
+                  variant="soft"
+                  color="gray"
+                  onClick={() => setHierarchies((cur) => cur.filter((_, i) => i !== hi))}
+                >
+                  Remove hierarchy {hi}
+                </Button>
+              </Flex>
+              <Text size="1" weight="medium" as="p" mb="1">
+                Levels (coarse → fine)
+              </Text>
+              <Flex direction="column" gap="1">
+                {h.levels.map((level, li) => (
+                  <Flex key={li} gap="2" align="center">
+                    <select
+                      className="map-select"
+                      aria-label={`hierarchy ${hi} level ${li}`}
+                      value={level}
+                      onChange={(e) =>
+                        setHierarchies((cur) =>
+                          cur.map((x, i) =>
+                            i === hi
+                              ? {
+                                  ...x,
+                                  levels: x.levels.map((lv, j) => (j === li ? e.target.value : lv)),
+                                }
+                              : x,
+                          ),
+                        )
+                      }
+                    >
+                      <option value="">—</option>
+                      {dimensionNames.map((n) => (
+                        <option key={n} value={n}>
+                          {n}
+                        </option>
+                      ))}
+                      {level && !dimensionNames.includes(level) && (
+                        <option value={level}>{level} (missing)</option>
+                      )}
+                    </select>
+                    <Button
+                      type="button"
+                      size="1"
+                      variant="soft"
+                      disabled={li === 0}
+                      aria-label={`hierarchy ${hi} level ${li} up`}
+                      onClick={() =>
+                        setHierarchies((cur) =>
+                          cur.map((x, i) =>
+                            i === hi ? { ...x, levels: swap(x.levels, li, li - 1) } : x,
+                          ),
+                        )
+                      }
+                    >
+                      ↑
+                    </Button>
+                    <Button
+                      type="button"
+                      size="1"
+                      variant="soft"
+                      disabled={li >= h.levels.length - 1}
+                      aria-label={`hierarchy ${hi} level ${li} down`}
+                      onClick={() =>
+                        setHierarchies((cur) =>
+                          cur.map((x, i) =>
+                            i === hi ? { ...x, levels: swap(x.levels, li, li + 1) } : x,
+                          ),
+                        )
+                      }
+                    >
+                      ↓
+                    </Button>
+                    <Button
+                      type="button"
+                      size="1"
+                      variant="soft"
+                      color="gray"
+                      aria-label={`hierarchy ${hi} remove level ${li}`}
+                      onClick={() =>
+                        setHierarchies((cur) =>
+                          cur.map((x, i) =>
+                            i === hi ? { ...x, levels: x.levels.filter((_, j) => j !== li) } : x,
+                          ),
+                        )
+                      }
+                    >
+                      ×
+                    </Button>
+                  </Flex>
+                ))}
+              </Flex>
+              <Button
+                type="button"
+                size="1"
+                variant="soft"
+                mt="2"
+                aria-label={`Add level to hierarchy ${hi}`}
+                onClick={() =>
+                  setHierarchies((cur) =>
+                    cur.map((x, i) =>
+                      i === hi
+                        ? {
+                            ...x,
+                            levels: [...x.levels, pickDefaultLevel(dimensionNames, x.levels)],
+                          }
+                        : x,
+                    ),
+                  )
+                }
+              >
+                Add level
+              </Button>
+            </div>
+          ))}
+        </Flex>
+        <Button
+          type="button"
+          size="2"
+          variant="soft"
+          mt="3"
+          onClick={() =>
+            setHierarchies((cur) => [
+              ...cur,
+              {
+                name: "",
+                description: "",
+                levels: [pickDefaultLevel(dimensionNames, [])],
+              },
+            ])
+          }
+        >
+          Add hierarchy
+        </Button>
       </Dialog.Content>
     </Dialog.Root>
   );
@@ -246,4 +463,26 @@ function buildRows(cube: Doc, views: Doc[], tables: Doc[]): Row[] {
     }
   }
   return rows;
+}
+
+function seedHierarchies(cube: Doc): HierarchyDraft[] {
+  return (cube.hierarchies || []).map((h) => ({
+    name: h.name || "",
+    description: h.description || "",
+    levels: Array.isArray(h.levels) ? h.levels.map(String) : [],
+  }));
+}
+
+function swap(levels: string[], from: number, to: number): string[] {
+  if (to < 0 || to >= levels.length) return levels.slice();
+  const next = levels.slice();
+  const tmp = next[from];
+  next[from] = next[to];
+  next[to] = tmp;
+  return next;
+}
+
+function pickDefaultLevel(dimensionNames: string[], used: string[]): string {
+  const next = dimensionNames.find((n) => !used.includes(n));
+  return next || "";
 }

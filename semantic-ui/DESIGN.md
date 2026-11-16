@@ -40,7 +40,7 @@ View 편집은 메모리 JSON; **Save**가 `POST`/`PUT /api/meta`.
 ### 매핑 팝업
 
 - **ViewMappingEditor**: 왼쪽 뷰 컬럼(+미매핑 테이블 컬럼 하단), 행 앞 체크박스=매핑 정본, 새 뷰는 동명 자동 매칭. 위 테이블 헤더는 source 별칭. join은 dagre 왼쪽→오른쪽, union/minus는 캔버스에서 드래그한 `sources` 순서. 행 `key`는 인덱스만(이름 입력 시 포커스 유지). 다이얼로그를 열 때만 rows를 심고, 매핑 행·미매핑 힌트를 각각 이름순으로 보여 준다(입력 중 재정렬 없음). Apply는 활성 행을 그대로 `columns`에 둔다(같은 이름을 한 컬럼으로 합치지 않음). 활성 행 이름 중복은 필드에 표시하고, 저장 전 이름을 바꾼다. 매핑이 2개 이상이면 체크박스 뒤·이름 앞에 Split 아이콘: 소스 열 기준 마지막 매핑을 새 활성 행으로 떼고(이름은 물리 컬럼 `viewColumnName`), 표시 순서는 원래 행 바로 다음(재정렬 없음).
-- **CubeMappingEditor**: 위 choice view 이름, 왼쪽 dim/fact, 드래그로 매핑 변경, 미매핑은「미매핑」구간+체크박스. 미매핑 Kind 기본값: PK·비수치는 dimension, 수치 물리 type은 fact. member `type`도 파생(id/code/date/datetime/string/quantity; PK는 `id`).
+- **CubeMappingEditor**: 위 choice view 이름, 왼쪽 dim/fact, 드래그로 매핑 변경, 미매핑은「미매핑」구간+체크박스. 미매핑 Kind 기본값: PK·비수치는 dimension, 수치 물리 type은 fact. member `type`도 파생(id/code/date/datetime/string/quantity; PK는 `id`). 하단 **Hierarchies**: 순서 있는 dim multi-select(`levels` coarse→fine), Apply 시 `levels ⊆` 활성·expression dimension names · ≥2 unique · name 필수 — 실패 시 alert로 Apply 차단. 목록이 비면 `hierarchies` 키 생략(기존 큐브 필드 플로우와 동일).
 
 데이터는 HTTP `/api`만. JSON-RPC `/mcp`는 쓰지 않는다.
 

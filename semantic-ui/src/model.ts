@@ -13,6 +13,7 @@ export type Doc = {
   columns?: Array<{ name: string; mappings?: Mapping[]; type?: string; nullable?: boolean }>;
   dimensions?: Member[];
   facts?: Member[];
+  hierarchies?: Hierarchy[];
   choice?: CubeChoice[];
   prefer?: string;
   grain?: string[];
@@ -88,6 +89,35 @@ export type Member = {
   samples?: Array<string | number | boolean | null>;
   role?: Role;
 };
+
+/** Cube hierarchy: levels = coarse→fine dimension names (≥2, unique, ⊆ dimensions). */
+export type Hierarchy = {
+  name: string;
+  description?: string;
+  levels: string[];
+};
+
+/** Returns a short Korean/English error, or null when valid. */
+export function hierarchyLevelsError(
+  levels: string[],
+  dimensionNames: Iterable<string>,
+): string | null {
+  if (levels.length < 2) return "levels need ≥2 dimension names";
+  if (new Set(levels).size !== levels.length) return "levels must be unique";
+  const dims = new Set(dimensionNames);
+  for (const level of levels) {
+    if (!dims.has(level)) return `level "${level}" is not a cube dimension`;
+  }
+  return null;
+}
+
+export function hierarchyError(
+  hierarchy: Hierarchy,
+  dimensionNames: Iterable<string>,
+): string | null {
+  if (!hierarchy.name.trim()) return "hierarchy name required";
+  return hierarchyLevelsError(hierarchy.levels, dimensionNames);
+}
 
 export const DIM_TYPES = ["id", "code", "date", "time", "datetime", "string"] as const;
 export const FACT_TYPES = ["amount", "fx", "quantity"] as const;
