@@ -161,7 +161,7 @@ impl SqlMcp {
     }
 
     #[tool(
-        description = "Describe one table: columns (kind=dimension|fact SQL columns), optional hierarchies (drill grain order: coarse→fine dimension names for GROUP BY), plus optional examples (metric/segment expression snippets to copy into ad-hoc SELECT—not column names). Call after list_tables or search_columns when you need column details."
+        description = "Describe one table: columns (kind=dimension|fact SQL columns), optional hierarchies (drill grain order: coarse→fine dimension names for GROUP BY), plus optional examples (metric/segment with examples[].sql snippets to copy into ad-hoc SELECT—not column names). Call after list_tables or search_columns when you need column details."
     )]
     async fn describe_table(
         &self,
@@ -201,7 +201,7 @@ impl SqlMcp {
             .filter(|m| m.get("cube").and_then(|v| v.as_str()) == Some(cube_name))
             .filter(|m| crate::compile::check_role_access(m.get("role"), role).is_ok())
         {
-            examples.push(project_metric_example(&m));
+            examples.push(project_metric_example(&m, cube_name));
         }
         for s in segments
             .into_iter()
@@ -356,7 +356,7 @@ impl SqlMcp {
     }
 
     #[tool(
-        description = "Run a read-only analytical SELECT and return columns, rows, row_count, and execution_time_ms. FROM must be a table from list_tables (or a subquery/CTE over those tables); select dimensions, facts, and ad-hoc aggregates/scalars. Copy metric/segment snippets from describe_table.examples into SQL—do not treat example names as columns. Do not write warehouse/physical SQL. Set dry_run=true only to inspect compiled SQL without fetching rows."
+        description = "Run a read-only analytical SELECT and return columns, rows, row_count, and execution_time_ms. FROM must be a table from list_tables (or a subquery/CTE over those tables); select dimensions, facts, and ad-hoc aggregates/scalars. Copy describe_table.examples[].sql into SQL—do not treat example names as columns. Do not write warehouse/physical SQL. Set dry_run=true only to inspect compiled SQL without fetching rows."
     )]
     async fn execute_sql(
         &self,
@@ -436,7 +436,7 @@ impl SqlMcp {
 #[tool_handler(
     name = "sql-mcp",
     version = "0.1.0",
-    instructions = "Query governed analytics tables: list_databases → list_tables/search_columns → describe_table/sample_column → execute_sql. Tables expose dimensions and facts as columns; metric/segment appear only as describe_table.examples (SQL snippets to copy)—not raw warehouse catalogs."
+    instructions = "Query governed analytics tables: list_databases → list_tables/search_columns → describe_table/sample_column → execute_sql. Tables expose dimensions and facts as columns; metric/segment appear only as describe_table.examples[].sql (copy snippets)—not raw warehouse catalogs."
 )]
 impl ServerHandler for SqlMcp {
     fn get_info(&self) -> ServerConfig {
@@ -454,7 +454,7 @@ impl ServerHandler for SqlMcp {
         )
         .with_server_info(rmcp::model::Implementation::new("sql-mcp", "0.1.0"))
         .with_instructions(
-            "Query governed analytics tables: list_databases → list_tables/search_columns → describe_table/sample_column → execute_sql. Tables expose dimensions and facts as columns; metric/segment appear only as describe_table.examples (SQL snippets to copy)—not raw warehouse catalogs."
+            "Query governed analytics tables: list_databases → list_tables/search_columns → describe_table/sample_column → execute_sql. Tables expose dimensions and facts as columns; metric/segment appear only as describe_table.examples[].sql (copy snippets)—not raw warehouse catalogs."
                 .to_string(),
         )
     }
@@ -597,34 +597,64 @@ fn project_hierarchies(hierarchies: Option<&Value>) -> Vec<Value> {
         .collect()
 }
 
-/// D26: metric/segment are example snippets, not SQL columns.
-fn project_metric_example(m: &Value) -> Value {
-    let mut out = json!({
+/// D26: metric/segment are example snippets (`sql`), not SQL columns.
+fn project_metric_example(m: &Value, cube_name: &str) -> Value {
+    let expression = m
+        .get("expression")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let dims: Vec<&str> = m
+        .get("group_by")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|g| g.as_str())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let filter = match filter_as_expression(m.get("filter")) {
+        Value::String(s) if !s.is_empty() => Some(s),
+        _ => None,
+    };
+
+    let mut sql = String::from("SELECT ");
+    if dims.is_empty() {
+        sql.push_str(&expression);
+    } else {
+        sql.push_str(&dims.join(", "));
+        sql.push_str(", ");
+        sql.push_str(&expression);
+    }
+    sql.push_str("\nFROM ");
+    sql.push_str(cube_name);
+    if let Some(f) = &filter {
+        sql.push_str("\nWHERE ");
+        sql.push_str(f);
+    }
+    if !dims.is_empty() {
+        sql.push_str("\nGROUP BY ");
+        sql.push_str(&dims.join(", "));
+    }
+
+    json!({
         "kind": "metric",
         "name": m.get("name").cloned().unwrap_or(Value::Null),
         "description": m.get("description").cloned().unwrap_or(json!("")),
-        "expression": m.get("expression").cloned().unwrap_or(Value::Null),
-        "filter": filter_as_expression(m.get("filter")),
-    });
-    if let Some(a) = m.get("aggregation") {
-        if !a.is_null() {
-            out["aggregation"] = a.clone();
-        }
-    }
-    if let Some(g) = m.get("group_by") {
-        if !g.is_null() {
-            out["group_by"] = g.clone();
-        }
-    }
-    out
+        "sql": sql,
+    })
 }
 
 fn project_segment_example(s: &Value) -> Value {
+    let filter = match filter_as_expression(s.get("filter")) {
+        Value::String(expr) if !expr.is_empty() => format!("WHERE {expr}"),
+        _ => "WHERE".to_string(),
+    };
     json!({
         "kind": "segment",
         "name": s.get("name").cloned().unwrap_or(Value::Null),
         "description": s.get("description").cloned().unwrap_or(json!("")),
-        "filter": filter_as_expression(s.get("filter")),
+        "sql": filter,
     })
 }
 
@@ -963,17 +993,35 @@ mod tests {
         assert!(branch.get("segments").is_none());
         let examples = branch["examples"].as_array().unwrap();
         assert_eq!(examples.len(), 2);
+        let revenue = examples
+            .iter()
+            .find(|e| e["kind"] == "metric" && e["name"] == "revenue")
+            .expect("revenue metric example");
+        let revenue_sql = revenue["sql"].as_str().expect("metric sql");
         assert!(
-            examples
-                .iter()
-                .any(|e| e["kind"] == "metric" && e["name"] == "revenue"),
-            "expected revenue metric example: {examples:?}"
+            revenue_sql.contains("FROM sales"),
+            "expected FROM sales: {revenue_sql}"
         );
+        assert!(
+            revenue_sql.contains("sum(sale_amount)"),
+            "expected expression in sql: {revenue_sql}"
+        );
+        assert!(
+            revenue_sql.contains("GROUP BY region_code, order_date"),
+            "expected GROUP BY in sql: {revenue_sql}"
+        );
+        assert!(revenue.get("expression").is_none());
+        assert!(revenue.get("group_by").is_none());
+        assert!(revenue.get("aggregation").is_none());
+        assert!(revenue.get("filter").is_none());
+        assert!(revenue.get("cube").is_none());
+        assert!(revenue.get("role").is_none());
         let paid = examples
             .iter()
             .find(|e| e["kind"] == "segment" && e["name"] == "paid")
             .expect("paid segment example");
-        assert_eq!(paid["filter"], "status_code = 'PAID'");
+        assert_eq!(paid["sql"], "WHERE status_code = 'PAID'");
+        assert!(paid.get("filter").is_none());
         assert!(branch.get("dimensions").is_none());
         assert!(branch.get("facts").is_none());
         let cols = branch["columns"].as_array().unwrap();
@@ -1034,6 +1082,8 @@ mod tests {
         );
         let ex0 = &finance["examples"][0];
         assert_eq!(ex0["kind"], "metric");
+        assert!(ex0.get("sql").is_some());
+        assert!(ex0.get("expression").is_none());
         assert!(ex0.get("cube").is_none());
         assert!(ex0.get("role").is_none());
     }

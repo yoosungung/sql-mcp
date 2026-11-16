@@ -108,7 +108,7 @@ Final answer (mandatory):
 
 Query language (important):
 - Output must be SQL SELECT text only — never MDX, DAX, LookML, GraphQL, or JSON query objects.
-- Table and column names from list_tables/describe_table are SQL identifiers. describe_table.examples (metric/segment) are SQL snippets to copy — not column names.
+- Table and column names from list_tables/describe_table are SQL identifiers. describe_table.examples[].sql (metric/segment) are SQL snippets to copy — not column names.
 - Example shape: SELECT SUM(amount) AS revenue, region FROM table_name WHERE status_code = 'PAID' GROUP BY region
 
 SQL surface rules:
