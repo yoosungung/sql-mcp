@@ -1,0 +1,28 @@
+# sql-mcp / NL2SQL — MM topic-radar What (ticket 44336af7)
+# Schema: deploy/personas/mm/.../marketing.yaml.example
+# soft-mention only; no external auto-post
+
+sites:
+  - linkedin.com
+  - velog.io
+  - tistory.com
+  - medium.com
+  - dev.to
+  - blog.naver.com
+  - brunch.co.kr
+
+keywords:
+  - NL2SQL
+  - text-to-SQL
+  - SQL generation
+  - sql-mcp
+
+# locale hint for drafts (ko); not a hard schema field
+# tone: KR blogs = technical_peer/accessible; LinkedIn = professional_b2b
+tone: technical peer; concise; Korean-friendly on KR blogs; professional B2B on LinkedIn; no hype
+product_mention: soft
+must_avoid:
+  - spam links
+  - fake testimonials
+  - guaranteed
+  - best in the world
